@@ -1,0 +1,416 @@
+# ============================================
+# .gitignore - Parier Keno & Lucky FastAPI
+# Projet de paris Keno & Lucky pour Haïti
+# ============================================
+
+# ------------------- Python -------------------
+# Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+.eggs/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+.env/
+.venv/
+venv.bak/
+env.bak/
+
+# ------------------- IDE & Editor -------------------
+# PyCharm
+.idea/
+*.iml
+.idea_modules/
+.pycharm_helpers/
+
+# VSCode
+.vscode/
+*.code-workspace
+.settings/
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+.*.swp
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# ------------------- Database -------------------
+# PostgreSQL
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.dump
+*.sql
+*.psql
+
+# Alembic migrations (uncommonly generated)
+alembic/versions/*.pyc
+!alembic/versions/.gitkeep
+
+# ------------------- Redis -------------------
+*.rdb
+*.aof
+dump.rdb
+
+# ------------------- Logs -------------------
+*.log
+logs/
+*.log.*
+log/
+*.logfile
+*.access.log
+*.error.log
+
+# ------------------- Environment & Secrets -------------------
+.env
+.env.local
+.env.production
+.env.staging
+.env.development
+.env.test
+.env.example.local
+*.env
+*.env.*
+!.env.example
+
+# Secrets files
+secrets/
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.truststore
+*.secret
+secrets.yaml
+config/secrets.yaml
+
+# Credentials
+credentials.json
+service-account.json
+*.p8
+*.p12
+
+# ------------------- Security -------------------
+# SSL Certificates
+*.crt
+*.key
+*.pem
+*.cert
+*.csr
+*.der
+*.p12
+*.pfx
+ssl/
+certificates/
+certs/
+
+# ------------------- Testing -------------------
+.pytest_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.mypy_cache/
+.benchmarks/
+
+# ------------------- Docker -------------------
+docker-compose.override.yml
+docker-compose.local.yml
+*.dockerignore
+Dockerfile.dev
+.docker/
+docker/data/
+docker/volumes/
+*.tar
+*.tar.gz
+
+# ------------------- Node.js (si frontend) -------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+.pnpm-debug.log
+
+# ------------------- Frontend -------------------
+# React
+build/
+dist/
+.next/
+out/
+*.tsbuildinfo
+
+# Streamlit
+.streamlit/secrets.toml
+*.streamlit/secrets.toml
+
+# ------------------- Backup Files -------------------
+*.bak
+*.backup
+*.old
+*.orig
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+*.lck
+*.lock
+
+# ------------------- OS Generated -------------------
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msm
+*.msp
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+*.swp
+._*
+*.DS_Store
+.directory
+.fseventsd/
+.Spotlight-V100
+.Trashes
+
+# Linux
+*~
+.directory
+.dscache
+.Trash-*
+.nfs*
+
+# ------------------- Uploads & Media -------------------
+uploads/
+media/
+static/uploads/
+static/media/
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.ico
+*.svg
+*.mp4
+*.mp3
+*.pdf
+*.doc
+*.docx
+
+# ------------------- Application Specific -------------------
+# Log files
+logs/
+*.log
+app.log
+error.log
+access.log
+
+# Database backups
+backups/
+*.backup
+*.sql.gz
+*.dump
+
+# Reports
+reports/
+*.pdf
+*.xlsx
+*.csv
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+temp_*
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+celerybeat-schedule.db
+*.pid
+
+# Redis
+dump.rdb
+appendonly.aof
+
+# ------------------- Monitoring -------------------
+*.prof
+*.lprof
+*.cache
+.cache/
+
+# ------------------- Documentation -------------------
+docs/_build/
+site/
+
+# ------------------- Package managers -------------------
+# pip
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Poetry
+poetry.lock
+poetry.toml
+
+# Pipenv
+Pipfile.lock
+
+# ------------------- Code coverage -------------------
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.pytest_cache/
+
+# ------------------- Jupyter Notebook -------------------
+.ipynb_checkpoints
+*.ipynb
+
+# ------------------- Local configuration -------------------
+config.local.py
+*.local.py
+*.local.yaml
+*.local.yml
+*.local.json
+*.local.toml
+
+# ------------------- API Keys & Tokens -------------------
+*.token
+*.tokens
+*.api-key
+*.apikey
+api_keys.txt
+keys.txt
+
+# ------------------- Mobile Money Integration -------------------
+moncash_callback.log
+natcash_callback.log
+payment_webhooks.log
+
+# ------------------- LEH Compliance -------------------
+leh_export/
+leh_reports/
+*.leh
+
+# ------------------- Debug & Profiling -------------------
+*.prof
+*.lprof
+trace_*.log
+perf_*.log
+memory_*.log
+
+# ------------------- Shell History -------------------
+.bash_history
+.zsh_history
+.psql_history
+.mysql_history
+.redis_history
+
+# ------------------- Data files -------------------
+*.csv
+*.xls
+*.xlsx
+*.json
+*.jsonl
+*.ndjson
+*.parquet
+*.feather
+
+# ------------------- Archive files -------------------
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+*.gz
+*.bz2
+*.xz
+
+# ------------------- Process files -------------------
+*.pid
+*.sock
+*.socket
+*.port
+
+# ------------------- Cloud & Deployment -------------------
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+terraform.tfvars
+terraform.tfvars.json
+
+# Ansible
+*.retry
+ansible/inventory_*
+
+# Kubernetes
+*.kubeconfig
+*.kube/config
+helm/values.local.yaml
+helm/secrets.yaml
+
+# ------------------- Local development -------------------
+# Dev containers
+.devcontainer/
+.devcontainer.json
+
+# Local tools
+.tox/
+.mypy_cache/
+.pyre/
+.pytype/
+.ruff_cache/
