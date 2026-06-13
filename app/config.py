@@ -14,19 +14,19 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = Field(default="development")
     
     # URLs
-    BASE_URL: str = Field(default="http://localhost:8000")
-    FRONTEND_URL: str = Field(default="http://localhost:3000")
+    BASE_URL: str = Field(default="http://127.0.0.1:8000")
+    FRONTEND_URL: str = Field(default="http://127.0.0.1:3000")
     
     # Base de données
     DATABASE_URL: str = Field(
-        default="postgresql+asyncpg://parier_user:password@localhost:5432/parier_keno"
+        default="postgresql+asyncpg://postgres:Pass%%4025%%23@127.0.0.1:5432/parier_keno"
     )
     DATABASE_POOL_SIZE: int = Field(default=20)
     DATABASE_MAX_OVERFLOW: int = Field(default=10)
     DATABASE_POOL_TIMEOUT: int = Field(default=30)
     
     # Redis
-    REDIS_URL: str = Field(default="redis://localhost:6379/0")
+    REDIS_URL: str = Field(default="redis://127.0.0.1:6379/0")
     REDIS_PASSWORD: Optional[str] = Field(default=None)
     
     # Sécurité
@@ -48,9 +48,17 @@ class Settings(BaseSettings):
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
     @classmethod
     def parse_cors_origins(cls, v):
+        """Accepte à la fois JSON et chaîne avec virgules"""
         if isinstance(v, str):
-            return [origin.strip() for origin in v.split(",")]
+            # Essayer de parser comme JSON d'abord
+            import json
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                # Sinon, traiter comme une liste séparée par des virgules
+                return [origin.strip() for origin in v.split(",") if origin.strip()]
         return v
+    
     
     # MonCash (Digicel Haïti)
     MONCASH_ENABLED: bool = Field(default=False)

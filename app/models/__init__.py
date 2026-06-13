@@ -1,53 +1,48 @@
 # app/models/__init__.py
 """Modèles SQLAlchemy pour le projet Parier Keno & Lucky"""
 
-from app.models.base import BaseModel
-from app.models.user import User, UserRole, KYCStatus
-from app.models.wallet import Wallet, WalletStatus
-from app.models.ticket import Ticket, TicketStatus
-from app.models.bureau import Bureau, CashierSession
-from app.models.keno import KenoDraw, KenoBet, KenoDrawStatus, KenoBetStatus
-from app.models.lucky import LuckyWheelConfig, LuckyPlay, LuckyGameType
-from app.models.transaction import Transaction, TransactionStatus, TransactionType, PaymentMethod
-from app.models.audit import AuditLog, AuditAction
-from app.models.notification import Notification, NotificationChannel, NotificationType, NotificationStatus
-from app.models.responsible import SelfExclusion, ExclusionType, ExclusionReason, PlayerLimit
-from app.models.promotion import Promotion, PromotionType, PromotionStatus, UserPromotion
+# IMPORTANT: D'abord importer Base depuis database
+from app.core.database import Base
 
+# Enums d'abord (pas de dépendances circulaires)
+from app.models.enums import (
+    UserRole, KYCStatus, WalletStatus, TicketStatus,
+    KenoDrawStatus, KenoBetStatus, LuckyGameType,
+    TransactionType, PaymentMethod, TransactionStatus,
+    AuditAction, NotificationChannel, NotificationType, NotificationStatus,
+    ExclusionType, ExclusionReason, PromotionType, PromotionStatus
+)
+
+# Puis les modèles (importation après les enums)
+from app.models.base import BaseModel
+from app.models.user import User
+from app.models.wallet import Wallet
+from app.models.ticket import Ticket
+from app.models.bureau import Bureau, CashierSession
+from app.models.keno import KenoDraw, KenoBet
+from app.models.lucky import LuckyWheelConfig, LuckyPlay
+from app.models.transaction import Transaction
+from app.models.audit import AuditLog
+from app.models.notification import Notification
+from app.models.responsible import SelfExclusion, PlayerLimit
+from app.models.promotion import Promotion, UserPromotion
+
+# Exporter Base pour Alembic (CRITIQUE)
 __all__ = [
-    # Base
+    # Alembic - NE PAS ENLEVER
+    "Base",
+    
+    # Enums
+    "UserRole", "KYCStatus", "WalletStatus", "TicketStatus",
+    "KenoDrawStatus", "KenoBetStatus", "LuckyGameType",
+    "TransactionType", "PaymentMethod", "TransactionStatus",
+    "AuditAction", "NotificationChannel", "NotificationType", "NotificationStatus",
+    "ExclusionType", "ExclusionReason", "PromotionType", "PromotionStatus",
+    
+    # Modèles
     "BaseModel",
-    
-    # User
-    "User", "UserRole", "KYCStatus",
-    
-    # Wallet
-    "Wallet", "WalletStatus",
-    
-    # Ticket
-    "Ticket", "TicketStatus",
-    
-    # Bureau
-    "Bureau", "CashierSession",
-    
-    # Keno
-    "KenoDraw", "KenoBet", "KenoDrawStatus", "KenoBetStatus",
-    
-    # Lucky
-    "LuckyWheelConfig", "LuckyPlay", "LuckyGameType",
-    
-    # Transaction
-    "Transaction", "TransactionStatus", "TransactionType", "PaymentMethod",
-    
-    # Audit
-    "AuditLog", "AuditAction",
-    
-    # Notification
-    "Notification", "NotificationChannel", "NotificationType", "NotificationStatus",
-    
-    # Responsible
-    "SelfExclusion", "ExclusionType", "ExclusionReason", "PlayerLimit",
-    
-    # Promotion
-    "Promotion", "PromotionType", "PromotionStatus", "UserPromotion",
+    "User", "Wallet", "Ticket", "Bureau", "CashierSession",
+    "KenoDraw", "KenoBet", "LuckyWheelConfig", "LuckyPlay",
+    "Transaction", "AuditLog", "Notification",
+    "SelfExclusion", "PlayerLimit", "Promotion", "UserPromotion",
 ]

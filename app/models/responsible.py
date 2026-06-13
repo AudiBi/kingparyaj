@@ -1,6 +1,9 @@
 # app/models/responsible.py
 """Modèles pour le jeu responsable (self-exclusion, limites)"""
 
+from datetime import datetime
+from decimal import Decimal
+
 from sqlalchemy import (
     Column, String, DateTime, ForeignKey, 
     Enum, Text, Numeric, Boolean, Integer, Index

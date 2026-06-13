@@ -20,7 +20,7 @@ class Notification(BaseModel):
     __tablename__ = "notifications"
     __table_args__ = (
         Index("idx_notifications_user_id", "user_id"),
-        Index("idx_notifications_type", "type"),
+        Index("idx_notifications_notification_type", "notification_type"),  # Renommé de 'type'
         Index("idx_notifications_channel", "channel"),
         Index("idx_notifications_status", "status"),
         Index("idx_notifications_created_at", "created_at"),
@@ -31,10 +31,10 @@ class Notification(BaseModel):
     user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
     
     # ========== Contenu ==========
-    type = Column(Enum(NotificationType), nullable=False)
+    notification_type = Column(Enum(NotificationType), nullable=False)  # Renommé de 'type'
     title = Column(String(200), nullable=False)
     message = Column(Text, nullable=False)
-    data = Column(JSON, default={})                     # Données additionnelles (bet_id, draw_id, etc.)
+    payload = Column(JSON, default={})  # Renommé de 'data'
     
     # ========== Canal ==========
     channel = Column(Enum(NotificationChannel), nullable=False)
@@ -86,4 +86,4 @@ class Notification(BaseModel):
         return self.retry_count < self.max_retries
     
     def __repr__(self) -> str:
-        return f"<Notification user={self.user_id} type={self.type} status={self.status}>"
+        return f"<Notification user={self.user_id} type={self.notification_type} status={self.status}>"

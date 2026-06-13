@@ -46,7 +46,7 @@ class AuditLog(BaseModel):
     
     # ========== Contexte ==========
     reason = Column(Text, nullable=True)
-    metadata = Column(JSON, default={})                 # Info supplémentaire
+    extra_data = Column(JSON, default={})               # Info supplémentaire (renommé de metadata)
     
     # ========== Pour LEH ==========
     leh_exported = Column(Boolean, default=False, nullable=False)
