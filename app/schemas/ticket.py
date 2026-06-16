@@ -1,9 +1,13 @@
 # app/schemas/ticket.py
 """Schémas pour les tickets (jeu sans compte)"""
 
+from decimal import Decimal
+
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
+
+from app.models.enums import TicketStatus
 
 
 class TicketCreate(BaseModel):
@@ -64,3 +68,43 @@ class TicketListResponse(BaseModel):
     page: int
     page_size: int
     total_balance: float
+
+class TicketRechargeRequest(BaseModel):
+    '''Demande de recharge de ticket'''
+    amount: Decimal = Field(..., gt=0, le=500000)
+
+class TicketSearchRequest(BaseModel):
+    '''Recherche de tickets'''
+    ticket_number: Optional[str] = None
+    player_name: Optional[str] = None
+    player_phone: Optional[str] = None
+    bureau_id: Optional[str] = None
+    agent_id: Optional[str] = None
+    status: Optional[TicketStatus] = None
+    min_amount: Optional[Decimal] = None
+    max_amount: Optional[Decimal] = None
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    page: int = Field(default=1, ge=1)
+    per_page: int = Field(default=20, ge=1, le=100)
+
+class TicketStatisticsResponse(BaseModel):
+    '''Statistiques des tickets'''
+    period: str
+    start_date: datetime
+    end_date: datetime
+    created: dict
+    paid: dict
+    expired: dict
+    active: dict
+    conversion_rate: float
+
+class TicketTransactionResponse(BaseModel):
+    '''Transaction d'un ticket'''
+    id: str
+    type: str
+    amount: float
+    balance_after: Optional[float]
+    status: str
+    created_at: datetime
+    metadata: Optional[dict]
