@@ -1,0 +1,159 @@
+# docker-compose.prod.yml
+# Version production avec scaling
+
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: parier_postgres
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - parier_network
+    restart: always
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+
+  redis:
+    image: redis:7-alpine
+    container_name: parier_redis
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    networks:
+      - parier_network
+    restart: always
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  fastapi:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: parier-keno-fastapi:${TAG:-latest}
+    container_name: parier_fastapi
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      ENVIRONMENT: production
+      DEBUG: false
+      SECRET_KEY: ${SECRET_KEY}
+      MONCASH_API_KEY: ${MONCASH_API_KEY}
+      MONCASH_API_SECRET: ${MONCASH_API_SECRET}
+      NATCASH_API_KEY: ${NATCASH_API_KEY}
+    volumes:
+      - logs:/app/logs
+      - uploads:/app/uploads
+    networks:
+      - parier_network
+    restart: always
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+      update_config:
+        parallelism: 2
+        delay: 10s
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+
+  celery_worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: parier-keno-celery:${TAG:-latest}
+    container_name: parier_celery_worker
+    command: celery -A app.workers.celery worker --loglevel=info --concurrency=8 --max-tasks-per-child=100
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      ENVIRONMENT: production
+      SECRET_KEY: ${SECRET_KEY}
+    volumes:
+      - logs:/app/logs
+    networks:
+      - parier_network
+    restart: always
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+  celery_beat:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: parier-keno-beat:${TAG:-latest}
+    container_name: parier_celery_beat
+    command: celery -A app.workers.celery beat --loglevel=info
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      ENVIRONMENT: production
+      SECRET_KEY: ${SECRET_KEY}
+    volumes:
+      - logs:/app/logs
+    networks:
+      - parier_network
+    restart: always
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+
+  nginx:
+    image: nginx:alpine
+    container_name: parier_nginx
+    volumes:
+      - ./docker/nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - ./app/static:/static
+      - ./uploads:/uploads
+      - ./ssl:/etc/nginx/ssl:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - fastapi
+    networks:
+      - parier_network
+    restart: always
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+
+networks:
+  parier_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  logs:
+  uploads:

@@ -1,0 +1,198 @@
+# docker-compose.yml
+# Configuration complète avec tous les services
+
+version: '3.8'
+
+services:
+  # ==================== BASE DE DONNÉES ====================
+  postgres:
+    image: postgres:15-alpine
+    container_name: parier_postgres
+    environment:
+      POSTGRES_USER: ${DB_USER:-parier_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-parier123}
+      POSTGRES_DB: ${DB_NAME:-parier_keno}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-parier_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - parier_network
+    restart: unless-stopped
+
+  # ==================== REDIS ====================
+  redis:
+    image: redis:7-alpine
+    container_name: parier_redis
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis123}
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "--pass", "${REDIS_PASSWORD:-redis123}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - parier_network
+    restart: unless-stopped
+
+  # ==================== FASTAPI BACKEND ====================
+  fastapi:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: parier_fastapi
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${DB_USER:-parier_user}:${DB_PASSWORD:-parier123}@postgres:5432/${DB_NAME:-parier_keno}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis123}@redis:6379/0
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DEBUG: ${DEBUG:-true}
+      SECRET_KEY: ${SECRET_KEY}
+      MONCASH_API_KEY: ${MONCASH_API_KEY}
+      MONCASH_API_SECRET: ${MONCASH_API_SECRET}
+      NATCASH_API_KEY: ${NATCASH_API_KEY}
+    volumes:
+      - ../app:/app/app
+      - ../logs:/app/logs
+      - ../uploads:/app/uploads
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - parier_network
+    restart: unless-stopped
+
+  # ==================== CELERY WORKER ====================
+  celery_worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: parier_celery_worker
+    command: celery -A app.workers.celery worker --loglevel=info --concurrency=4 --max-tasks-per-child=100
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${DB_USER:-parier_user}:${DB_PASSWORD:-parier123}@postgres:5432/${DB_NAME:-parier_keno}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis123}@redis:6379/0
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      SECRET_KEY: ${SECRET_KEY}
+      MONCASH_API_KEY: ${MONCASH_API_KEY}
+      NATCASH_API_KEY: ${NATCASH_API_KEY}
+    volumes:
+      - ../app:/app/app
+      - ../logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - parier_network
+    restart: unless-stopped
+
+  # ==================== CELERY BEAT ====================
+  celery_beat:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: parier_celery_beat
+    command: celery -A app.workers.celery beat --loglevel=info
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${DB_USER:-parier_user}:${DB_PASSWORD:-parier123}@postgres:5432/${DB_NAME:-parier_keno}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-redis123}@redis:6379/0
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      SECRET_KEY: ${SECRET_KEY}
+    volumes:
+      - ../app:/app/app
+      - ../logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - parier_network
+    restart: unless-stopped
+
+  # ==================== FLASK WEB ====================
+  flask_web:
+    build:
+      context: ../frontend-flask
+      dockerfile: ../docker/Dockerfile.flask
+    container_name: parier_flask_web
+    environment:
+      API_BASE_URL: http://fastapi:8000/api/v1
+      FLASK_SECRET_KEY: ${FLASK_SECRET_KEY:-flask-secret-key}
+      DEBUG: ${DEBUG:-true}
+    ports:
+      - "5000:5000"
+    depends_on:
+      fastapi:
+        condition: service_started
+    networks:
+      - parier_network
+    restart: unless-stopped
+
+  # ==================== STREAMLIT AGENT ====================
+  streamlit_agent:
+    build:
+      context: ../frontend-streamlit
+      dockerfile: ../docker/Dockerfile.streamlit
+    container_name: parier_streamlit_agent
+    environment:
+      API_BASE_URL: http://fastapi:8000/api/v1
+      STREAMLIT_SERVER_HEADLESS: true
+      STREAMLIT_SERVER_ENABLECORS: false
+      STREAMLIT_BROWSER_GATHERUSAGESTATS: false
+    ports:
+      - "8501:8501"
+    depends_on:
+      fastapi:
+        condition: service_started
+    networks:
+      - parier_network
+    restart: unless-stopped
+
+  # ==================== NGINX REVERSE PROXY ====================
+  nginx:
+    image: nginx:alpine
+    container_name: parier_nginx
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../app/static:/static
+      - ../uploads:/uploads
+      - ./ssl:/etc/nginx/ssl:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - fastapi
+      - flask_web
+      - streamlit_agent
+    networks:
+      - parier_network
+    restart: unless-stopped
+
+# ==================== NETWORKS ====================
+networks:
+  parier_network:
+    driver: bridge
+    name: parier_network
+
+# ==================== VOLUMES ====================
+volumes:
+  postgres_data:
+    name: parier_postgres_data
+  redis_data:
+    name: parier_redis_data

@@ -1,0 +1,24 @@
+# Dockerfile.streamlit
+# Interface agent Streamlit
+
+FROM python:3.12.3-slim
+
+WORKDIR /app
+
+# Installer les dépendances
+COPY frontend-streamlit/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copier le code
+COPY frontend-streamlit/ .
+
+# Créer un utilisateur non-root
+RUN addgroup --system --gid 1000 appuser \
+    && adduser --system --uid 1000 --gid 1000 appuser \
+    && chown -R appuser:appuser /app
+
+USER appuser
+
+EXPOSE 8501
+
+CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
