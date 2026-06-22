@@ -1,0 +1,273 @@
+<!-- app/templates/admin/games/keno/statistics.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Statistiques Keno - Administration{% endblock %}
+
+{% block page_title %}Statistiques Keno{% endblock %}
+{% block page_subtitle %}Analyse détaillée du jeu Keno{% endblock %}
+
+{% block content %}
+<!-- ==================== FILTRES ==================== -->
+<div class="table-container mb-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-filter"></i> Période</div>
+    </div>
+    <div style="padding: 16px 20px;">
+        <form method="GET" action="{{ url_for('admin_keno_statistics') }}" class="grid-3">
+            <div class="form-group" style="margin-bottom: 0;">
+                <label>Du</label>
+                <input type="date" name="start_date" class="form-control" value="{{ start_date }}">
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+                <label>Au</label>
+                <input type="date" name="end_date" class="form-control" value="{{ end_date }}">
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+                <label>&nbsp;</label>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-search"></i> Générer
+                </button>
+            </div>
+        </form>
+        <div class="flex gap-1 mt-2">
+            <button class="btn btn-sm btn-secondary" onclick="setDateRange(7)">7 jours</button>
+            <button class="btn btn-sm btn-secondary" onclick="setDateRange(30)">30 jours</button>
+            <button class="btn btn-sm btn-secondary" onclick="setDateRange(90)">90 jours</button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== STATISTIQUES GLOBALES ==================== -->
+<div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); margin-bottom: 20px;">
+    <div class="stat-card" style="padding: 16px; border-left: 3px solid #3b82f6;">
+        <div class="stat-label">Total tirages</div>
+        <div class="stat-value" style="font-size: 24px;">{{ stats.total_draws }}</div>
+    </div>
+    <div class="stat-card" style="padding: 16px; border-left: 3px solid #8b5cf6;">
+        <div class="stat-label">Total paris</div>
+        <div class="stat-value" style="font-size: 24px;">{{ stats.total_bets }}</div>
+    </div>
+    <div class="stat-card" style="padding: 16px; border-left: 3px solid #059669;">
+        <div class="stat-label">Volume total</div>
+        <div class="stat-value" style="font-size: 24px; color: #059669;">{{ stats.total_volume|format_number }} HTG</div>
+    </div>
+    <div class="stat-card" style="padding: 16px; border-left: 3px solid #ef4444;">
+        <div class="stat-label">Payout total</div>
+        <div class="stat-value" style="font-size: 24px; color: #ef4444;">{{ stats.total_payout|format_number }} HTG</div>
+    </div>
+    <div class="stat-card" style="padding: 16px; border-left: 3px solid #f59e0b;">
+        <div class="stat-label">RTP</div>
+        <div class="stat-value" style="font-size: 24px; color: #f59e0b;">{{ stats.rtp }}%</div>
+    </div>
+    <div class="stat-card" style="padding: 16px; border-left: 3px solid #8b5cf6;">
+        <div class="stat-label">Marge</div>
+        <div class="stat-value" style="font-size: 24px; color: #8b5cf6;">{{ stats.edge }}%</div>
+    </div>
+</div>
+
+<!-- ==================== GRAPHIQUES ==================== -->
+<div class="grid-2">
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-chart-line"></i> Évolution des tirages</div>
+        </div>
+        <div style="padding: 20px;">
+            <canvas id="drawsChart" height="250"></canvas>
+        </div>
+    </div>
+    
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-chart-pie"></i> Répartition des numéros</div>
+        </div>
+        <div style="padding: 20px;">
+            <canvas id="numbersChart" height="250"></canvas>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== NUMÉROS LES PLUS TIRÉS ==================== -->
+<div class="grid-2 mt-3">
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-arrow-up"></i> Numéros les plus tirés</div>
+        </div>
+        <div style="padding: 20px;">
+            <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                {% for num in popular_numbers %}
+                <div style="text-align: center; padding: 8px 12px; background: #d1fae5; border-radius: 8px; min-width: 44px;">
+                    <div style="font-weight: 700; font-size: 16px; color: #065f46;">{{ num.number }}</div>
+                    <div style="font-size: 10px; color: #065f46;">{{ num.count }}x</div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-arrow-down"></i> Numéros les moins tirés</div>
+        </div>
+        <div style="padding: 20px;">
+            <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                {% for num in least_popular_numbers %}
+                <div style="text-align: center; padding: 8px 12px; background: #fee2e2; border-radius: 8px; min-width: 44px;">
+                    <div style="font-weight: 700; font-size: 16px; color: #991b1b;">{{ num.number }}</div>
+                    <div style="font-size: 10px; color: #991b1b;">{{ num.count }}x</div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== ÉVOLUTION QUOTIDIENNE ==================== -->
+<div class="table-container mt-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-table"></i> Évolution quotidienne</div>
+    </div>
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Tirages</th>
+                    <th>Paris</th>
+                    <th>Volume</th>
+                    <th>Payout</th>
+                    <th>RTP</th>
+                    <th>Marge</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for day in daily_data %}
+                <tr>
+                    <td>{{ day.date }}</td>
+                    <td>{{ day.draws }}</td>
+                    <td>{{ day.bets }}</td>
+                    <td>{{ day.volume|format_number }} HTG</td>
+                    <td>{{ day.payout|format_number }} HTG</td>
+                    <td>
+                        <span class="badge {% if day.rtp > 80 %}success{% elif day.rtp > 60 %}warning{% else %}danger{% endif %}">
+                            {{ day.rtp }}%
+                        </span>
+                    </td>
+                    <td>
+                        <span class="badge {% if day.edge > 10 %}success{% elif day.edge > 0 %}warning{% else %}danger{% endif %}">
+                            {{ day.edge }}%
+                        </span>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    // ==================== DATE RANGES ====================
+    function setDateRange(days) {
+        const end = new Date();
+        const start = new Date();
+        start.setDate(end.getDate() - days);
+        
+        document.querySelector('input[name="start_date"]').value = start.toISOString().split('T')[0];
+        document.querySelector('input[name="end_date"]').value = end.toISOString().split('T')[0];
+        document.querySelector('form').submit();
+    }
+    
+    // ==================== GRAPHIQUES ====================
+    document.addEventListener('DOMContentLoaded', function() {
+        const chartData = {{ chart_data|tojson }};
+        
+        // Graphique des tirages
+        const ctx1 = document.getElementById('drawsChart').getContext('2d');
+        new Chart(ctx1, {
+            type: 'bar',
+            data: {
+                labels: chartData.labels,
+                datasets: [
+                    {
+                        label: 'Paris',
+                        data: chartData.bets,
+                        backgroundColor: 'rgba(59, 130, 246, 0.7)',
+                        borderColor: '#3b82f6',
+                        borderWidth: 1
+                    },
+                    {
+                        label: 'Volume (HTG)',
+                        data: chartData.volume,
+                        backgroundColor: 'rgba(5, 150, 105, 0.7)',
+                        borderColor: '#059669',
+                        borderWidth: 1
+                    },
+                    {
+                        label: 'Payout (HTG)',
+                        data: chartData.payout,
+                        backgroundColor: 'rgba(239, 68, 68, 0.7)',
+                        borderColor: '#ef4444',
+                        borderWidth: 1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            usePointStyle: true,
+                            padding: 20
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) {
+                                return value.toLocaleString();
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        
+        // Graphique des numéros
+        const ctx2 = document.getElementById('numbersChart').getContext('2d');
+        const numberData = chartData.number_distribution || [];
+        new Chart(ctx2, {
+            type: 'doughnut',
+            data: {
+                labels: numberData.map(n => n.range),
+                datasets: [{
+                    data: numberData.map(n => n.count),
+                    backgroundColor: [
+                        '#059669', '#3b82f6', '#8b5cf6', '#f59e0b', '#ef4444',
+                        '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#22c55e'
+                    ],
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            usePointStyle: true,
+                            padding: 15
+                        }
+                    }
+                },
+                cutout: '60%'
+            }
+        });
+    });
+</script>
+{% endblock %}
+{% endblock %}

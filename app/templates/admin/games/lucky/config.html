@@ -1,0 +1,304 @@
+<!-- app/templates/admin/games/lucky/config.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Configuration Lucky Wheel - Administration{% endblock %}
+
+{% block page_title %}Configuration Lucky Wheel{% endblock %}
+{% block page_subtitle %}Paramètres de la roue de la chance{% endblock %}
+
+{% block content %}
+<div class="grid-2">
+    <!-- ==================== PARAMÈTRES ==================== -->
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-cog"></i> Paramètres généraux</div>
+        </div>
+        <div style="padding: 20px;">
+            <form id="configForm" onsubmit="return submitConfig(event)">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                
+                <div class="form-group">
+                    <label>Nom de la roue</label>
+                    <input type="text" name="name" class="form-control" value="{{ config.name }}" required>
+                </div>
+                
+                <div class="form-group">
+                    <label>Description</label>
+                    <input type="text" name="description" class="form-control" value="{{ config.description or '' }}">
+                </div>
+                
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Mise minimum (HTG)</label>
+                        <input type="number" name="min_bet" class="form-control" 
+                               value="{{ config.min_bet }}" min="1" step="1" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Mise maximum (HTG)</label>
+                        <input type="number" name="max_bet" class="form-control" 
+                               value="{{ config.max_bet }}" min="10" step="10" required>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>RTP théorique</label>
+                    <div style="font-size: 20px; font-weight: 700; color: #8b5cf6;">
+                        {{ "%.1f"|format(config.theoretical_rtp * 100) }}%
+                    </div>
+                    <div class="help-text">Calculé automatiquement à partir des segments</div>
+                </div>
+                
+                <button type="submit" class="btn btn-primary w-full">
+                    <i class="fas fa-save"></i> Enregistrer la configuration
+                </button>
+            </form>
+        </div>
+    </div>
+    
+    <!-- ==================== SEGMENTS ==================== -->
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-chart-pie"></i> Segments de la roue</div>
+            <button class="btn btn-sm btn-primary" onclick="addSegment()">
+                <i class="fas fa-plus"></i> Ajouter
+            </button>
+        </div>
+        <div style="padding: 20px; max-height: 500px; overflow-y: auto;">
+            <form id="segmentsForm" onsubmit="return submitSegments(event)">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div id="segmentsContainer">
+                    {% for segment in config.segments %}
+                    <div class="segment-item" style="display: flex; gap: 8px; margin-bottom: 8px; align-items: center; padding: 8px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0;">
+                        <input type="text" name="segments[{{ loop.index0 }}][label]" value="{{ segment.label }}" 
+                               placeholder="Label" class="form-control" style="flex: 1; width: 80px;" required>
+                        <input type="number" name="segments[{{ loop.index0 }}][multiplier]" value="{{ segment.multiplier }}" 
+                               placeholder="x" class="form-control" style="width: 70px;" step="0.5" min="0" required>
+                        <input type="number" name="segments[{{ loop.index0 }}][weight]" value="{{ segment.weight }}" 
+                               placeholder="Poids" class="form-control" style="width: 70px;" min="1" required>
+                        <input type="color" name="segments[{{ loop.index0 }}][color]" value="{{ segment.color }}" 
+                               class="form-control" style="width: 50px; padding: 2px; height: 38px;">
+                        <button type="button" class="btn btn-sm btn-danger" onclick="removeSegment(this)">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                    {% endfor %}
+                </div>
+                <div class="help-text mt-1">Poids = probabilité relative. Plus le poids est élevé, plus le segment a de chances de sortir.</div>
+                <button type="submit" class="btn btn-primary mt-2">
+                    <i class="fas fa-save"></i> Enregistrer les segments
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== PRÉVISUALISATION ==================== -->
+<div class="table-container mt-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-eye"></i> Prévisualisation de la roue</div>
+    </div>
+    <div style="padding: 20px; text-align: center;">
+        <div style="position: relative; display: inline-block;">
+            <canvas id="wheelPreview" width="300" height="300"></canvas>
+            <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);">
+                <div style="width: 30px; height: 30px; background: #f59e0b; border-radius: 50%; border: 3px solid white; box-shadow: 0 4px 12px rgba(0,0,0,0.2);"></div>
+            </div>
+            <div style="position: absolute; top: -5px; left: 50%; transform: translateX(-50%);">
+                <div style="width: 0; height: 0; border-left: 12px solid transparent; border-right: 12px solid transparent; border-bottom: 20px solid #ef4444;"></div>
+            </div>
+        </div>
+        <div style="margin-top: 12px; display: flex; justify-content: center; gap: 12px; flex-wrap: wrap;">
+            {% for segment in config.segments %}
+            <div style="display: flex; align-items: center; gap: 4px; font-size: 12px;">
+                <span style="display: inline-block; width: 16px; height: 16px; border-radius: 4px; background-color: {{ segment.color }};"></span>
+                {{ segment.label }} (x{{ segment.multiplier }})
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    // ==================== SOUMISSION CONFIGURATION ====================
+    function submitConfig(e) {
+        e.preventDefault();
+        const form = e.target;
+        const data = new FormData(form);
+        
+        const payload = {
+            name: data.get('name'),
+            description: data.get('description') || null,
+            min_bet: parseFloat(data.get('min_bet')),
+            max_bet: parseFloat(data.get('max_bet'))
+        };
+        
+        fetch('/admin/api/lucky/config', {
+            method: 'PUT',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Configuration enregistrée', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            showToast('Erreur réseau', 'error');
+        });
+    }
+    
+    // ==================== SOUMISSION SEGMENTS ====================
+    function submitSegments(e) {
+        e.preventDefault();
+        const form = e.target;
+        const formData = new FormData(form);
+        
+        const segments = [];
+        let index = 0;
+        while (formData.has(`segments[${index}][label]`)) {
+            segments.push({
+                label: formData.get(`segments[${index}][label]`),
+                multiplier: parseFloat(formData.get(`segments[${index}][multiplier]`)),
+                weight: parseInt(formData.get(`segments[${index}][weight]`)),
+                color: formData.get(`segments[${index}][color]`)
+            });
+            index++;
+        }
+        
+        if (segments.length < 5) {
+            showToast('La roue doit avoir au moins 5 segments', 'error');
+            return;
+        }
+        
+        fetch('/admin/api/lucky/config/{{ config.id }}/segments', {
+            method: 'PUT',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ segments: segments })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Segments enregistrés', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            showToast('Erreur réseau', 'error');
+        });
+    }
+    
+    // ==================== AJOUTER SEGMENT ====================
+    function addSegment() {
+        const container = document.getElementById('segmentsContainer');
+        const index = container.children.length;
+        
+        const div = document.createElement('div');
+        div.className = 'segment-item';
+        div.style.cssText = 'display: flex; gap: 8px; margin-bottom: 8px; align-items: center; padding: 8px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0;';
+        div.innerHTML = `
+            <input type="text" name="segments[${index}][label]" placeholder="Label" class="form-control" style="flex: 1; width: 80px;" required>
+            <input type="number" name="segments[${index}][multiplier]" placeholder="x" class="form-control" style="width: 70px;" step="0.5" min="0" required>
+            <input type="number" name="segments[${index}][weight]" placeholder="Poids" class="form-control" style="width: 70px;" min="1" required>
+            <input type="color" name="segments[${index}][color]" value="#44AAFF" class="form-control" style="width: 50px; padding: 2px; height: 38px;">
+            <button type="button" class="btn btn-sm btn-danger" onclick="removeSegment(this)">
+                <i class="fas fa-times"></i>
+            </button>
+        `;
+        container.appendChild(div);
+    }
+    
+    // ==================== SUPPRIMER SEGMENT ====================
+    function removeSegment(btn) {
+        const container = document.getElementById('segmentsContainer');
+        if (container.children.length <= 5) {
+            showToast('La roue doit avoir au moins 5 segments', 'warning');
+            return;
+        }
+        btn.closest('.segment-item').remove();
+        // Renuméroter
+        container.querySelectorAll('.segment-item').forEach((el, i) => {
+            el.querySelectorAll('input').forEach(input => {
+                const name = input.name;
+                input.name = name.replace(/\[\d+\]/, `[${i}]`);
+            });
+        });
+    }
+    
+    // ==================== PRÉVISUALISATION ROUE ====================
+    function drawWheelPreview() {
+        const segments = [];
+        document.querySelectorAll('#segmentsContainer .segment-item').forEach(el => {
+            const label = el.querySelector('input[name$="[label]"]')?.value || '?';
+            const multiplier = parseFloat(el.querySelector('input[name$="[multiplier]"]')?.value) || 0;
+            const weight = parseInt(el.querySelector('input[name$="[weight]"]')?.value) || 1;
+            const color = el.querySelector('input[name$="[color]"]')?.value || '#44AAFF';
+            segments.push({ label, multiplier, weight, color });
+        });
+        
+        if (segments.length < 2) return;
+        
+        const canvas = document.getElementById('wheelPreview');
+        const ctx = canvas.getContext('2d');
+        const centerX = canvas.width / 2;
+        const centerY = canvas.height / 2;
+        const radius = 140;
+        
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        const totalWeight = segments.reduce((sum, s) => sum + s.weight, 0);
+        let startAngle = 0;
+        
+        segments.forEach(segment => {
+            const sliceAngle = (segment.weight / totalWeight) * 2 * Math.PI;
+            const endAngle = startAngle + sliceAngle;
+            
+            ctx.beginPath();
+            ctx.moveTo(centerX, centerY);
+            ctx.arc(centerX, centerY, radius, startAngle, endAngle);
+            ctx.closePath();
+            
+            ctx.fillStyle = segment.color;
+            ctx.fill();
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            // Texte
+            const midAngle = startAngle + sliceAngle / 2;
+            const textRadius = radius * 0.65;
+            const x = centerX + Math.cos(midAngle) * textRadius;
+            const y = centerY + Math.sin(midAngle) * textRadius;
+            
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(midAngle + Math.PI / 2);
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 10px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(segment.label, 0, 0);
+            ctx.restore();
+            
+            startAngle = endAngle;
+        });
+    }
+    
+    // Mettre à jour la prévisualisation en temps réel
+    document.getElementById('segmentsContainer').addEventListener('input', drawWheelPreview);
+    document.addEventListener('DOMContentLoaded', drawWheelPreview);
+</script>
+{% endblock %}
+{% endblock %}

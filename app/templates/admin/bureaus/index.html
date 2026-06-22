@@ -1,0 +1,407 @@
+<!-- app/templates/admin/bureaus/index.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Bureaux - Administration{% endblock %}
+
+{% block page_title %}Gestion des bureaux{% endblock %}
+{% block page_subtitle %}Gérez tous les points de vente physiques de la plateforme{% endblock %}
+
+{% block content %}
+<!-- ==================== STATISTIQUES RAPIDES ==================== -->
+<div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-bottom: 20px;">
+    <div class="stat-card" style="padding: 12px 16px;">
+        <div class="stat-label">Total bureaux</div>
+        <div class="stat-value" style="font-size: 20px;">{{ stats.total }}</div>
+    </div>
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #22c55e;">
+        <div class="stat-label">Actifs</div>
+        <div class="stat-value" style="font-size: 20px; color: #22c55e;">{{ stats.active }}</div>
+    </div>
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #3b82f6;">
+        <div class="stat-label">Total agents</div>
+        <div class="stat-value" style="font-size: 20px; color: #3b82f6;">{{ stats.total_agents }}</div>
+    </div>
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #f59e0b;">
+        <div class="stat-label">Caisse totale</div>
+        <div class="stat-value" style="font-size: 20px; color: #f59e0b;">{{ stats.total_cash|format_number }} HTG</div>
+    </div>
+</div>
+
+<!-- ==================== FILTRES ==================== -->
+<div class="table-container mb-3">
+    <div class="table-header">
+        <div class="title">
+            <i class="fas fa-filter"></i> Filtres
+        </div>
+        <div class="actions">
+            <button class="btn btn-sm btn-secondary" onclick="resetFilters()">
+                <i class="fas fa-undo"></i> Réinitialiser
+            </button>
+        </div>
+    </div>
+    <div style="padding: 16px 20px;">
+        <form method="GET" action="{{ url_for('admin_bureaus') }}" id="filterForm">
+            <div class="grid-3">
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Recherche</label>
+                    <input type="text" name="search" class="form-control" 
+                           placeholder="Nom, code, ville..." 
+                           value="{{ filters.search or '' }}">
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Ville</label>
+                    <select name="city" class="form-control">
+                        <option value="">Toutes les villes</option>
+                        {% for city in cities %}
+                        <option value="{{ city }}" {% if filters.city == city %}selected{% endif %}>
+                            {{ city }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Statut</label>
+                    <select name="status" class="form-control">
+                        <option value="">Tous</option>
+                        <option value="active" {% if filters.status == 'active' %}selected{% endif %}>Actif</option>
+                        <option value="inactive" {% if filters.status == 'inactive' %}selected{% endif %}>Inactif</option>
+                    </select>
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>&nbsp;</label>
+                    <div class="flex" style="gap: 8px;">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-search"></i> Filtrer
+                        </button>
+                        <a href="{{ url_for('admin_bureau_create') }}" class="btn btn-success">
+                            <i class="fas fa-plus"></i> Ajouter
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- ==================== LISTE ==================== -->
+<div class="table-container">
+    <div class="table-header">
+        <div class="title">
+            <i class="fas fa-store"></i> Bureaux ({{ pagination.total }})
+        </div>
+        <div class="actions">
+            <button class="btn btn-secondary" onclick="exportBureaus()">
+                <i class="fas fa-file-export"></i> Exporter
+            </button>
+            <button class="btn btn-secondary" onclick="refreshTable()">
+                <i class="fas fa-sync"></i>
+            </button>
+        </div>
+    </div>
+    
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 30px;">
+                        <input type="checkbox" id="selectAll" onchange="toggleAllBureaus()">
+                    </th>
+                    <th>Bureau</th>
+                    <th>Code</th>
+                    <th>Ville</th>
+                    <th>Téléphone</th>
+                    <th>Agents</th>
+                    <th>Caisse</th>
+                    <th>Statut</th>
+                    <th>Date</th>
+                    <th style="width: 120px;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for bureau in bureaus %}
+                <tr>
+                    <td>
+                        <input type="checkbox" class="bureau-checkbox" value="{{ bureau.id }}">
+                    </td>
+                    <td>
+                        <div class="flex-center">
+                            <div style="width: 36px; height: 36px; border-radius: 50%; background: #3b82f6; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 14px; color: white; flex-shrink: 0;">
+                                {{ bureau.name[:1]|upper }}
+                            </div>
+                            <div>
+                                <div style="font-weight: 500;">{{ bureau.name }}</div>
+                                <div style="font-size: 12px; color: #94a3b8;">{{ bureau.address or '' }}</div>
+                            </div>
+                        </div>
+                    </td>
+                    <td><span style="font-family: monospace; font-size: 12px; background: #f1f5f9; padding: 2px 8px; border-radius: 4px;">{{ bureau.code }}</span></td>
+                    <td>{{ bureau.city or '-' }}</td>
+                    <td>{{ bureau.phone or '-' }}</td>
+                    <td>
+                        <span class="badge info">{{ bureau.agents_count or 0 }}</span>
+                    </td>
+                    <td class="text-primary font-bold" style="font-weight: 600; color: #059669;">
+                        {{ bureau.cash_balance|format_number }} HTG
+                    </td>
+                    <td>
+                        {% if bureau.is_active %}
+                            <span class="badge success"><i class="fas fa-check-circle"></i> Actif</span>
+                        {% else %}
+                            <span class="badge gray"><i class="fas fa-times-circle"></i> Inactif</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-muted" style="font-size: 12px;">{{ bureau.created_at|timeago }}</td>
+                    <td>
+                        <div class="flex" style="gap: 4px;">
+                            <a href="{{ url_for('admin_bureau_detail', bureau_id=bureau.id) }}" 
+                               class="btn btn-sm btn-secondary" title="Voir">
+                                <i class="fas fa-eye"></i>
+                            </a>
+                            <a href="{{ url_for('admin_bureau_edit', bureau_id=bureau.id) }}" 
+                               class="btn btn-sm btn-primary" title="Modifier">
+                                <i class="fas fa-edit"></i>
+                            </a>
+                            <button class="btn btn-sm btn-danger" 
+                                    onclick="confirmDelete('{{ bureau.id }}', '{{ bureau.name }}')" 
+                                    title="Supprimer">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="10" class="text-center text-muted" style="padding: 40px;">
+                        <i class="fas fa-store" style="font-size: 40px; display: block; margin-bottom: 12px; opacity: 0.3;"></i>
+                        Aucun bureau trouvé
+                        {% if filters.search %}
+                            <br><small>Essayez de modifier vos critères de recherche</small>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- ==================== PAGINATION ==================== -->
+    {% if pagination.pages > 1 %}
+    <div class="pagination">
+        <a href="{{ url_for('admin_bureaus', page=1, **request.args) }}" 
+           class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
+            <i class="fas fa-angle-double-left"></i>
+        </a>
+        
+        {% if pagination.has_prev %}
+        <a href="{{ url_for('admin_bureaus', page=pagination.page-1, **request.args) }}" class="page-item">
+            <i class="fas fa-chevron-left"></i>
+        </a>
+        {% endif %}
+        
+        {% for p in range(1, pagination.pages + 1) %}
+            {% if p == pagination.page %}
+                <span class="page-item active">{{ p }}</span>
+            {% elif p <= 3 or p > pagination.pages - 3 or (p >= pagination.page - 2 and p <= pagination.page + 2) %}
+                <a href="{{ url_for('admin_bureaus', page=p, **request.args) }}" class="page-item">{{ p }}</a>
+            {% elif p == 4 or p == pagination.pages - 3 %}
+                <span class="page-item">...</span>
+            {% endif %}
+        {% endfor %}
+        
+        {% if pagination.has_next %}
+        <a href="{{ url_for('admin_bureaus', page=pagination.page+1, **request.args) }}" class="page-item">
+            <i class="fas fa-chevron-right"></i>
+        </a>
+        {% endif %}
+        
+        <a href="{{ url_for('admin_bureaus', page=pagination.pages, **request.args) }}" 
+           class="page-item {% if not pagination.has_next %}disabled{% endif %}">
+            <i class="fas fa-angle-double-right"></i>
+        </a>
+    </div>
+    {% endif %}
+    
+    <!-- ==================== BULK ACTIONS ==================== -->
+    <div style="padding: 12px 20px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+        <div>
+            <span id="selectedCount" style="font-size: 13px; color: #94a3b8;">0 sélectionné</span>
+        </div>
+        <div class="flex" style="gap: 8px;">
+            <button class="btn btn-sm btn-success" onclick="bulkAction('activate')" disabled id="bulkActivate">
+                <i class="fas fa-check"></i> Activer
+            </button>
+            <button class="btn btn-sm btn-danger" onclick="bulkAction('deactivate')" disabled id="bulkDeactivate">
+                <i class="fas fa-times"></i> Désactiver
+            </button>
+            <button class="btn btn-sm btn-danger" onclick="bulkAction('delete')" disabled id="bulkDelete">
+                <i class="fas fa-trash"></i> Supprimer
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MODAL SUPPRESSION ==================== -->
+<div class="modal-overlay" id="deleteModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Confirmer la suppression</h2>
+            <button class="modal-close" onclick="closeModal('deleteModal')">&times;</button>
+        </div>
+        <p id="deleteMessage">Êtes-vous sûr de vouloir supprimer ce bureau ? Cette action est irréversible.</p>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('deleteModal')">Annuler</button>
+            <button class="btn btn-danger" id="confirmDeleteBtn">Supprimer</button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MODAL BULK ACTION ==================== -->
+<div class="modal-overlay" id="bulkModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2 id="bulkModalTitle">Action groupée</h2>
+            <button class="modal-close" onclick="closeModal('bulkModal')">&times;</button>
+        </div>
+        <p id="bulkModalMessage">Confirmer l'action sur les bureaux sélectionnés ?</p>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('bulkModal')">Annuler</button>
+            <button class="btn btn-primary" id="confirmBulkBtn">Confirmer</button>
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    // ==================== SÉLECTION TOUS ====================
+    function toggleAllBureaus() {
+        const checked = document.getElementById('selectAll').checked;
+        document.querySelectorAll('.bureau-checkbox').forEach(cb => cb.checked = checked);
+        updateSelectedCount();
+    }
+    
+    document.querySelectorAll('.bureau-checkbox').forEach(cb => {
+        cb.addEventListener('change', updateSelectedCount);
+    });
+    
+    function updateSelectedCount() {
+        const selected = document.querySelectorAll('.bureau-checkbox:checked').length;
+        document.getElementById('selectedCount').textContent = selected + ' sélectionné' + (selected > 1 ? 's' : '');
+        
+        const hasSelected = selected > 0;
+        document.getElementById('bulkActivate').disabled = !hasSelected;
+        document.getElementById('bulkDeactivate').disabled = !hasSelected;
+        document.getElementById('bulkDelete').disabled = !hasSelected;
+    }
+    
+    // ==================== SUPPRESSION INDIVIDUELLE ====================
+    let deleteBureauId = null;
+    
+    function confirmDelete(bureauId, bureauName) {
+        deleteBureauId = bureauId;
+        document.getElementById('deleteMessage').textContent = 
+            `Êtes-vous sûr de vouloir supprimer le bureau "${bureauName || bureauId}" ? Cette action est irréversible.`;
+        openModal('deleteModal');
+    }
+    
+    document.getElementById('confirmDeleteBtn').addEventListener('click', function() {
+        if (deleteBureauId) {
+            fetch(`/admin/api/bureaus/${deleteBureauId}`, {
+                method: 'DELETE',
+                headers: {
+                    'X-CSRFToken': '{{ csrf_token() }}',
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                closeModal('deleteModal');
+                if (data.success) {
+                    showToast('Bureau supprimé avec succès', 'success');
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    showToast(data.error || 'Erreur lors de la suppression', 'error');
+                }
+            })
+            .catch(() => {
+                closeModal('deleteModal');
+                showToast('Erreur réseau', 'error');
+            });
+        }
+    });
+    
+    // ==================== ACTIONS GROUPÉES ====================
+    let bulkActionType = null;
+    let bulkBureauIds = [];
+    
+    function bulkAction(action) {
+        bulkBureauIds = Array.from(document.querySelectorAll('.bureau-checkbox:checked')).map(cb => cb.value);
+        if (bulkBureauIds.length === 0) return;
+        
+        bulkActionType = action;
+        const labels = {
+            'activate': 'Activer',
+            'deactivate': 'Désactiver',
+            'delete': 'Supprimer'
+        };
+        const messages = {
+            'activate': 'Activer les bureaux sélectionnés ?',
+            'deactivate': 'Désactiver les bureaux sélectionnés ?',
+            'delete': 'Supprimer définitivement les bureaux sélectionnés ? Cette action est irréversible.'
+        };
+        
+        document.getElementById('bulkModalTitle').textContent = labels[action] + ' - ' + bulkBureauIds.length + ' bureau' + (bulkBureauIds.length > 1 ? 'x' : '');
+        document.getElementById('bulkModalMessage').textContent = messages[action];
+        openModal('bulkModal');
+    }
+    
+    document.getElementById('confirmBulkBtn').addEventListener('click', function() {
+        if (!bulkActionType || bulkBureauIds.length === 0) return;
+        
+        fetch(`/admin/api/bureaus/bulk/${bulkActionType}`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ bureau_ids: bulkBureauIds })
+        })
+        .then(response => response.json())
+        .then(data => {
+            closeModal('bulkModal');
+            if (data.success) {
+                showToast(data.message || 'Action effectuée avec succès', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            closeModal('bulkModal');
+            showToast('Erreur réseau', 'error');
+        });
+    });
+    
+    // ==================== EXPORT ====================
+    function exportBureaus() {
+        const form = document.getElementById('filterForm');
+        const params = new URLSearchParams(new FormData(form));
+        window.location.href = '/admin/api/bureaus/export?' + params.toString();
+    }
+    
+    // ==================== RECHARGE ====================
+    function refreshTable() {
+        location.reload();
+    }
+    
+    // ==================== RÉINITIALISATION FILTRES ====================
+    function resetFilters() {
+        document.querySelectorAll('#filterForm input, #filterForm select').forEach(el => {
+            if (el.type !== 'submit') {
+                el.value = '';
+            }
+        });
+        document.getElementById('filterForm').submit();
+    }
+</script>
+{% endblock %}
+{% endblock %}

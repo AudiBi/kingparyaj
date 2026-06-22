@@ -1,0 +1,486 @@
+<!-- app/templates/admin/promotions/edit.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Modifier une promotion - Administration{% endblock %}
+
+{% block page_title %}Modifier une promotion{% endblock %}
+{% block page_subtitle %}{{ promotion.name }}{% endblock %}
+
+{% block content %}
+<div class="grid-2">
+    <!-- ==================== FORMULAIRE ==================== -->
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-edit"></i> Informations de la promotion</div>
+        </div>
+        <div style="padding: 24px;">
+            <form id="editForm" onsubmit="return submitEdit(event)">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                
+                <div class="form-group">
+                    <label>Nom de la promotion <span class="text-danger">*</span></label>
+                    <input type="text" name="name" class="form-control" value="{{ promotion.name }}" required>
+                </div>
+                
+                <div class="form-group">
+                    <label>Code promotionnel</label>
+                    <input type="text" name="code" class="form-control" value="{{ promotion.code or '' }}" 
+                           oninput="this.value = this.value.toUpperCase()">
+                    <div class="help-text">Laissez vide pour générer automatiquement</div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Description</label>
+                    <textarea name="description" class="form-control" rows="3">{{ promotion.description or '' }}</textarea>
+                </div>
+                
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Type de promotion <span class="text-danger">*</span></label>
+                        <select name="type" class="form-control" id="promoType" required>
+                            <option value="deposit_bonus" {% if promotion.type == 'deposit_bonus' %}selected{% endif %}>Bonus de dépôt</option>
+                            <option value="cashback" {% if promotion.type == 'cashback' %}selected{% endif %}>Cashback</option>
+                            <option value="free_bet" {% if promotion.type == 'free_bet' %}selected{% endif %}>Pari gratuit</option>
+                            <option value="multiplier" {% if promotion.type == 'multiplier' %}selected{% endif %}>Multiplicateur</option>
+                            <option value="referral" {% if promotion.type == 'referral' %}selected{% endif %}>Parrainage</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Statut</label>
+                        <select name="status" class="form-control">
+                            <option value="draft" {% if promotion.status == 'draft' %}selected{% endif %}>Brouillon</option>
+                            <option value="active" {% if promotion.status == 'active' %}selected{% endif %}>Actif</option>
+                            <option value="paused" {% if promotion.status == 'paused' %}selected{% endif %}>En pause</option>
+                            <option value="expired" {% if promotion.status == 'expired' %}selected{% endif %}>Expiré</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Date de début <span class="text-danger">*</span></label>
+                        <input type="date" name="start_date" class="form-control" value="{{ promotion.start_date.strftime('%Y-%m-%d') }}" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Date de fin <span class="text-danger">*</span></label>
+                        <input type="date" name="end_date" class="form-control" value="{{ promotion.end_date.strftime('%Y-%m-%d') }}" required>
+                    </div>
+                </div>
+                
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Dépôt minimum (HTG)</label>
+                        <input type="number" name="min_deposit" class="form-control" value="{{ promotion.min_deposit or '' }}" step="10">
+                    </div>
+                    <div class="form-group">
+                        <label>Bonus maximum (HTG)</label>
+                        <input type="number" name="max_bonus" class="form-control" value="{{ promotion.max_bonus or '' }}" step="10">
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Exigence de mise</label>
+                    <input type="number" name="wagering_requirement" class="form-control" value="{{ promotion.wagering_requirement }}" min="1">
+                </div>
+                
+                <div class="form-group">
+                    <label>Budget total (HTG)</label>
+                    <input type="number" name="total_budget" class="form-control" value="{{ promotion.total_budget or '' }}" step="100">
+                    <div class="help-text">Actuellement utilisé: {{ promotion.used_budget|format_number }} HTG</div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Jeux éligibles</label>
+                    <div style="display: flex; gap: 16px; margin-top: 4px;">
+                        <label>
+                            <input type="checkbox" name="eligible_games" value="keno" {% if 'keno' in promotion.eligible_games %}checked{% endif %}>
+                            Keno
+                        </label>
+                        <label>
+                            <input type="checkbox" name="eligible_games" value="lucky" {% if 'lucky' in promotion.eligible_games %}checked{% endif %}>
+                            Lucky Wheel
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" name="new_users_only" {% if promotion.new_users_only %}checked{% endif %}>
+                            Nouveaux utilisateurs uniquement
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" name="first_deposit_only" {% if promotion.first_deposit_only %}checked{% endif %}>
+                            Premier dépôt uniquement
+                        </label>
+                    </div>
+                </div>
+                
+                <!-- Configuration spécifique au type -->
+                <div id="configFields" style="border-top: 1px solid #e2e8f0; padding-top: 16px; margin-top: 16px;">
+                    <h4 style="margin: 0 0 12px 0;">Configuration spécifique</h4>
+                    <div id="configContent"></div>
+                </div>
+                
+                <div class="modal-footer" style="margin-top: 24px; border-top: 1px solid #e2e8f0; padding-top: 16px;">
+                    <a href="{{ url_for('admin_promotions') }}" class="btn btn-secondary">Annuler</a>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-save"></i> Enregistrer
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- ==================== STATISTIQUES ==================== -->
+    <div>
+        <div class="table-container mb-3">
+            <div class="table-header">
+                <div class="title"><i class="fas fa-chart-bar"></i> Statistiques</div>
+            </div>
+            <div style="padding: 20px;">
+                <div class="stats-grid" style="grid-template-columns: 1fr 1fr; gap: 12px;">
+                    <div class="stat-card" style="padding: 12px; box-shadow: none; border: 1px solid #e2e8f0;">
+                        <div class="stat-label">Total réclamations</div>
+                        <div class="stat-value" style="font-size: 20px;">{{ promotion.total_claims }}</div>
+                    </div>
+                    <div class="stat-card" style="padding: 12px; box-shadow: none; border: 1px solid #e2e8f0;">
+                        <div class="stat-label">Bonus distribués</div>
+                        <div class="stat-value" style="font-size: 20px; color: #059669;">{{ promotion.total_bonus_given|format_number }} HTG</div>
+                    </div>
+                    <div class="stat-card" style="padding: 12px; box-shadow: none; border: 1px solid #e2e8f0;">
+                        <div class="stat-label">Budget restant</div>
+                        <div class="stat-value" style="font-size: 20px; color: {% if promotion.total_budget and (promotion.total_budget - promotion.used_budget) > 0 %}22c55e{% else %}ef4444{% endif %};">
+                            {% if promotion.total_budget %}
+                            {{ (promotion.total_budget - promotion.used_budget)|format_number }} HTG
+                            {% else %}
+                            Illimité
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="stat-card" style="padding: 12px; box-shadow: none; border: 1px solid #e2e8f0;">
+                        <div class="stat-label">Utilisation</div>
+                        <div class="stat-value" style="font-size: 20px;">
+                            {% if promotion.total_budget %}
+                            {{ ((promotion.used_budget / promotion.total_budget) * 100)|round(1) }}%
+                            {% else %}
+                            -
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Actions rapides -->
+        <div class="table-container">
+            <div class="table-header">
+                <div class="title"><i class="fas fa-bolt"></i> Actions rapides</div>
+            </div>
+            <div style="padding: 20px;">
+                <div style="display: flex; flex-direction: column; gap: 12px;">
+                    {% if promotion.status == 'draft' or promotion.status == 'paused' %}
+                    <button class="btn btn-success w-full" onclick="changeStatus('active')">
+                        <i class="fas fa-play"></i> Activer la promotion
+                    </button>
+                    {% endif %}
+                    
+                    {% if promotion.status == 'active' %}
+                    <button class="btn btn-warning w-full" onclick="changeStatus('paused')">
+                        <i class="fas fa-pause"></i> Mettre en pause
+                    </button>
+                    {% endif %}
+                    
+                    <button class="btn btn-danger w-full" onclick="confirmDelete('{{ promotion.id }}', '{{ promotion.name }}')">
+                        <i class="fas fa-trash"></i> Supprimer définitivement
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MODAL SUPPRESSION ==================== -->
+<div class="modal-overlay" id="deleteModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Confirmer la suppression</h2>
+            <button class="modal-close" onclick="closeModal('deleteModal')">&times;</button>
+        </div>
+        <p id="deleteMessage">Êtes-vous sûr de vouloir supprimer cette promotion ? Cette action est irréversible.</p>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('deleteModal')">Annuler</button>
+            <button class="btn btn-danger" id="confirmDeleteBtn">Supprimer</button>
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    // ==================== TYPE DE PROMOTION ====================
+    function loadConfig(type, config) {
+        const configContent = document.getElementById('configContent');
+        let html = '';
+        
+        switch(type) {
+            case 'deposit_bonus':
+                html = `
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label>Pourcentage de bonus <span class="text-danger">*</span></label>
+                            <input type="number" name="config_bonus_percent" class="form-control" value="${config.bonus_percent || 100}" min="1" required>
+                            <div class="help-text">% de bonus sur le dépôt</div>
+                        </div>
+                        <div class="form-group">
+                            <label>Bonus maximum (HTG)</label>
+                            <input type="number" name="config_max_bonus" class="form-control" value="${config.max_bonus || ''}" step="10">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Dépôt minimum (HTG)</label>
+                        <input type="number" name="config_min_deposit" class="form-control" value="${config.min_deposit || 100}" step="10" required>
+                    </div>
+                `;
+                break;
+                
+            case 'cashback':
+                html = `
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label>Pourcentage de cashback <span class="text-danger">*</span></label>
+                            <input type="number" name="config_percentage" class="form-control" value="${config.percentage || 10}" min="1" max="100" required>
+                            <div class="help-text">% de cashback sur les pertes</div>
+                        </div>
+                        <div class="form-group">
+                            <label>Cashback maximum (HTG)</label>
+                            <input type="number" name="config_max_cashback" class="form-control" value="${config.max_cashback || ''}" step="10">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Période (jours)</label>
+                        <input type="number" name="config_period_days" class="form-control" value="${config.period_days || 7}" min="1" required>
+                    </div>
+                `;
+                break;
+                
+            case 'free_bet':
+                html = `
+                    <div class="form-group">
+                        <label>Montant du pari gratuit <span class="text-danger">*</span></label>
+                        <input type="number" name="config_free_bet_amount" class="form-control" value="${config.free_bet_amount || ''}" step="10" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Jeux autorisés</label>
+                        <select name="config_allowed_games" class="form-control">
+                            <option value="all" ${config.allowed_games === 'all' ? 'selected' : ''}>Tous les jeux</option>
+                            <option value="keno" ${config.allowed_games === 'keno' ? 'selected' : ''}>Keno uniquement</option>
+                            <option value="lucky" ${config.allowed_games === 'lucky' ? 'selected' : ''}>Lucky uniquement</option>
+                        </select>
+                    </div>
+                `;
+                break;
+                
+            case 'multiplier':
+                html = `
+                    <div class="form-group">
+                        <label>Multiplicateur <span class="text-danger">*</span></label>
+                        <input type="number" name="config_multiplier" class="form-control" value="${config.multiplier || 2}" min="1" step="0.5" required>
+                        <div class="help-text">Ex: 2 = double les gains</div>
+                    </div>
+                    <div class="form-group">
+                        <label>Gain maximum (HTG)</label>
+                        <input type="number" name="config_max_win" class="form-control" value="${config.max_win || ''}" step="10">
+                    </div>
+                `;
+                break;
+                
+            case 'referral':
+                html = `
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label>Récompense parrain <span class="text-danger">*</span></label>
+                            <input type="number" name="config_referral_bonus" class="form-control" value="${config.referral_bonus || ''}" step="10" required>
+                            <div class="help-text">Montant offert au parrain</div>
+                        </div>
+                        <div class="form-group">
+                            <label>Récompense filleul <span class="text-danger">*</span></label>
+                            <input type="number" name="config_referred_bonus" class="form-control" value="${config.referred_bonus || ''}" step="10" required>
+                            <div class="help-text">Montant offert au filleul</div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Dépôt minimum du filleul</label>
+                        <input type="number" name="config_min_deposit" class="form-control" value="${config.min_deposit || 100}" step="10" required>
+                    </div>
+                `;
+                break;
+        }
+        
+        configContent.innerHTML = html;
+    }
+    
+    // Charger la configuration initiale
+    document.addEventListener('DOMContentLoaded', function() {
+        const type = document.getElementById('promoType').value;
+        const config = {{ promotion.config|tojson }};
+        loadConfig(type, config);
+    });
+    
+    document.getElementById('promoType').addEventListener('change', function() {
+        const type = this.value;
+        const config = {};
+        loadConfig(type, config);
+    });
+    
+    // ==================== SOUMISSION ====================
+    function submitEdit(e) {
+        e.preventDefault();
+        const form = e.target;
+        const data = new FormData(form);
+        
+        // Collecter les jeux éligibles
+        const eligibleGames = [];
+        document.querySelectorAll('input[name="eligible_games"]:checked').forEach(cb => {
+            eligibleGames.push(cb.value);
+        });
+        
+        // Construire la configuration
+        const config = {};
+        const type = data.get('type');
+        
+        switch(type) {
+            case 'deposit_bonus':
+                config.bonus_percent = parseInt(data.get('config_bonus_percent'));
+                config.min_deposit = parseInt(data.get('config_min_deposit'));
+                if (data.get('config_max_bonus')) {
+                    config.max_bonus = parseInt(data.get('config_max_bonus'));
+                }
+                break;
+            case 'cashback':
+                config.percentage = parseInt(data.get('config_percentage'));
+                config.period_days = parseInt(data.get('config_period_days'));
+                if (data.get('config_max_cashback')) {
+                    config.max_cashback = parseInt(data.get('config_max_cashback'));
+                }
+                break;
+            case 'free_bet':
+                config.free_bet_amount = parseInt(data.get('config_free_bet_amount'));
+                config.allowed_games = data.get('config_allowed_games');
+                break;
+            case 'multiplier':
+                config.multiplier = parseFloat(data.get('config_multiplier'));
+                if (data.get('config_max_win')) {
+                    config.max_win = parseInt(data.get('config_max_win'));
+                }
+                break;
+            case 'referral':
+                config.referral_bonus = parseInt(data.get('config_referral_bonus'));
+                config.referred_bonus = parseInt(data.get('config_referred_bonus'));
+                config.min_deposit = parseInt(data.get('config_min_deposit'));
+                break;
+        }
+        
+        const payload = {
+            name: data.get('name'),
+            code: data.get('code') || null,
+            description: data.get('description') || null,
+            type: type,
+            status: data.get('status'),
+            config: config,
+            start_date: data.get('start_date'),
+            end_date: data.get('end_date'),
+            min_deposit: data.get('min_deposit') ? parseFloat(data.get('min_deposit')) : null,
+            max_bonus: data.get('max_bonus') ? parseFloat(data.get('max_bonus')) : null,
+            wagering_requirement: parseInt(data.get('wagering_requirement')),
+            eligible_games: eligibleGames,
+            new_users_only: data.get('new_users_only') === 'on',
+            first_deposit_only: data.get('first_deposit_only') === 'on',
+            total_budget: data.get('total_budget') ? parseFloat(data.get('total_budget')) : null
+        };
+        
+        fetch('/admin/api/promotions/{{ promotion.id }}', {
+            method: 'PUT',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Promotion mise à jour avec succès', 'success');
+                setTimeout(() => window.location.href = '/admin/promotions', 1500);
+            } else {
+                showToast(data.error || 'Erreur lors de la mise à jour', 'error');
+            }
+        })
+        .catch(() => {
+            showToast('Erreur réseau', 'error');
+        });
+    }
+    
+    // ==================== CHANGER STATUT ====================
+    function changeStatus(status) {
+        const labels = {
+            'active': 'activer',
+            'paused': 'mettre en pause'
+        };
+        if (!confirm(`Confirmer la ${labels[status]} de cette promotion ?`)) return;
+        
+        fetch('/admin/api/promotions/{{ promotion.id }}/status', {
+            method: 'PUT',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ status: status })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || `Promotion ${labels[status]} avec succès`, 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        });
+    }
+    
+    // ==================== SUPPRESSION ====================
+    let deletePromoId = '{{ promotion.id }}';
+    
+    function confirmDelete(promoId, promoName) {
+        document.getElementById('deleteMessage').textContent = 
+            `Êtes-vous sûr de vouloir supprimer la promotion "${promoName || promoId}" ? Cette action est irréversible.`;
+        openModal('deleteModal');
+    }
+    
+    document.getElementById('confirmDeleteBtn').addEventListener('click', function() {
+        fetch('/admin/api/promotions/{{ promotion.id }}', {
+            method: 'DELETE',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            closeModal('deleteModal');
+            if (data.success) {
+                showToast('Promotion supprimée avec succès', 'success');
+                setTimeout(() => window.location.href = '{{ url_for("admin_promotions") }}', 1000);
+            } else {
+                showToast(data.error || 'Erreur lors de la suppression', 'error');
+            }
+        })
+        .catch(() => {
+            closeModal('deleteModal');
+            showToast('Erreur réseau', 'error');
+        });
+    });
+</script>
+{% endblock %}
+{% endblock %}

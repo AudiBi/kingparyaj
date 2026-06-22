@@ -1,0 +1,387 @@
+<!-- app/templates/admin/users/kyc.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Gestion KYC - Administration{% endblock %}
+
+{% block page_title %}Gestion KYC{% endblock %}
+{% block page_subtitle %}Vérification d'identité de {{ user.full_name or user.phone }}{% endblock %}
+
+{% block content %}
+<!-- ==================== EN-TÊTE ==================== -->
+<div class="flex-between mb-3" style="flex-wrap: wrap; gap: 12px;">
+    <div class="flex-center" style="gap: 16px;">
+        <div style="width: 48px; height: 48px; border-radius: 50%; background: #8b5cf6; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 700; color: white;">
+            KYC
+        </div>
+        <div>
+            <h2 style="font-size: 20px; font-weight: 600; margin: 0;">{{ user.full_name or user.phone }}</h2>
+            <p style="color: #94a3b8; margin: 4px 0 0;">
+                <span class="badge {% if user.kyc_status == 'verified' %}success{% elif user.kyc_status == 'pending' %}warning{% else %}danger{% endif %}">
+                    Statut: {{ user.kyc_status }}
+                </span>
+            </p>
+        </div>
+    </div>
+    <div class="flex" style="gap: 8px;">
+        <a href="{{ url_for('admin_user_detail', user_id=user.id) }}" class="btn btn-secondary">
+            <i class="fas fa-arrow-left"></i> Retour
+        </a>
+    </div>
+</div>
+
+<!-- ==================== INFORMATIONS KYC ==================== -->
+<div class="grid-2">
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-id-card"></i> Informations d'identité</div>
+        </div>
+        <div style="padding: 20px;">
+            <table style="width: 100%; border-collapse: collapse;">
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8; width: 40%;">Nom complet</td>
+                    <td style="padding: 8px 0; font-weight: 500;">{{ user.full_name or 'Non renseigné' }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Carte d'identité</td>
+                    <td style="padding: 8px 0; font-weight: 500;">{{ user.national_id or 'Non renseigné' }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Téléphone</td>
+                    <td style="padding: 8px 0; font-family: monospace;">{{ user.phone }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Email</td>
+                    <td style="padding: 8px 0;">{{ user.email or 'Non renseigné' }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Date d'inscription</td>
+                    <td style="padding: 8px 0;">{{ user.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Statut KYC</td>
+                    <td style="padding: 8px 0;">
+                        <span class="badge {% if user.kyc_status == 'verified' %}success{% elif user.kyc_status == 'pending' %}warning{% else %}danger{% endif %}">
+                            {{ user.kyc_status }}
+                        </span>
+                    </td>
+                </tr>
+                {% if user.kyc_verified_at %}
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Vérifié le</td>
+                    <td style="padding: 8px 0;">{{ user.kyc_verified_at.strftime('%d/%m/%Y %H:%M') }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Vérifié par</td>
+                    <td style="padding: 8px 0;">{{ user.kyc_verified_by or 'Système' }}</td>
+                </tr>
+                {% endif %}
+            </table>
+        </div>
+    </div>
+    
+    <!-- ==================== DOCUMENTS ==================== -->
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-file-alt"></i> Documents KYC</div>
+            <div class="actions">
+                <button class="btn btn-sm btn-primary" onclick="openUploadModal()">
+                    <i class="fas fa-upload"></i> Upload
+                </button>
+            </div>
+        </div>
+        <div style="padding: 20px;">
+            {% if documents %}
+            <div style="display: flex; flex-direction: column; gap: 12px;">
+                {% for doc in documents %}
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0;">
+                    <div class="flex-center" style="gap: 12px;">
+                        <i class="fas fa-{{ doc.type }}" style="font-size: 24px; color: #059669;"></i>
+                        <div>
+                            <div style="font-weight: 500;">{{ doc.name }}</div>
+                            <div style="font-size: 12px; color: #94a3b8;">{{ doc.size|filesizeformat }} - {{ doc.uploaded_at|timeago }}</div>
+                        </div>
+                    </div>
+                    <div class="flex" style="gap: 8px;">
+                        <a href="{{ doc.url }}" target="_blank" class="btn btn-sm btn-secondary" title="Voir">
+                            <i class="fas fa-eye"></i>
+                        </a>
+                        <button class="btn btn-sm btn-danger" onclick="deleteDocument('{{ doc.id }}')" title="Supprimer">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="text-center text-muted" style="padding: 30px;">
+                <i class="fas fa-file" style="font-size: 40px; display: block; margin-bottom: 12px; opacity: 0.3;"></i>
+                Aucun document KYC
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- ==================== ACTIONS KYC ==================== -->
+<div class="table-container mt-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-check-circle"></i> Actions KYC</div>
+    </div>
+    <div style="padding: 20px;">
+        <div class="grid-3">
+            {% if user.kyc_status != 'verified' %}
+            <button class="btn btn-success w-full" onclick="verifyKyc()">
+                <i class="fas fa-check"></i> Valider KYC
+            </button>
+            {% endif %}
+            
+            {% if user.kyc_status == 'pending' %}
+            <button class="btn btn-danger w-full" onclick="rejectKyc()">
+                <i class="fas fa-times"></i> Rejeter KYC
+            </button>
+            {% endif %}
+            
+            {% if user.kyc_status == 'verified' %}
+            <button class="btn btn-warning w-full" onclick="resetKyc()">
+                <i class="fas fa-undo"></i> Réinitialiser KYC
+            </button>
+            {% endif %}
+            
+            <button class="btn btn-secondary w-full" onclick="requestKyc()">
+                <i class="fas fa-bell"></i> Rappeler le joueur
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== HISTORIQUE KYC ==================== -->
+<div class="table-container mt-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-history"></i> Historique KYC</div>
+    </div>
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Action</th>
+                    <th>Statut</th>
+                    <th>Par</th>
+                    <th>Commentaire</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for event in kyc_history %}
+                <tr>
+                    <td class="text-muted" style="font-size: 12px;">{{ event.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
+                    <td>{{ event.action }}</td>
+                    <td>
+                        <span class="badge {% if event.status == 'verified' %}success{% elif event.status == 'pending' %}warning{% else %}danger{% endif %}">
+                            {{ event.status }}
+                        </span>
+                    </td>
+                    <td>{{ event.by or 'Système' }}</td>
+                    <td>{{ event.comment or '-' }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="5" class="text-center text-muted" style="padding: 20px;">
+                        Aucun historique KYC
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ==================== MODAL UPLOAD ==================== -->
+<div class="modal-overlay" id="uploadModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Uploader un document KYC</h2>
+            <button class="modal-close" onclick="closeModal('uploadModal')">&times;</button>
+        </div>
+        <form id="uploadForm" onsubmit="return submitUpload(event)">
+            <div class="form-group">
+                <label>Type de document</label>
+                <select name="doc_type" class="form-control" required>
+                    <option value="id">Carte d'identité</option>
+                    <option value="passport">Passeport</option>
+                    <option value="proof">Justificatif de domicile</option>
+                    <option value="selfie">Photo de profil</option>
+                    <option value="other">Autre</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Fichier</label>
+                <input type="file" name="file" class="form-control" accept="image/*,.pdf" required>
+                <div class="help-text">Formats acceptés: JPG, PNG, PDF (max 5MB)</div>
+            </div>
+            <div class="form-group">
+                <label>Commentaire (optionnel)</label>
+                <input type="text" name="comment" class="form-control" placeholder="Ex: Recto de la carte">
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('uploadModal')">Annuler</button>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-upload"></i> Uploader
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    // ==================== UPLOAD ====================
+    function openUploadModal() {
+        document.getElementById('uploadForm').reset();
+        openModal('uploadModal');
+    }
+    
+    function submitUpload(e) {
+        e.preventDefault();
+        const form = e.target;
+        const formData = new FormData(form);
+        
+        fetch(`/admin/api/users/{{ user.id }}/kyc/upload`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}'
+            },
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            closeModal('uploadModal');
+            if (data.success) {
+                showToast(data.message || 'Document uploadé avec succès', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur lors de l\'upload', 'error');
+            }
+        })
+        .catch(() => {
+            closeModal('uploadModal');
+            showToast('Erreur réseau', 'error');
+        });
+    }
+    
+    // ==================== VALIDER KYC ====================
+    function verifyKyc() {
+        if (!confirm('Confirmer la validation KYC de cet utilisateur ?')) return;
+        
+        fetch(`/admin/api/users/{{ user.id }}/kyc/verify`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'KYC validé avec succès', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        });
+    }
+    
+    // ==================== REJETER KYC ====================
+    function rejectKyc() {
+        const reason = prompt('Raison du rejet :');
+        if (reason === null) return;
+        if (!reason.trim()) {
+            showToast('Veuillez saisir une raison', 'warning');
+            return;
+        }
+        
+        fetch(`/admin/api/users/{{ user.id }}/kyc/reject`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ reason: reason })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'KYC rejeté', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        });
+    }
+    
+    // ==================== RÉINITIALISER KYC ====================
+    function resetKyc() {
+        if (!confirm('Confirmer la réinitialisation du KYC de cet utilisateur ?')) return;
+        
+        fetch(`/admin/api/users/{{ user.id }}/kyc/reset`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'KYC réinitialisé', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        });
+    }
+    
+    // ==================== RAPPELER LE JOUEUR ====================
+    function requestKyc() {
+        if (!confirm('Envoyer un rappel KYC à cet utilisateur ?')) return;
+        
+        fetch(`/admin/api/users/{{ user.id }}/kyc/remind`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Rappel envoyé avec succès', 'success');
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        });
+    }
+    
+    // ==================== SUPPRIMER DOCUMENT ====================
+    function deleteDocument(docId) {
+        if (!confirm('Confirmer la suppression de ce document ?')) return;
+        
+        fetch(`/admin/api/users/{{ user.id }}/kyc/document/${docId}`, {
+            method: 'DELETE',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Document supprimé', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        });
+    }
+</script>
+{% endblock %}
+{% endblock %}

@@ -1,0 +1,498 @@
+<!-- app/templates/admin/settings/general.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Paramètres généraux - Administration{% endblock %}
+
+{% block page_title %}Paramètres généraux{% endblock %}
+{% block page_subtitle %}Configuration de l'application{% endblock %}
+
+{% block content %}
+<!-- ==================== ONGLETS ==================== -->
+<div style="display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px;">
+    <a href="{{ url_for('admin_settings_general') }}" 
+       class="btn btn-primary" style="border-radius: 8px 8px 0 0; background: #059669; color: white; padding: 10px 20px; text-decoration: none;">
+        <i class="fas fa-cog"></i> Général
+    </a>
+    <a href="{{ url_for('admin_settings_security') }}" 
+       class="btn btn-secondary" style="border-radius: 8px 8px 0 0; background: transparent; color: #64748b; padding: 10px 20px; text-decoration: none; border: 1px solid transparent;">
+        <i class="fas fa-shield-alt"></i> Sécurité
+    </a>
+</div>
+
+<div class="grid-2">
+    <!-- ==================== INFORMATIONS GÉNÉRALES ==================== -->
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-info-circle"></i> Informations générales</div>
+        </div>
+        <div style="padding: 20px;">
+            <form id="generalForm" onsubmit="return submitGeneral(event)">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                
+                <div class="form-group">
+                    <label>Nom de l'application</label>
+                    <input type="text" name="app_name" class="form-control" 
+                           value="{{ settings.app_name }}" required>
+                </div>
+                
+                <div class="form-group">
+                    <label>Version</label>
+                    <input type="text" name="app_version" class="form-control" 
+                           value="{{ settings.app_version }}" required>
+                </div>
+                
+                <div class="form-group">
+                    <label>Timezone</label>
+                    <select name="timezone" class="form-control">
+                        <option value="America/Port-au-Prince" {% if settings.timezone == 'America/Port-au-Prince' %}selected{% endif %}>
+                            America/Port-au-Prince (UTC-4/5)
+                        </option>
+                        <option value="America/New_York" {% if settings.timezone == 'America/New_York' %}selected{% endif %}>
+                            America/New_York (UTC-4/5)
+                        </option>
+                        <option value="UTC" {% if settings.timezone == 'UTC' %}selected{% endif %}>
+                            UTC
+                        </option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label>Devise</label>
+                    <select name="currency" class="form-control">
+                        <option value="HTG" {% if settings.currency == 'HTG' %}selected{% endif %}>HTG - Gourde Haïtienne</option>
+                        <option value="USD" {% if settings.currency == 'USD' %}selected{% endif %}>USD - Dollar US</option>
+                        <option value="EUR" {% if settings.currency == 'EUR' %}selected{% endif %}>EUR - Euro</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label>URL du site</label>
+                    <input type="url" name="base_url" class="form-control" 
+                           value="{{ settings.base_url }}" placeholder="https://parierkeno.ht">
+                </div>
+                
+                <div class="form-group">
+                    <label>URL du frontend</label>
+                    <input type="url" name="frontend_url" class="form-control" 
+                           value="{{ settings.frontend_url }}" placeholder="https://parierkeno.ht">
+                </div>
+                
+                <button type="submit" class="btn btn-primary w-full">
+                    <i class="fas fa-save"></i> Enregistrer
+                </button>
+            </form>
+        </div>
+    </div>
+    
+    <!-- ==================== LIMITES ==================== -->
+    <div>
+        <div class="table-container mb-3">
+            <div class="table-header">
+                <div class="title"><i class="fas fa-ban"></i> Limites globales</div>
+            </div>
+            <div style="padding: 20px;">
+                <form id="limitsForm" onsubmit="return submitLimits(event)">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    
+                    <div class="form-group">
+                        <label>Dépôt maximum par jour (HTG)</label>
+                        <input type="number" name="max_daily_deposit" class="form-control" 
+                               value="{{ settings.max_daily_deposit }}" min="100" step="100" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Retrait maximum par jour (HTG)</label>
+                        <input type="number" name="max_daily_withdrawal" class="form-control" 
+                               value="{{ settings.max_daily_withdrawal }}" min="100" step="100" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Mise maximum par pari (HTG)</label>
+                        <input type="number" name="max_single_bet" class="form-control" 
+                               value="{{ settings.max_single_bet }}" min="10" step="10" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Montant KYC requis (HTG)</label>
+                        <input type="number" name="kyc_required_amount" class="form-control" 
+                               value="{{ settings.kyc_required_amount }}" min="0" step="100" required>
+                        <div class="help-text">À partir de ce montant, le KYC est obligatoire</div>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary w-full">
+                        <i class="fas fa-save"></i> Enregistrer les limites
+                    </button>
+                </form>
+            </div>
+        </div>
+        
+        <!-- ==================== MAINTENANCE ==================== -->
+        <div class="table-container">
+            <div class="table-header">
+                <div class="title"><i class="fas fa-tools"></i> Maintenance</div>
+            </div>
+            <div style="padding: 20px;">
+                <form id="maintenanceForm" onsubmit="return submitMaintenance(event)">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" name="maintenance_mode" {% if settings.maintenance_mode %}checked{% endif %}>
+                            Mode maintenance
+                        </label>
+                        <div class="help-text">Activez pour mettre le site hors ligne temporairement</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Message de maintenance</label>
+                        <textarea name="maintenance_message" class="form-control" rows="2" 
+                                  placeholder="Message affiché aux utilisateurs pendant la maintenance...">{{ settings.maintenance_message or '' }}</textarea>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-warning w-full">
+                        <i class="fas fa-tools"></i> Mettre à jour
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== INTÉGRATIONS ==================== -->
+<div class="table-container mt-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-plug"></i> Intégrations</div>
+    </div>
+    <div style="padding: 20px;">
+        <form id="integrationsForm" onsubmit="return submitIntegrations(event)">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            
+            <div class="grid-2">
+                <!-- MonCash -->
+                <div style="border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px;">
+                    <div class="flex-between" style="margin-bottom: 12px;">
+                        <h4 style="margin: 0;">
+                            <i class="fas fa-mobile-alt" style="color: #059669;"></i> MonCash
+                        </h4>
+                        <label>
+                            <input type="checkbox" name="moncash_enabled" {% if settings.moncash_enabled %}checked{% endif %}>
+                            Activer
+                        </label>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 8px;">
+                        <label style="font-size: 12px;">Merchant ID</label>
+                        <input type="text" name="moncash_merchant_id" class="form-control" 
+                               value="{{ settings.moncash_merchant_id or '' }}" style="padding: 6px 10px; font-size: 13px;">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 8px;">
+                        <label style="font-size: 12px;">API Key</label>
+                        <input type="password" name="moncash_api_key" class="form-control" 
+                               value="{{ settings.moncash_api_key or '' }}" style="padding: 6px 10px; font-size: 13px;">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label style="font-size: 12px;">API Secret</label>
+                        <input type="password" name="moncash_api_secret" class="form-control" 
+                               value="{{ settings.moncash_api_secret or '' }}" style="padding: 6px 10px; font-size: 13px;">
+                    </div>
+                </div>
+                
+                <!-- NatCash -->
+                <div style="border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px;">
+                    <div class="flex-between" style="margin-bottom: 12px;">
+                        <h4 style="margin: 0;">
+                            <i class="fas fa-mobile-alt" style="color: #8b5cf6;"></i> NatCash
+                        </h4>
+                        <label>
+                            <input type="checkbox" name="natcash_enabled" {% if settings.natcash_enabled %}checked{% endif %}>
+                            Activer
+                        </label>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 8px;">
+                        <label style="font-size: 12px;">Merchant ID</label>
+                        <input type="text" name="natcash_merchant_id" class="form-control" 
+                               value="{{ settings.natcash_merchant_id or '' }}" style="padding: 6px 10px; font-size: 13px;">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label style="font-size: 12px;">API Key</label>
+                        <input type="password" name="natcash_api_key" class="form-control" 
+                               value="{{ settings.natcash_api_key or '' }}" style="padding: 6px 10px; font-size: 13px;">
+                    </div>
+                </div>
+            </div>
+            
+            <!-- LEH -->
+            <div style="border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-top: 16px;">
+                <div class="flex-between" style="margin-bottom: 12px;">
+                    <h4 style="margin: 0;">
+                        <i class="fas fa-building" style="color: #f59e0b;"></i> LEH - Loterie de l'État Haïtien
+                    </h4>
+                    <label>
+                        <input type="checkbox" name="leh_enabled" {% if settings.leh_enabled %}checked{% endif %}>
+                        Activer
+                    </label>
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label style="font-size: 12px;">API URL</label>
+                    <input type="url" name="leh_api_url" class="form-control" 
+                           value="{{ settings.leh_api_url or '' }}" style="padding: 6px 10px; font-size: 13px;">
+                </div>
+            </div>
+            
+            <button type="submit" class="btn btn-primary w-full mt-3">
+                <i class="fas fa-save"></i> Enregistrer les intégrations
+            </button>
+        </form>
+    </div>
+</div>
+
+<!-- ==================== LOGGING ==================== -->
+<div class="table-container mt-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-file-alt"></i> Logging</div>
+    </div>
+    <div style="padding: 20px;">
+        <form id="loggingForm" onsubmit="return submitLogging(event)">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            
+            <div class="grid-2">
+                <div class="form-group">
+                    <label>Niveau de log</label>
+                    <select name="log_level" class="form-control">
+                        <option value="DEBUG" {% if settings.log_level == 'DEBUG' %}selected{% endif %}>DEBUG</option>
+                        <option value="INFO" {% if settings.log_level == 'INFO' %}selected{% endif %}>INFO</option>
+                        <option value="WARNING" {% if settings.log_level == 'WARNING' %}selected{% endif %}>WARNING</option>
+                        <option value="ERROR" {% if settings.log_level == 'ERROR' %}selected{% endif %}>ERROR</option>
+                        <option value="CRITICAL" {% if settings.log_level == 'CRITICAL' %}selected{% endif %}>CRITICAL</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Fichier de log</label>
+                    <input type="text" name="log_file" class="form-control" value="{{ settings.log_file or 'logs/app.log' }}">
+                </div>
+            </div>
+            
+            <button type="submit" class="btn btn-primary w-full">
+                <i class="fas fa-save"></i> Enregistrer
+            </button>
+        </form>
+    </div>
+</div>
+
+<!-- ==================== STATUT SYSTÈME ==================== -->
+<div class="table-container mt-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-server"></i> Statut du système</div>
+    </div>
+    <div style="padding: 20px;">
+        <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px;">
+            <div class="stat-card" style="padding: 12px; box-shadow: none; border: 1px solid #e2e8f0;">
+                <div class="stat-label">Base de données</div>
+                <div class="stat-value" style="font-size: 16px; color: #22c55e;">
+                    <i class="fas fa-check-circle"></i> Connectée
+                </div>
+            </div>
+            <div class="stat-card" style="padding: 12px; box-shadow: none; border: 1px solid #e2e8f0;">
+                <div class="stat-label">Redis</div>
+                <div class="stat-value" style="font-size: 16px; color: #22c55e;">
+                    <i class="fas fa-check-circle"></i> Connecté
+                </div>
+            </div>
+            <div class="stat-card" style="padding: 12px; box-shadow: none; border: 1px solid #e2e8f0;">
+                <div class="stat-label">Workers</div>
+                <div class="stat-value" style="font-size: 16px; color: #22c55e;">
+                    <i class="fas fa-check-circle"></i> {{ worker_count }} actifs
+                </div>
+            </div>
+            <div class="stat-card" style="padding: 12px; box-shadow: none; border: 1px solid #e2e8f0;">
+                <div class="stat-label">Version</div>
+                <div class="stat-value" style="font-size: 16px;">v{{ settings.app_version }}</div>
+            </div>
+            <div class="stat-card" style="padding: 12px; box-shadow: none; border: 1px solid #e2e8f0;">
+                <div class="stat-label">Environnement</div>
+                <div class="stat-value" style="font-size: 16px;">
+                    <span class="badge {% if env == 'production' %}success{% else %}warning{% endif %}">
+                        {{ env }}
+                    </span>
+                </div>
+            </div>
+            <div class="stat-card" style="padding: 12px; box-shadow: none; border: 1px solid #e2e8f0;">
+                <div class="stat-label">Uptime</div>
+                <div class="stat-value" style="font-size: 16px;">{{ uptime }}</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    // ==================== SOUMISSION FORMULAIRES ====================
+    function submitGeneral(e) {
+        e.preventDefault();
+        const form = e.target;
+        const data = new FormData(form);
+        
+        const payload = {
+            app_name: data.get('app_name'),
+            app_version: data.get('app_version'),
+            timezone: data.get('timezone'),
+            currency: data.get('currency'),
+            base_url: data.get('base_url'),
+            frontend_url: data.get('frontend_url')
+        };
+        
+        fetch('/admin/api/settings/general', {
+            method: 'PUT',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Paramètres enregistrés avec succès', 'success');
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            showToast('Erreur réseau', 'error');
+        });
+    }
+    
+    function submitLimits(e) {
+        e.preventDefault();
+        const form = e.target;
+        const data = new FormData(form);
+        
+        const payload = {
+            max_daily_deposit: parseFloat(data.get('max_daily_deposit')),
+            max_daily_withdrawal: parseFloat(data.get('max_daily_withdrawal')),
+            max_single_bet: parseFloat(data.get('max_single_bet')),
+            kyc_required_amount: parseFloat(data.get('kyc_required_amount'))
+        };
+        
+        fetch('/admin/api/settings/limits', {
+            method: 'PUT',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Limites enregistrées avec succès', 'success');
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            showToast('Erreur réseau', 'error');
+        });
+    }
+    
+    function submitMaintenance(e) {
+        e.preventDefault();
+        const form = e.target;
+        const data = new FormData(form);
+        
+        const payload = {
+            maintenance_mode: data.get('maintenance_mode') === 'on',
+            maintenance_message: data.get('maintenance_message')
+        };
+        
+        fetch('/admin/api/settings/maintenance', {
+            method: 'PUT',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Mode maintenance mis à jour', 'success');
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            showToast('Erreur réseau', 'error');
+        });
+    }
+    
+    function submitIntegrations(e) {
+        e.preventDefault();
+        const form = e.target;
+        const data = new FormData(form);
+        
+        const payload = {
+            moncash_enabled: data.get('moncash_enabled') === 'on',
+            moncash_merchant_id: data.get('moncash_merchant_id'),
+            moncash_api_key: data.get('moncash_api_key'),
+            moncash_api_secret: data.get('moncash_api_secret'),
+            natcash_enabled: data.get('natcash_enabled') === 'on',
+            natcash_merchant_id: data.get('natcash_merchant_id'),
+            natcash_api_key: data.get('natcash_api_key'),
+            leh_enabled: data.get('leh_enabled') === 'on',
+            leh_api_url: data.get('leh_api_url')
+        };
+        
+        fetch('/admin/api/settings/integrations', {
+            method: 'PUT',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Intégrations enregistrées avec succès', 'success');
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            showToast('Erreur réseau', 'error');
+        });
+    }
+    
+    function submitLogging(e) {
+        e.preventDefault();
+        const form = e.target;
+        const data = new FormData(form);
+        
+        const payload = {
+            log_level: data.get('log_level'),
+            log_file: data.get('log_file')
+        };
+        
+        fetch('/admin/api/settings/logging', {
+            method: 'PUT',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Configuration de logging enregistrée', 'success');
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            showToast('Erreur réseau', 'error');
+        });
+    }
+</script>
+{% endblock %}
+{% endblock %}

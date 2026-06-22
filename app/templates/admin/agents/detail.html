@@ -1,0 +1,131 @@
+<!-- app/templates/admin/agents/detail.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Détails agent - Administration{% endblock %}
+
+{% block page_title %}Détails de l'agent{% endblock %}
+{% block page_subtitle %}{{ agent.full_name or agent.phone }}{% endblock %}
+
+{% block content %}
+<!-- ==================== EN-TÊTE ==================== -->
+<div class="flex-between mb-3" style="flex-wrap: wrap; gap: 12px;">
+    <div class="flex-center" style="gap: 16px;">
+        <div style="width: 64px; height: 64px; border-radius: 50%; background: #8b5cf6; display: flex; align-items: center; justify-content: center; font-size: 28px; font-weight: 700; color: white;">
+            {{ (agent.full_name or agent.phone)[:1]|upper }}
+        </div>
+        <div>
+            <h2 style="font-size: 22px; font-weight: 600; margin: 0;">{{ agent.full_name or 'Non renseigné' }}</h2>
+            <p style="color: #94a3b8; margin: 4px 0 0;">
+                <i class="fas fa-phone"></i> {{ agent.phone }}
+                {% if agent.email %}
+                &nbsp;|&nbsp; <i class="fas fa-envelope"></i> {{ agent.email }}
+                {% endif %}
+                &nbsp;|&nbsp; <i class="fas fa-store"></i> {{ agent.bureau.name if agent.bureau else 'Non affecté' }}
+            </p>
+        </div>
+    </div>
+    <div class="flex" style="gap: 8px;">
+        <a href="{{ url_for('admin_agent_edit', agent_id=agent.id) }}" class="btn btn-primary">
+            <i class="fas fa-edit"></i> Modifier
+        </a>
+        <a href="{{ url_for('admin_agents') }}" class="btn btn-secondary">
+            <i class="fas fa-arrow-left"></i> Retour
+        </a>
+    </div>
+</div>
+
+<!-- ==================== STATISTIQUES ==================== -->
+<div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-bottom: 20px;">
+    <div class="stat-card" style="padding: 16px; border-left: 3px solid #3b82f6;">
+        <div class="stat-label">Paris aujourd'hui</div>
+        <div class="stat-value" style="font-size: 24px;">{{ stats.today_bets or 0 }}</div>
+    </div>
+    <div class="stat-card" style="padding: 16px; border-left: 3px solid #22c55e;">
+        <div class="stat-label">Encaissements</div>
+        <div class="stat-value" style="font-size: 24px; color: #22c55e;">{{ stats.today_cash_in|format_number }} HTG</div>
+    </div>
+    <div class="stat-card" style="padding: 16px; border-left: 3px solid #ef4444;">
+        <div class="stat-label">Paiements</div>
+        <div class="stat-value" style="font-size: 24px; color: #ef4444;">{{ stats.today_cash_out|format_number }} HTG</div>
+    </div>
+    <div class="stat-card" style="padding: 16px; border-left: 3px solid #f59e0b;">
+        <div class="stat-label">Tickets créés</div>
+        <div class="stat-value" style="font-size: 24px;">{{ stats.today_tickets or 0 }}</div>
+    </div>
+</div>
+
+<!-- ==================== SESSIONS DE CAISSE ==================== -->
+<div class="table-container mt-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-cash-register"></i> Sessions de caisse</div>
+        <a href="{{ url_for('admin_agent_sessions', agent_id=agent.id) }}" class="btn btn-sm btn-secondary">Voir tout</a>
+    </div>
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Ouverture</th>
+                    <th>Fermeture</th>
+                    <th>Entrées</th>
+                    <th>Sorties</th>
+                    <th>Écart</th>
+                    <th>Statut</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for session in sessions %}
+                <tr>
+                    <td class="text-muted" style="font-size: 12px;">{{ session.opened_at.strftime('%d/%m/%Y') }}</td>
+                    <td style="font-size: 12px;">{{ session.opened_at.strftime('%H:%M') }}</td>
+                    <td style="font-size: 12px;">{{ session.closed_at.strftime('%H:%M') if session.closed_at else '-' }}</td>
+                    <td class="text-success">{{ session.cash_in_amount|format_number }} HTG</td>
+                    <td class="text-danger">{{ session.cash_out_amount|format_number }} HTG</td>
+                    <td class="{% if session.difference > 0 %}text-success{% elif session.difference < 0 %}text-danger{% endif %}">
+                        {{ session.difference|format_number }} HTG
+                    </td>
+                    <td>
+                        <span class="badge {% if session.status == 'CLOSED' %}success{% elif session.status == 'OPEN' %}warning{% else %}gray{% endif %}">
+                            {{ session.status }}
+                        </span>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="7" class="text-center text-muted" style="padding: 20px;">
+                        Aucune session de caisse
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ==================== ACTIVITÉ RÉCENTE ==================== -->
+<div class="table-container mt-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-clock"></i> Activité récente</div>
+    </div>
+    <div style="padding: 20px;">
+        {% if activities %}
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+            {% for activity in activities %}
+            <div style="display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid #f1f5f9;">
+                <i class="fas fa-{{ activity.icon }}" style="color: #{{ activity.color }}; width: 20px;"></i>
+                <div style="flex: 1;">
+                    <div style="font-size: 14px;">{{ activity.description }}</div>
+                    <div style="font-size: 12px; color: #94a3b8;">{{ activity.created_at|timeago }}</div>
+                </div>
+                <span class="badge gray">{{ activity.type }}</span>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-center text-muted" style="padding: 20px;">
+            Aucune activité récente
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

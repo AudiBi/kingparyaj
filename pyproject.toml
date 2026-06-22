@@ -12,7 +12,7 @@ name = "parier-keno"
 version = "1.0.0"
 description = "Plateforme de paris Keno & Lucky pour Haïti - Licence LEH"
 readme = "README.md"
-requires-python = ">=3.12  "
+requires-python = ">=3.12"
 license = {text = "Propriétaire"}
 authors = [
     {name = "Parier Keno Haiti", email = "contact@parierkeno.ht"}

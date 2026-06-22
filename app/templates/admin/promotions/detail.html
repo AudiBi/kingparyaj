@@ -1,0 +1,313 @@
+<!-- app/templates/admin/promotions/detail.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Détails promotion - Administration{% endblock %}
+
+{% block page_title %}Détails de la promotion{% endblock %}
+{% block page_subtitle %}{{ promotion.name }}{% endblock %}
+
+{% block content %}
+<!-- ==================== EN-TÊTE ==================== -->
+<div class="flex-between mb-3" style="flex-wrap: wrap; gap: 12px;">
+    <div class="flex-center" style="gap: 16px;">
+        <div style="width: 56px; height: 56px; border-radius: 50%; {% if promotion.status == 'active' %}background: #22c55e;{% elif promotion.status == 'draft' %}background: #94a3b8;{% elif promotion.status == 'paused' %}background: #f59e0b;{% else %}background: #ef4444;{% endif %} display: flex; align-items: center; justify-content: center; font-size: 24px; color: white;">
+            <i class="fas fa-tag"></i>
+        </div>
+        <div>
+            <h2 style="font-size: 20px; font-weight: 600; margin: 0;">{{ promotion.name }}</h2>
+            <p style="color: #94a3b8; margin: 4px 0 0;">
+                <span class="badge {% if promotion.status == 'active' %}success{% elif promotion.status == 'draft' %}gray{% elif promotion.status == 'paused' %}warning{% else %}danger{% endif %}">
+                    {{ promotion.status }}
+                </span>
+                &nbsp;|&nbsp; {{ promotion.type|replace('_', ' ')|capitalize }}
+                {% if promotion.code %}
+                &nbsp;|&nbsp; <span style="font-family: monospace;">{{ promotion.code }}</span>
+                {% endif %}
+            </p>
+        </div>
+    </div>
+    <div class="flex" style="gap: 8px;">
+        <a href="{{ url_for('admin_promotion_edit', promo_id=promotion.id) }}" class="btn btn-primary">
+            <i class="fas fa-edit"></i> Modifier
+        </a>
+        <a href="{{ url_for('admin_promotions') }}" class="btn btn-secondary">
+            <i class="fas fa-arrow-left"></i> Retour
+        </a>
+    </div>
+</div>
+
+<!-- ==================== INFORMATIONS ==================== -->
+<div class="grid-2">
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-info-circle"></i> Informations générales</div>
+        </div>
+        <div style="padding: 20px;">
+            <table style="width: 100%; border-collapse: collapse;">
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8; width: 40%;">Nom</td>
+                    <td style="padding: 8px 0; font-weight: 500;">{{ promotion.name }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Code</td>
+                    <td style="padding: 8px 0; font-family: monospace;">{{ promotion.code or 'Aucun' }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Type</td>
+                    <td style="padding: 8px 0;">
+                        <span class="badge {% if promotion.type == 'deposit_bonus' %}success{% elif promotion.type == 'cashback' %}info{% elif promotion.type == 'free_bet' %}warning{% elif promotion.type == 'multiplier' %}purple{% else %}gray{% endif %}">
+                            {{ promotion.type|replace('_', ' ')|capitalize }}
+                        </span>
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Statut</td>
+                    <td style="padding: 8px 0;">
+                        <span class="badge {% if promotion.status == 'active' %}success{% elif promotion.status == 'draft' %}gray{% elif promotion.status == 'paused' %}warning{% else %}danger{% endif %}">
+                            {{ promotion.status }}
+                        </span>
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Période</td>
+                    <td style="padding: 8px 0;">
+                        {{ promotion.start_date.strftime('%d/%m/%Y') }} → {{ promotion.end_date.strftime('%d/%m/%Y') }}
+                        <br><span style="font-size: 12px; color: #94a3b8;">{{ (promotion.end_date - promotion.start_date).days }} jours</span>
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Description</td>
+                    <td style="padding: 8px 0;">{{ promotion.description or 'Aucune' }}</td>
+                </tr>
+            </table>
+        </div>
+    </div>
+    
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-coins"></i> Configuration</div>
+        </div>
+        <div style="padding: 20px;">
+            <table style="width: 100%; border-collapse: collapse;">
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8; width: 40%;">Dépôt minimum</td>
+                    <td style="padding: 8px 0; font-weight: 600;">{{ promotion.min_deposit|format_number or 'N/A' }} HTG</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Bonus maximum</td>
+                    <td style="padding: 8px 0; font-weight: 600;">{{ promotion.max_bonus|format_number or 'Illimité' }} HTG</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Exigence de mise</td>
+                    <td style="padding: 8px 0; font-weight: 600;">{{ promotion.wagering_requirement }}x</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Jeux éligibles</td>
+                    <td style="padding: 8px 0;">
+                        {% for game in promotion.eligible_games %}
+                        <span class="badge gray">{{ game }}</span>
+                        {% endfor %}
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Nouveaux utilisateurs</td>
+                    <td style="padding: 8px 0;">{{ 'Oui' if promotion.new_users_only else 'Non' }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Premier dépôt</td>
+                    <td style="padding: 8px 0;">{{ 'Oui' if promotion.first_deposit_only else 'Non' }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Budget total</td>
+                    <td style="padding: 8px 0; font-weight: 600;">{{ promotion.total_budget|format_number or 'Illimité' }} HTG</td>
+                </tr>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== CONFIGURATION SPÉCIFIQUE ==================== -->
+<div class="table-container mt-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-cog"></i> Configuration spécifique</div>
+    </div>
+    <div style="padding: 20px;">
+        <pre style="background: #f1f5f9; padding: 16px; border-radius: 8px; font-size: 12px; overflow-x: auto; margin: 0;">
+{{ promotion.config|tojson(indent=2) }}
+        </pre>
+    </div>
+</div>
+
+<!-- ==================== STATISTIQUES ==================== -->
+<div class="grid-2 mt-3">
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-chart-bar"></i> Performance</div>
+        </div>
+        <div style="padding: 20px;">
+            <table style="width: 100%; border-collapse: collapse;">
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8; width: 40%;">Total réclamations</td>
+                    <td style="padding: 8px 0; font-weight: 600; font-size: 20px;">{{ promotion.total_claims }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Bonus distribués</td>
+                    <td style="padding: 8px 0; font-weight: 600; color: #059669;">{{ promotion.total_bonus_given|format_number }} HTG</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Budget utilisé</td>
+                    <td style="padding: 8px 0;">
+                        {{ ((promotion.used_budget / promotion.total_budget) * 100)|round(1) }}% 
+                        ({{ promotion.used_budget|format_number }} / {{ promotion.total_budget|format_number }} HTG)
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Créé par</td>
+                    <td style="padding: 8px 0;">{{ promotion.created_by or 'N/A' }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Créé le</td>
+                    <td style="padding: 8px 0;">{{ promotion.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
+                </tr>
+            </table>
+        </div>
+    </div>
+    
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-users"></i> Dernières réclamations</div>
+        </div>
+        <div style="padding: 20px;">
+            {% if recent_claims %}
+            <table style="width: 100%; border-collapse: collapse;">
+                <thead>
+                    <tr>
+                        <th>Utilisateur</th>
+                        <th>Bonus</th>
+                        <th>Date</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for claim in recent_claims %}
+                    <tr>
+                        <td>{{ claim.user_name }}</td>
+                        <td>{{ claim.bonus_amount|format_number }} HTG</td>
+                        <td style="font-size: 12px; color: #94a3b8;">{{ claim.created_at|timeago }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="text-center text-muted" style="padding: 20px;">
+                Aucune réclamation
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- ==================== ACTIONS ==================== -->
+<div class="table-container mt-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-bolt"></i> Actions</div>
+    </div>
+    <div style="padding: 20px;">
+        <div class="flex" style="gap: 12px; flex-wrap: wrap;">
+            {% if promotion.status == 'draft' or promotion.status == 'paused' %}
+            <button class="btn btn-success" onclick="changeStatus('active')">
+                <i class="fas fa-play"></i> Activer
+            </button>
+            {% endif %}
+            
+            {% if promotion.status == 'active' %}
+            <button class="btn btn-warning" onclick="changeStatus('paused')">
+                <i class="fas fa-pause"></i> Pause
+            </button>
+            {% endif %}
+            
+            <a href="{{ url_for('admin_promotion_edit', promo_id=promotion.id) }}" class="btn btn-primary">
+                <i class="fas fa-edit"></i> Modifier
+            </a>
+            
+            <button class="btn btn-danger" onclick="confirmDelete('{{ promotion.id }}', '{{ promotion.name }}')">
+                <i class="fas fa-trash"></i> Supprimer
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MODAL SUPPRESSION ==================== -->
+<div class="modal-overlay" id="deleteModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Confirmer la suppression</h2>
+            <button class="modal-close" onclick="closeModal('deleteModal')">&times;</button>
+        </div>
+        <p id="deleteMessage">Êtes-vous sûr de vouloir supprimer cette promotion ? Cette action est irréversible.</p>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('deleteModal')">Annuler</button>
+            <button class="btn btn-danger" id="confirmDeleteBtn">Supprimer</button>
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    function changeStatus(status) {
+        const labels = {
+            'active': 'activer',
+            'paused': 'mettre en pause'
+        };
+        if (!confirm(`Confirmer la ${labels[status]} de cette promotion ?`)) return;
+        
+        fetch('/admin/api/promotions/{{ promotion.id }}/status', {
+            method: 'PUT',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ status: status })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || `Promotion ${labels[status]} avec succès`, 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        });
+    }
+    
+    function confirmDelete(promoId, promoName) {
+        document.getElementById('deleteMessage').textContent = 
+            `Êtes-vous sûr de vouloir supprimer la promotion "${promoName || promoId}" ? Cette action est irréversible.`;
+        openModal('deleteModal');
+    }
+    
+    document.getElementById('confirmDeleteBtn').addEventListener('click', function() {
+        fetch('/admin/api/promotions/{{ promotion.id }}', {
+            method: 'DELETE',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            closeModal('deleteModal');
+            if (data.success) {
+                showToast('Promotion supprimée avec succès', 'success');
+                setTimeout(() => window.location.href = '{{ url_for("admin_promotions") }}', 1000);
+            } else {
+                showToast(data.error || 'Erreur lors de la suppression', 'error');
+            }
+        })
+        .catch(() => {
+            closeModal('deleteModal');
+            showToast('Erreur réseau', 'error');
+        });
+    });
+</script>
+{% endblock %}
+{% endblock %}

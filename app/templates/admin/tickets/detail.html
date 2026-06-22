@@ -1,0 +1,452 @@
+<!-- app/templates/admin/tickets/detail.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Détails ticket - Administration{% endblock %}
+
+{% block page_title %}Détails du ticket{% endblock %}
+{% block page_subtitle %}{{ ticket.ticket_number }}{% endblock %}
+
+{% block content %}
+<!-- ==================== EN-TÊTE ==================== -->
+<div class="flex-between mb-3" style="flex-wrap: wrap; gap: 12px;">
+    <div class="flex-center" style="gap: 16px;">
+        <div style="width: 56px; height: 56px; border-radius: 50%; {% if ticket.status == 'active' %}background: #22c55e;{% elif ticket.status == 'paid' %}background: #94a3b8;{% elif ticket.status == 'expired' %}background: #ef4444;{% else %}background: #f59e0b;{% endif %} display: flex; align-items: center; justify-content: center; font-size: 24px; color: white;">
+            <i class="fas fa-ticket-alt"></i>
+        </div>
+        <div>
+            <h2 style="font-size: 20px; font-weight: 600; margin: 0; font-family: monospace;">{{ ticket.ticket_number }}</h2>
+            <p style="color: #94a3b8; margin: 4px 0 0;">
+                <span class="badge {% if ticket.status == 'active' %}success{% elif ticket.status == 'paid' %}gray{% elif ticket.status == 'expired' %}danger{% elif ticket.status == 'cancelled' %}warning{% endif %}">
+                    {{ ticket.status }}
+                </span>
+                &nbsp;|&nbsp; {{ ticket.created_at.strftime('%d/%m/%Y %H:%M') }}
+            </p>
+        </div>
+    </div>
+    <div class="flex" style="gap: 8px;">
+        <button class="btn btn-secondary" onclick="generateQR('{{ ticket.ticket_number }}')">
+            <i class="fas fa-qrcode"></i> QR Code
+        </button>
+        {% if ticket.status == 'active' %}
+        <button class="btn btn-success" onclick="payoutTicket('{{ ticket.id }}')">
+            <i class="fas fa-hand-holding-usd"></i> Payer
+        </button>
+        <button class="btn btn-danger" onclick="cancelTicket('{{ ticket.id }}')">
+            <i class="fas fa-times"></i> Annuler
+        </button>
+        {% endif %}
+        <a href="{{ url_for('admin_tickets') }}" class="btn btn-secondary">
+            <i class="fas fa-arrow-left"></i> Retour
+        </a>
+    </div>
+</div>
+
+<!-- ==================== INFORMATIONS ==================== -->
+<div class="grid-2">
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-info-circle"></i> Informations générales</div>
+        </div>
+        <div style="padding: 20px;">
+            <table style="width: 100%; border-collapse: collapse;">
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8; width: 40%;">Numéro</td>
+                    <td style="padding: 8px 0; font-family: monospace; font-weight: 600; font-size: 16px;">{{ ticket.ticket_number }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Joueur</td>
+                    <td style="padding: 8px 0; font-weight: 500;">{{ ticket.player_name or 'Anonyme' }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Téléphone</td>
+                    <td style="padding: 8px 0;">{{ ticket.player_phone or 'Non renseigné' }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Statut</td>
+                    <td style="padding: 8px 0;">
+                        <span class="badge {% if ticket.status == 'active' %}success{% elif ticket.status == 'paid' %}gray{% elif ticket.status == 'expired' %}danger{% elif ticket.status == 'cancelled' %}warning{% endif %}">
+                            {{ ticket.status }}
+                        </span>
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Bureau</td>
+                    <td style="padding: 8px 0;">{{ ticket.bureau.name if ticket.bureau else 'N/A' }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Agent</td>
+                    <td style="padding: 8px 0;">{{ ticket.agent.full_name or ticket.agent.phone if ticket.agent else 'N/A' }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Créé le</td>
+                    <td style="padding: 8px 0;">{{ ticket.created_at.strftime('%d/%m/%Y %H:%M:%S') }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Expire le</td>
+                    <td style="padding: 8px 0; font-weight: {% if ticket.expires_at < now %}600; color: #ef4444;{% endif %}">
+                        {{ ticket.expires_at.strftime('%d/%m/%Y %H:%M:%S') }}
+                        {% if ticket.expires_at < now %}
+                        <span class="badge danger" style="font-size: 10px;">Expiré</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% if ticket.paid_at %}
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Payé le</td>
+                    <td style="padding: 8px 0;">{{ ticket.paid_at.strftime('%d/%m/%Y %H:%M:%S') }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Payé par</td>
+                    <td style="padding: 8px 0;">{{ ticket.paid_by_agent or 'N/A' }}</td>
+                </tr>
+                {% endif %}
+            </table>
+        </div>
+    </div>
+    
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-coins"></i> Montants</div>
+        </div>
+        <div style="padding: 20px;">
+            <table style="width: 100%; border-collapse: collapse;">
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8; width: 40%;">Montant initial</td>
+                    <td style="padding: 8px 0; font-size: 24px; font-weight: 700;">{{ ticket.initial_amount|format_number }} HTG</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Solde restant</td>
+                    <td style="padding: 8px 0; font-size: 20px; font-weight: 600; color: {% if ticket.balance > 0 %}#059669{% else %}#94a3b8{% endif %};">
+                        {{ ticket.balance|format_number }} HTG
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Utilisé</td>
+                    <td style="padding: 8px 0;">{{ (ticket.initial_amount - ticket.balance)|format_number }} HTG</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Taux d'utilisation</td>
+                    <td style="padding: 8px 0;">
+                        {% set usage = ((ticket.initial_amount - ticket.balance) / ticket.initial_amount * 100) if ticket.initial_amount > 0 else 0 %}
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <div style="flex: 1; background: #e2e8f0; border-radius: 4px; height: 8px; overflow: hidden;">
+                                <div style="width: {{ usage }}%; background: {% if usage > 80 %}#22c55e{% elif usage > 50 %}#f59e0b{% else %}#3b82f6{% endif %}; height: 100%; border-radius: 4px;"></div>
+                            </div>
+                            <span style="font-size: 14px; font-weight: 600;">{{ "%.1f"|format(usage) }}%</span>
+                        </div>
+                    </td>
+                </tr>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== HISTORIQUE ==================== -->
+<div class="table-container mt-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-history"></i> Historique des transactions</div>
+    </div>
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Type</th>
+                    <th>Montant</th>
+                    <th>Solde</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for tx in transactions %}
+                <tr>
+                    <td class="text-muted" style="font-size: 12px;">{{ tx.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
+                    <td>
+                        <span class="badge {% if tx.type == 'deposit' %}success{% elif tx.type == 'bet' %}gray{% elif tx.type == 'win' %}success{% elif tx.type == 'payout' %}danger{% endif %}">
+                            {{ tx.type }}
+                        </span>
+                    </td>
+                    <td class="{% if tx.type in ['deposit', 'win'] %}text-success{% elif tx.type == 'payout' %}text-danger{% endif %}">
+                        {{ tx.amount|format_number }} HTG
+                    </td>
+                    <td>{{ tx.balance|format_number }} HTG</td>
+                    <td>{{ tx.description or '-' }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="5" class="text-center text-muted" style="padding: 20px;">
+                        Aucune transaction
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ==================== PARIS ==================== -->
+<div class="table-container mt-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-dice"></i> Paris effectués</div>
+    </div>
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Jeu</th>
+                    <th>Numéros</th>
+                    <th>Mise</th>
+                    <th>Gain</th>
+                    <th>Statut</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for bet in bets %}
+                <tr>
+                    <td class="text-muted" style="font-size: 12px;">{{ bet.placed_at.strftime('%d/%m/%Y %H:%M') }}</td>
+                    <td>{{ bet.game }}</td>
+                    <td>
+                        {% if bet.picks %}
+                        <div class="flex" style="gap: 2px; flex-wrap: wrap;">
+                            {% for num in bet.picks[:6] %}
+                            <span style="display: inline-block; width: 22px; height: 22px; border-radius: 50%; background: #d1fae5; color: #065f46; font-size: 9px; text-align: center; line-height: 22px; font-weight: 600;">
+                                {{ num }}
+                            </span>
+                            {% endfor %}
+                            {% if bet.picks|length > 6 %}
+                            <span style="font-size: 10px; color: #94a3b8;">+{{ bet.picks|length - 6 }}</span>
+                            {% endif %}
+                        </div>
+                        {% else %}
+                        <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ bet.stake|format_number }} HTG</td>
+                    <td class="{% if bet.winnings > 0 %}text-success{% endif %}">
+                        {{ bet.winnings|format_number }} HTG
+                    </td>
+                    <td>
+                        <span class="badge {% if bet.status == 'won' %}success{% elif bet.status == 'lost' %}danger{% else %}warning{% endif %}">
+                            {{ bet.status }}
+                        </span>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="6" class="text-center text-muted" style="padding: 20px;">
+                        Aucun pari effectué avec ce ticket
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ==================== QR CODE (réutilisé) ==================== -->
+<div class="table-container mt-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-qrcode"></i> QR Code du ticket</div>
+    </div>
+    <div style="padding: 20px; text-align: center;">
+        <div id="qrCodeContainer" style="display: inline-block; background: white; padding: 20px; border-radius: 12px; border: 1px solid #e2e8f0;">
+            <span class="text-muted">Cliquez sur "QR Code" pour générer</span>
+        </div>
+        <div style="margin-top: 8px;">
+            <button class="btn btn-primary" onclick="generateQR('{{ ticket.ticket_number }}')">
+                <i class="fas fa-qrcode"></i> Générer le QR Code
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MODAL PAIEMENT ==================== -->
+<div class="modal-overlay" id="payoutModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Confirmer le paiement</h2>
+            <button class="modal-close" onclick="closeModal('payoutModal')">&times;</button>
+        </div>
+        <p>Êtes-vous sûr de vouloir payer ce ticket ?</p>
+        <p style="color: #94a3b8; font-size: 14px;">
+            Le solde de <span id="payoutAmount" style="font-weight: 600; color: #059669;">{{ ticket.balance }}</span> HTG sera payé au joueur.
+        </p>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('payoutModal')">Annuler</button>
+            <button class="btn btn-success" id="confirmPayoutBtn">Confirmer le paiement</button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MODAL ANNULATION ==================== -->
+<div class="modal-overlay" id="cancelModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Annuler le ticket</h2>
+            <button class="modal-close" onclick="closeModal('cancelModal')">&times;</button>
+        </div>
+        <div class="form-group">
+            <label>Raison de l'annulation</label>
+            <input type="text" id="cancelReason" class="form-control" placeholder="Raison de l'annulation..." required>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('cancelModal')">Annuler</button>
+            <button class="btn btn-danger" id="confirmCancelBtn">Confirmer l'annulation</button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MODAL QR ==================== -->
+<div class="modal-overlay" id="qrModal">
+    <div class="modal" style="max-width: 400px; text-align: center;">
+        <div class="modal-header">
+            <h2>QR Code du ticket</h2>
+            <button class="modal-close" onclick="closeModal('qrModal')">&times;</button>
+        </div>
+        <div id="qrContent" style="padding: 20px;">
+            <div style="background: white; padding: 20px; border-radius: 12px; display: inline-block;">
+                <div id="qrCodeDisplay" style="width: 200px; height: 200px; margin: 0 auto; display: flex; align-items: center; justify-content: center; background: white; border: 2px dashed #e2e8f0; border-radius: 8px;">
+                    <span class="text-muted">Chargement...</span>
+                </div>
+            </div>
+            <div style="margin-top: 16px;">
+                <p style="font-weight: 600; font-family: monospace; font-size: 18px;">{{ ticket.ticket_number }}</p>
+                <button class="btn btn-primary" onclick="printQR()">
+                    <i class="fas fa-print"></i> Imprimer
+                </button>
+                <button class="btn btn-secondary" onclick="downloadQR()">
+                    <i class="fas fa-download"></i> Télécharger
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    // ==================== PAYER TICKET ====================
+    document.getElementById('confirmPayoutBtn').addEventListener('click', function() {
+        fetch('/admin/api/tickets/{{ ticket.id }}/payout', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            closeModal('payoutModal');
+            if (data.success) {
+                showToast(data.message || 'Ticket payé avec succès', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            closeModal('payoutModal');
+            showToast('Erreur réseau', 'error');
+        });
+    });
+    
+    // ==================== ANNULER TICKET ====================
+    document.getElementById('confirmCancelBtn').addEventListener('click', function() {
+        const reason = document.getElementById('cancelReason').value.trim();
+        if (!reason) {
+            showToast('Veuillez saisir une raison', 'warning');
+            return;
+        }
+        
+        fetch('/admin/api/tickets/{{ ticket.id }}/cancel', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ reason: reason })
+        })
+        .then(response => response.json())
+        .then(data => {
+            closeModal('cancelModal');
+            if (data.success) {
+                showToast(data.message || 'Ticket annulé avec succès', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            closeModal('cancelModal');
+            showToast('Erreur réseau', 'error');
+        });
+    });
+    
+    // ==================== QR CODE ====================
+    function generateQR(ticketNumber) {
+        openModal('qrModal');
+        document.getElementById('qrCodeDisplay').innerHTML = '<span class="text-muted">Génération...</span>';
+        
+        fetch(`/admin/api/tickets/${ticketNumber}/qr`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('qrCodeDisplay').innerHTML = `<img src="${data.qr_code}" style="width: 200px; height: 200px; object-fit: contain;">`;
+                } else {
+                    document.getElementById('qrCodeDisplay').innerHTML = '<span class="text-danger">Erreur de génération</span>';
+                }
+            })
+            .catch(() => {
+                document.getElementById('qrCodeDisplay').innerHTML = '<span class="text-danger">Erreur réseau</span>';
+            });
+    }
+    
+    function printQR() {
+        const content = document.getElementById('qrContent').innerHTML;
+        const win = window.open('', '', 'width=400,height=500');
+        win.document.write(`
+            <html>
+                <head><title>QR Code - {{ config.APP_NAME }}</title>
+                <style>
+                    body { text-align: center; font-family: Arial, sans-serif; padding: 20px; }
+                    .container { display: inline-block; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; }
+                    .ticket-number { font-family: monospace; font-size: 18px; font-weight: bold; margin-top: 12px; }
+                </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <h2>Ticket {{ ticket.ticket_number }}</h2>
+                        <div>${document.getElementById('qrCodeDisplay').innerHTML}</div>
+                        <div class="ticket-number">{{ ticket.ticket_number }}</div>
+                        <p style="color: #94a3b8; font-size: 12px; margin-top: 12px;">Présentez ce QR code en bureau</p>
+                    </div>
+                </body>
+            </html>
+        `);
+        win.document.close();
+        win.focus();
+        win.print();
+    }
+    
+    function downloadQR() {
+        const img = document.querySelector('#qrCodeDisplay img');
+        if (img) {
+            const link = document.createElement('a');
+            link.download = `ticket_{{ ticket.ticket_number }}.png`;
+            link.href = img.src;
+            link.click();
+        }
+    }
+    
+    // ==================== FONCTIONS MODALES ====================
+    function payoutTicket(ticketId) {
+        openModal('payoutModal');
+    }
+    
+    function cancelTicket(ticketId) {
+        document.getElementById('cancelReason').value = '';
+        openModal('cancelModal');
+    }
+</script>
+{% endblock %}
+{% endblock %}

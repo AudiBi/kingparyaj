@@ -1,0 +1,188 @@
+<!-- app/templates/admin/bureaus/create.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Créer un bureau - Administration{% endblock %}
+
+{% block page_title %}Créer un bureau{% endblock %}
+{% block page_subtitle %}Ajouter un nouveau point de vente physique{% endblock %}
+
+{% block content %}
+<div class="grid-2">
+    <!-- ==================== FORMULAIRE ==================== -->
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-plus-circle"></i> Informations du bureau</div>
+        </div>
+        <div style="padding: 24px;">
+            <form id="createForm" onsubmit="return submitCreate(event)">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                
+                <div class="form-group">
+                    <label>Nom du bureau <span class="text-danger">*</span></label>
+                    <input type="text" name="name" class="form-control" placeholder="Ex: Bureau Principal" required>
+                </div>
+                
+                <div class="form-group">
+                    <label>Code <span class="text-danger">*</span></label>
+                    <input type="text" name="code" class="form-control" placeholder="Ex: PRINCIPAL" required>
+                    <div class="help-text">Code unique pour identifier le bureau</div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Adresse</label>
+                    <input type="text" name="address" class="form-control" placeholder="Ex: 123 Rue Capois, Port-au-Prince">
+                </div>
+                
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Ville <span class="text-danger">*</span></label>
+                        <select name="city" class="form-control" required>
+                            <option value="">Sélectionner une ville</option>
+                            <option value="Port-au-Prince">Port-au-Prince</option>
+                            <option value="Delmas">Delmas</option>
+                            <option value="Pétion-Ville">Pétion-Ville</option>
+                            <option value="Carrefour">Carrefour</option>
+                            <option value="Gonaïves">Gonaïves</option>
+                            <option value="Cap-Haïtien">Cap-Haïtien</option>
+                            <option value="Les Cayes">Les Cayes</option>
+                            <option value="Jacmel">Jacmel</option>
+                            <option value="Jérémie">Jérémie</option>
+                            <option value="Saint-Marc">Saint-Marc</option>
+                            <option value="Autre">Autre</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Département</label>
+                        <select name="department" class="form-control">
+                            <option value="">Sélectionner un département</option>
+                            <option value="Ouest">Ouest</option>
+                            <option value="Nord">Nord</option>
+                            <option value="Sud">Sud</option>
+                            <option value="Artibonite">Artibonite</option>
+                            <option value="Centre">Centre</option>
+                            <option value="Grand'Anse">Grand'Anse</option>
+                            <option value="Nippes">Nippes</option>
+                            <option value="Nord-Est">Nord-Est</option>
+                            <option value="Nord-Ouest">Nord-Ouest</option>
+                            <option value="Sud-Est">Sud-Est</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Téléphone</label>
+                        <input type="tel" name="phone" class="form-control" placeholder="Ex: 34XX-XXXX">
+                    </div>
+                    <div class="form-group">
+                        <label>Email</label>
+                        <input type="email" name="email" class="form-control" placeholder="bureau@exemple.com">
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" name="is_active" checked>
+                        Actif
+                    </label>
+                </div>
+                
+                <div class="modal-footer" style="margin-top: 24px; border-top: 1px solid #e2e8f0; padding-top: 16px;">
+                    <a href="{{ url_for('admin_bureaus') }}" class="btn btn-secondary">Annuler</a>
+                    <button type="submit" class="btn btn-success">
+                        <i class="fas fa-plus"></i> Créer le bureau
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- ==================== INFORMATIONS ==================== -->
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-info-circle"></i> Informations</div>
+        </div>
+        <div style="padding: 20px;">
+            <div style="background: #eff6ff; border-radius: 8px; padding: 16px; border-left: 4px solid #3b82f6; margin-bottom: 16px;">
+                <h4 style="margin: 0 0 8px 0; color: #1e40af;"><i class="fas fa-lightbulb"></i> À savoir</h4>
+                <p style="margin: 0; color: #1e40af; font-size: 14px;">
+                    Les bureaux sont les points de vente physiques où les joueurs peuvent :
+                </p>
+                <ul style="margin: 8px 0 0; padding-left: 20px; color: #1e40af; font-size: 14px;">
+                    <li>Déposer de l'argent cash</li>
+                    <li>Retirer leurs gains</li>
+                    <li>Jouer avec des tickets</li>
+                    <li>Être assistés par des agents</li>
+                </ul>
+            </div>
+            
+            <div style="background: #fef3c7; border-radius: 8px; padding: 16px; border-left: 4px solid #f59e0b;">
+                <h4 style="margin: 0 0 8px 0; color: #92400e;"><i class="fas fa-exclamation-triangle"></i> Code du bureau</h4>
+                <p style="margin: 0; color: #92400e; font-size: 14px;">
+                    Le code doit être unique et servira à identifier le bureau dans tout le système.
+                    Il sera utilisé par les agents pour se connecter à leur bureau.
+                </p>
+            </div>
+            
+            <div style="margin-top: 16px; padding: 16px; background: #f1f5f9; border-radius: 8px;">
+                <h4 style="margin: 0 0 8px 0; color: #1e293b;">Coordonnées GPS (optionnel)</h4>
+                <div class="grid-2" style="margin-top: 8px;">
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label style="font-size: 12px;">Latitude</label>
+                        <input type="text" name="latitude" class="form-control" style="padding: 6px 10px;" placeholder="Ex: 18.5392">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label style="font-size: 12px;">Longitude</label>
+                        <input type="text" name="longitude" class="form-control" style="padding: 6px 10px;" placeholder="Ex: -72.3350">
+                    </div>
+                </div>
+                <div class="help-text" style="font-size: 12px;">Utile pour l'affichage sur la carte</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    function submitCreate(e) {
+        e.preventDefault();
+        const form = e.target;
+        const data = new FormData(form);
+        
+        const payload = {
+            name: data.get('name'),
+            code: data.get('code').toUpperCase().replace(/\s/g, ''),
+            address: data.get('address') || null,
+            city: data.get('city'),
+            department: data.get('department') || null,
+            phone: data.get('phone') || null,
+            email: data.get('email') || null,
+            latitude: data.get('latitude') || null,
+            longitude: data.get('longitude') || null,
+            is_active: data.get('is_active') === 'on'
+        };
+        
+        fetch('/admin/api/bureaus', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Bureau créé avec succès', 'success');
+                setTimeout(() => window.location.href = '/admin/bureaus', 1500);
+            } else {
+                showToast(data.error || 'Erreur lors de la création', 'error');
+            }
+        })
+        .catch(() => {
+            showToast('Erreur réseau', 'error');
+        });
+    }
+</script>
+{% endblock %}
+{% endblock %}

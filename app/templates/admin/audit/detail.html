@@ -1,0 +1,307 @@
+<!-- app/templates/admin/audit/detail.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Détails log d'audit - Administration{% endblock %}
+
+{% block page_title %}Détails du log d'audit{% endblock %}
+{% block page_subtitle %}{{ log.id[:8] }}{% endblock %}
+
+{% block content %}
+<!-- ==================== EN-TÊTE ==================== -->
+<div class="flex-between mb-3" style="flex-wrap: wrap; gap: 12px;">
+    <div class="flex-center" style="gap: 16px;">
+        <div style="width: 56px; height: 56px; border-radius: 50%; {% if log.action in ['login', 'logout'] %}background: #3b82f6;{% elif log.action in ['bet_placed', 'bet_settled'] %}background: #8b5cf6;{% elif log.action in ['deposit', 'withdrawal'] %}background: #059669;{% elif log.action in ['user_blocked', 'account_frozen'] %}background: #ef4444;{% else %}background: #94a3b8;{% endif %} display: flex; align-items: center; justify-content: center; font-size: 24px; color: white;">
+            <i class="fas fa-{% if log.action in ['login', 'logout'] %}sign-in-alt{% elif log.action in ['bet_placed', 'bet_settled'] %}dice{% elif log.action in ['deposit', 'withdrawal'] %}credit-card{% elif log.action in ['user_blocked', 'account_frozen'] %}ban{% else %}clipboard{% endif %}"></i>
+        </div>
+        <div>
+            <h2 style="font-size: 20px; font-weight: 600; margin: 0;">{{ log.action|replace('_', ' ')|capitalize }}</h2>
+            <p style="color: #94a3b8; margin: 4px 0 0;">
+                {{ log.created_at.strftime('%d/%m/%Y %H:%M:%S') }}
+                &nbsp;|&nbsp; <span class="badge gray">{{ log.resource_type or 'N/A' }}</span>
+                &nbsp;|&nbsp; <span class="badge {% if log.leh_exported %}success{% else %}warning{% endif %}">
+                    {% if log.leh_exported %}Exporté LEH{% else %}En attente{% endif %}
+                </span>
+            </p>
+        </div>
+    </div>
+    <div class="flex" style="gap: 8px;">
+        {% if not log.leh_exported %}
+        <button class="btn btn-success" onclick="markExported('{{ log.id }}')">
+            <i class="fas fa-file-export"></i> Exporter LEH
+        </button>
+        {% endif %}
+        <a href="{{ url_for('admin_audit_logs') }}" class="btn btn-secondary">
+            <i class="fas fa-arrow-left"></i> Retour
+        </a>
+    </div>
+</div>
+
+<!-- ==================== INFORMATIONS ==================== -->
+<div class="grid-2">
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-info-circle"></i> Informations générales</div>
+        </div>
+        <div style="padding: 20px;">
+            <table style="width: 100%; border-collapse: collapse;">
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8; width: 40%;">ID</td>
+                    <td style="padding: 8px 0; font-family: monospace;">{{ log.id }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Action</td>
+                    <td style="padding: 8px 0;">
+                        <span class="badge {% if log.action in ['login', 'logout'] %}info{% elif log.action in ['bet_placed', 'bet_settled'] %}purple{% elif log.action in ['deposit', 'withdrawal'] %}success{% elif log.action in ['user_blocked', 'account_frozen'] %}danger{% else %}gray{% endif %}">
+                            {{ log.action }}
+                        </span>
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Resource</td>
+                    <td style="padding: 8px 0;">{{ log.resource_type or 'N/A' }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Resource ID</td>
+                    <td style="padding: 8px 0; font-family: monospace;">{{ log.resource_id or 'N/A' }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Date de création</td>
+                    <td style="padding: 8px 0;">{{ log.created_at.strftime('%d/%m/%Y %H:%M:%S') }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Dernière mise à jour</td>
+                    <td style="padding: 8px 0;">{{ log.updated_at.strftime('%d/%m/%Y %H:%M:%S') }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Export LEH</td>
+                    <td style="padding: 8px 0;">
+                        {% if log.leh_exported %}
+                            <span class="badge success"><i class="fas fa-check"></i> Exporté</span>
+                            {% if log.leh_exported_at %}
+                            <br><span style="font-size: 12px; color: #94a3b8;">le {{ log.leh_exported_at.strftime('%d/%m/%Y %H:%M') }}</span>
+                            {% endif %}
+                        {% else %}
+                            <span class="badge warning"><i class="fas fa-clock"></i> En attente</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% if log.reason %}
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Raison</td>
+                    <td style="padding: 8px 0;">{{ log.reason }}</td>
+                </tr>
+                {% endif %}
+            </table>
+        </div>
+    </div>
+    
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-user"></i> Utilisateur</div>
+        </div>
+        <div style="padding: 20px;">
+            <table style="width: 100%; border-collapse: collapse;">
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8; width: 40%;">ID utilisateur</td>
+                    <td style="padding: 8px 0; font-family: monospace;">{{ log.user_id or 'Système' }}</td>
+                </tr>
+                {% if log.user %}
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Nom</td>
+                    <td style="padding: 8px 0; font-weight: 500;">
+                        <a href="{{ url_for('admin_user_detail', user_id=log.user_id) }}" style="color: #0f172a; text-decoration: none;">
+                            {{ log.user.full_name or log.user.phone }}
+                        </a>
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Téléphone</td>
+                    <td style="padding: 8px 0; font-family: monospace;">{{ log.user.phone }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Email</td>
+                    <td style="padding: 8px 0;">{{ log.user.email or 'N/A' }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Rôle</td>
+                    <td style="padding: 8px 0;">
+                        <span class="badge {% if log.user.role == 'admin' %}danger{% elif log.user.role == 'agent' %}warning{% else %}gray{% endif %}">
+                            {{ log.user.role }}
+                        </span>
+                    </td>
+                </tr>
+                {% endif %}
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Agent</td>
+                    <td style="padding: 8px 0;">{{ log.agent_id or 'N/A' }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Session</td>
+                    <td style="padding: 8px 0; font-family: monospace;">{{ log.session_id or 'N/A' }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">IP</td>
+                    <td style="padding: 8px 0; font-family: monospace;">{{ log.ip_address or 'N/A' }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">User-Agent</td>
+                    <td style="padding: 8px 0; font-size: 12px; word-break: break-all;">{{ log.user_agent or 'N/A' }}</td>
+                </tr>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== CHANGEMENTS ==================== -->
+<div class="grid-2 mt-3">
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-arrow-left"></i> Anciennes valeurs</div>
+        </div>
+        <div style="padding: 20px;">
+            {% if log.old_values %}
+            <pre style="background: #f1f5f9; padding: 16px; border-radius: 8px; font-size: 12px; overflow-x: auto; margin: 0; min-height: 100px;">
+{{ log.old_values|tojson(indent=2) }}
+            </pre>
+            {% else %}
+            <div class="text-muted text-center" style="padding: 20px;">
+                <i class="fas fa-minus" style="font-size: 24px; display: block; margin-bottom: 8px; opacity: 0.3;"></i>
+                Aucune ancienne valeur
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-arrow-right"></i> Nouvelles valeurs</div>
+        </div>
+        <div style="padding: 20px;">
+            {% if log.new_values %}
+            <pre style="background: #f1f5f9; padding: 16px; border-radius: 8px; font-size: 12px; overflow-x: auto; margin: 0; min-height: 100px;">
+{{ log.new_values|tojson(indent=2) }}
+            </pre>
+            {% else %}
+            <div class="text-muted text-center" style="padding: 20px;">
+                <i class="fas fa-minus" style="font-size: 24px; display: block; margin-bottom: 8px; opacity: 0.3;"></i>
+                Aucune nouvelle valeur
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MÉTADONNÉES ==================== -->
+{% if log.metadata %}
+<div class="table-container mt-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-code"></i> Métadonnées</div>
+    </div>
+    <div style="padding: 20px;">
+        <pre style="background: #f1f5f9; padding: 16px; border-radius: 8px; font-size: 12px; overflow-x: auto; margin: 0;">
+{{ log.metadata|tojson(indent=2) }}
+        </pre>
+    </div>
+</div>
+{% endif %}
+
+<!-- ==================== ACTIONS ==================== -->
+<div class="table-container mt-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-bolt"></i> Actions</div>
+    </div>
+    <div style="padding: 20px;">
+        <div class="flex" style="gap: 12px; flex-wrap: wrap;">
+            <button class="btn btn-success" onclick="markExported('{{ log.id }}')">
+                <i class="fas fa-file-export"></i> Exporter vers LEH
+            </button>
+            <button class="btn btn-secondary" onclick="window.print()">
+                <i class="fas fa-print"></i> Imprimer
+            </button>
+            <button class="btn btn-secondary" onclick="copyLog()">
+                <i class="fas fa-copy"></i> Copier
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== TIMELINE ==================== -->
+<div class="table-container mt-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-clock"></i> Timeline</div>
+    </div>
+    <div style="padding: 20px;">
+        <div style="position: relative; padding-left: 30px;">
+            <div style="position: absolute; left: 8px; top: 0; bottom: 0; width: 2px; background: #e2e8f0;"></div>
+            {% for event in timeline %}
+            <div style="position: relative; padding: 8px 0 8px 20px; border-bottom: 1px solid #f1f5f9;">
+                <div style="position: absolute; left: -4px; top: 12px; width: 12px; height: 12px; border-radius: 50%; background: {% if loop.first %}#059669{% else %}#94a3b8{% endif %}; border: 2px solid white;"></div>
+                <div style="display: flex; justify-content: space-between; flex-wrap: wrap;">
+                    <div>
+                        <span class="badge gray">{{ event.action }}</span>
+                        <span style="font-size: 13px; margin-left: 8px;">{{ event.description }}</span>
+                    </div>
+                    <span style="font-size: 12px; color: #94a3b8;">{{ event.created_at|timeago }}</span>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MODAL EXPORT ==================== -->
+<div class="modal-overlay" id="lehModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Export LEH</h2>
+            <button class="modal-close" onclick="closeModal('lehModal')">&times;</button>
+        </div>
+        <p>Confirmer l'export de ce log vers la LEH ?</p>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('lehModal')">Annuler</button>
+            <button class="btn btn-success" id="confirmLehBtn">Confirmer</button>
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    // ==================== MARQUER EXPORTÉ ====================
+    function markExported(logId) {
+        openModal('lehModal');
+    }
+    
+    document.getElementById('confirmLehBtn').addEventListener('click', function() {
+        fetch('/admin/api/audit/logs/{{ log.id }}/leh-export', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            closeModal('lehModal');
+            if (data.success) {
+                showToast('Log marqué comme exporté', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            closeModal('lehModal');
+            showToast('Erreur réseau', 'error');
+        });
+    });
+    
+    // ==================== COPIER ====================
+    function copyLog() {
+        const content = {{ log|tojson }};
+        navigator.clipboard.writeText(JSON.stringify(content, null, 2))
+            .then(() => showToast('Log copié dans le presse-papiers', 'success'))
+            .catch(() => showToast('Erreur lors de la copie', 'error'));
+    }
+</script>
+{% endblock %}
+{% endblock %}

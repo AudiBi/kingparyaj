@@ -1,0 +1,197 @@
+<!-- app/templates/admin/login.html -->
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Administration - Connexion</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <style>
+        body {
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Inter', sans-serif;
+        }
+        .login-card {
+            background: white;
+            border-radius: 20px;
+            padding: 48px 40px;
+            max-width: 420px;
+            width: 95%;
+            box-shadow: 0 25px 60px rgba(0,0,0,0.3);
+            animation: slideUp 0.5s ease;
+        }
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(30px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .login-card .logo {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+        .login-card .logo .icon {
+            width: 64px;
+            height: 64px;
+            background: #059669;
+            border-radius: 16px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            font-weight: 700;
+            color: white;
+        }
+        .login-card .logo h1 {
+            font-size: 24px;
+            font-weight: 700;
+            color: #0f172a;
+            margin-top: 12px;
+        }
+        .login-card .logo p {
+            color: #94a3b8;
+            font-size: 14px;
+            margin-top: 4px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        .form-group label {
+            display: block;
+            font-size: 14px;
+            font-weight: 500;
+            color: #1e293b;
+            margin-bottom: 6px;
+        }
+        .form-group .input-wrapper {
+            position: relative;
+        }
+        .form-group .input-wrapper i {
+            position: absolute;
+            left: 14px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #94a3b8;
+        }
+        .form-group .input-wrapper input {
+            width: 100%;
+            padding: 12px 14px 12px 44px;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            font-size: 14px;
+            transition: all 0.2s;
+            background: #f8fafc;
+        }
+        .form-group .input-wrapper input:focus {
+            outline: none;
+            border-color: #059669;
+            background: white;
+            box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.1);
+        }
+        .btn {
+            width: 100%;
+            padding: 14px;
+            background: #059669;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn:hover {
+            background: #047857;
+            transform: translateY(-1px);
+            box-shadow: 0 8px 25px rgba(5, 150, 105, 0.3);
+        }
+        .btn:active {
+            transform: translateY(0);
+        }
+        .error {
+            background: #fee2e2;
+            color: #991b1b;
+            padding: 12px 16px;
+            border-radius: 10px;
+            font-size: 14px;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 24px;
+            font-size: 13px;
+            color: #94a3b8;
+        }
+        .footer a {
+            color: #059669;
+            text-decoration: none;
+        }
+        .footer a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <div class="logo">
+            <div class="icon">K</div>
+            <h1>Administration</h1>
+            <p>Parier Keno & Lucky Haïti</p>
+        </div>
+        
+        {% if error %}
+        <div class="error">
+            <i class="fas fa-exclamation-circle"></i>
+            {{ error }}
+        </div>
+        {% endif %}
+        
+        <form method="POST" action="{{ url_for('admin_login') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            
+            <div class="form-group">
+                <label for="email">Email</label>
+                <div class="input-wrapper">
+                    <i class="fas fa-envelope"></i>
+                    <input type="email" id="email" name="email" placeholder="admin@parierkeno.ht" required autofocus>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label for="password">Mot de passe</label>
+                <div class="input-wrapper">
+                    <i class="fas fa-lock"></i>
+                    <input type="password" id="password" name="password" placeholder="••••••••" required>
+                </div>
+            </div>
+            
+            <div class="form-group" style="display:flex;align-items:center;gap:12px;margin-bottom:24px;">
+                <input type="checkbox" id="remember" name="remember" style="width:16px;height:16px;accent-color:#059669;">
+                <label for="remember" style="margin:0;font-weight:400;font-size:14px;color:#64748b;">Se souvenir de moi</label>
+            </div>
+            
+            <button type="submit" class="btn">
+                <i class="fas fa-sign-in-alt"></i> Se connecter
+            </button>
+        </form>
+        
+        <div class="footer">
+            <p>Accès réservé au personnel autorisé</p>
+            <p style="margin-top:4px;">© 2024 Parier Keno Haïti - Tous droits réservés</p>
+        </div>
+    </div>
+    
+    <script>
+        // Si l'utilisateur est déjà connecté, rediriger
+        if ({{ is_authenticated|tojson }}) {
+            window.location.href = '{{ url_for("admin_dashboard") }}';
+        }
+    </script>
+</body>
+</html>

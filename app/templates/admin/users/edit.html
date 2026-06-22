@@ -1,0 +1,341 @@
+<!-- app/templates/admin/users/edit.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Modifier utilisateur - Administration{% endblock %}
+
+{% block page_title %}Modifier un utilisateur{% endblock %}
+{% block page_subtitle %}{{ user.full_name or user.phone }}{% endblock %}
+
+{% block content %}
+<div class="grid-2">
+    <!-- ==================== FORMULAIRE ==================== -->
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-user-edit"></i> Informations générales</div>
+        </div>
+        <div style="padding: 20px;">
+            <form id="editForm" onsubmit="return submitEdit(event)">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Prénom</label>
+                        <input type="text" name="first_name" class="form-control" value="{{ user.first_name or '' }}">
+                    </div>
+                    <div class="form-group">
+                        <label>Nom</label>
+                        <input type="text" name="last_name" class="form-control" value="{{ user.last_name or '' }}">
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Téléphone</label>
+                    <input type="text" name="phone" class="form-control" value="{{ user.phone }}" disabled>
+                    <div class="help-text">Le numéro de téléphone ne peut pas être modifié</div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" name="email" class="form-control" value="{{ user.email or '' }}">
+                </div>
+                
+                <div class="form-group">
+                    <label>Carte d'identité</label>
+                    <input type="text" name="national_id" class="form-control" value="{{ user.national_id or '' }}">
+                </div>
+                
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Rôle</label>
+                        <select name="role" class="form-control">
+                            {% for role in roles %}
+                            <option value="{{ role }}" {% if user.role == role %}selected{% endif %}>
+                                {{ role }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Statut KYC</label>
+                        <select name="kyc_status" class="form-control">
+                            {% for status in kyc_statuses %}
+                            <option value="{{ status }}" {% if user.kyc_status == status %}selected{% endif %}>
+                                {{ status }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Nouveau mot de passe</label>
+                        <input type="password" name="password" class="form-control" placeholder="Laisser vide pour ne pas changer">
+                        <div class="help-text">Min 8 caractères, une majuscule, une minuscule et un chiffre</div>
+                    </div>
+                    <div class="form-group">
+                        <label>Confirmer le mot de passe</label>
+                        <input type="password" name="password_confirm" class="form-control" placeholder="Confirmer le mot de passe">
+                    </div>
+                </div>
+                
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" name="is_active" {% if user.is_active %}checked{% endif %}>
+                            Actif
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" name="is_locked" {% if user.is_locked %}checked{% endif %}>
+                            Bloqué
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="modal-footer" style="margin-top: 20px; border-top: 1px solid #e2e8f0; padding-top: 16px;">
+                    <a href="{{ url_for('admin_user_detail', user_id=user.id) }}" class="btn btn-secondary">Annuler</a>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-save"></i> Enregistrer
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- ==================== ACTIONS RAPIDES ==================== -->
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-bolt"></i> Actions rapides</div>
+        </div>
+        <div style="padding: 20px;">
+            <div style="display: flex; flex-direction: column; gap: 12px;">
+                <!-- Blocage -->
+                {% if user.is_locked %}
+                <button class="btn btn-success w-full" onclick="unblockUser()">
+                    <i class="fas fa-unlock"></i> Débloquer l'utilisateur
+                </button>
+                {% else %}
+                <button class="btn btn-danger w-full" onclick="blockUser()">
+                    <i class="fas fa-lock"></i> Bloquer l'utilisateur
+                </button>
+                {% endif %}
+                
+                <!-- KYC -->
+                {% if user.kyc_status != 'verified' %}
+                <button class="btn btn-success w-full" onclick="verifyKyc()">
+                    <i class="fas fa-check-circle"></i> Valider KYC
+                </button>
+                {% else %}
+                <button class="btn btn-warning w-full" onclick="rejectKyc()">
+                    <i class="fas fa-times-circle"></i> Invalider KYC
+                </button>
+                {% endif %}
+                
+                <!-- Suppression -->
+                <button class="btn btn-danger w-full" onclick="confirmDelete('{{ user.id }}', '{{ user.full_name or user.phone }}')">
+                    <i class="fas fa-trash"></i> Supprimer définitivement
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MODAL SUPPRESSION ==================== -->
+<div class="modal-overlay" id="deleteModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Confirmer la suppression</h2>
+            <button class="modal-close" onclick="closeModal('deleteModal')">&times;</button>
+        </div>
+        <p id="deleteMessage">Êtes-vous sûr de vouloir supprimer cet utilisateur ? Cette action est irréversible.</p>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('deleteModal')">Annuler</button>
+            <button class="btn btn-danger" id="confirmDeleteBtn">Supprimer</button>
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    // ==================== SOUMISSION FORMULAIRE ====================
+    function submitEdit(e) {
+        e.preventDefault();
+        const form = e.target;
+        const data = new FormData(form);
+        const payload = {};
+        
+        // Construire le payload
+        payload.first_name = data.get('first_name') || null;
+        payload.last_name = data.get('last_name') || null;
+        payload.email = data.get('email') || null;
+        payload.national_id = data.get('national_id') || null;
+        payload.role = data.get('role');
+        payload.kyc_status = data.get('kyc_status');
+        payload.is_active = data.get('is_active') === 'on';
+        payload.is_locked = data.get('is_locked') === 'on';
+        
+        const password = data.get('password');
+        const passwordConfirm = data.get('password_confirm');
+        
+        if (password || passwordConfirm) {
+            if (password !== passwordConfirm) {
+                showToast('Les mots de passe ne correspondent pas', 'error');
+                return;
+            }
+            if (password.length < 8) {
+                showToast('Le mot de passe doit contenir au moins 8 caractères', 'error');
+                return;
+            }
+            payload.password = password;
+        }
+        
+        fetch(`/admin/api/users/{{ user.id }}`, {
+            method: 'PUT',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Utilisateur mis à jour avec succès', 'success');
+                setTimeout(() => window.location.href = '{{ url_for("admin_user_detail", user_id=user.id) }}', 1000);
+            } else {
+                showToast(data.error || 'Erreur lors de la mise à jour', 'error');
+            }
+        })
+        .catch(() => {
+            showToast('Erreur réseau', 'error');
+        });
+    }
+    
+    // ==================== BLOQUER ====================
+    function blockUser() {
+        const reason = prompt('Raison du blocage :');
+        if (reason === null) return;
+        if (!reason.trim()) {
+            showToast('Veuillez saisir une raison', 'warning');
+            return;
+        }
+        
+        fetch(`/admin/api/users/{{ user.id }}/block`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ reason: reason })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Utilisateur bloqué avec succès', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        });
+    }
+    
+    // ==================== DÉBLOQUER ====================
+    function unblockUser() {
+        if (!confirm('Confirmer le déblocage de cet utilisateur ?')) return;
+        
+        fetch(`/admin/api/users/{{ user.id }}/unblock`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Utilisateur débloqué avec succès', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        });
+    }
+    
+    // ==================== KYC ====================
+    function verifyKyc() {
+        if (!confirm('Confirmer la validation KYC de cet utilisateur ?')) return;
+        
+        fetch(`/admin/api/users/{{ user.id }}/kyc/verify`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'KYC validé avec succès', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        });
+    }
+    
+    function rejectKyc() {
+        if (!confirm('Confirmer l\'invalidation KYC de cet utilisateur ?')) return;
+        
+        fetch(`/admin/api/users/{{ user.id }}/kyc/reject`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'KYC invalidé avec succès', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        });
+    }
+    
+    // ==================== SUPPRESSION ====================
+    function confirmDelete(userId, userName) {
+        document.getElementById('deleteMessage').textContent = 
+            `Êtes-vous sûr de vouloir supprimer l'utilisateur "${userName || userId}" ? Cette action est irréversible.`;
+        openModal('deleteModal');
+    }
+    
+    document.getElementById('confirmDeleteBtn').addEventListener('click', function() {
+        fetch(`/admin/api/users/{{ user.id }}`, {
+            method: 'DELETE',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            closeModal('deleteModal');
+            if (data.success) {
+                showToast('Utilisateur supprimé avec succès', 'success');
+                setTimeout(() => window.location.href = '{{ url_for("admin_users") }}', 1000);
+            } else {
+                showToast(data.error || 'Erreur lors de la suppression', 'error');
+            }
+        })
+        .catch(() => {
+            closeModal('deleteModal');
+            showToast('Erreur réseau', 'error');
+        });
+    });
+</script>
+{% endblock %}
+{% endblock %}

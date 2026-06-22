@@ -1,0 +1,417 @@
+<!-- app/templates/admin/games/keno/draws.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Gestion des tirages Keno - Administration{% endblock %}
+
+{% block page_title %}Gestion des tirages Keno{% endblock %}
+{% block page_subtitle %}Planifiez et gérez tous les tirages{% endblock %}
+
+{% block content %}
+<!-- ==================== STATISTIQUES RAPIDES ==================== -->
+<div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); margin-bottom: 20px;">
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #f59e0b;">
+        <div class="stat-label">En attente</div>
+        <div class="stat-value" style="font-size: 20px; color: #f59e0b;">{{ stats.pending }}</div>
+    </div>
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #22c55e;">
+        <div class="stat-label">Terminés</div>
+        <div class="stat-value" style="font-size: 20px; color: #22c55e;">{{ stats.completed }}</div>
+    </div>
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #3b82f6;">
+        <div class="stat-label">Aujourd'hui</div>
+        <div class="stat-value" style="font-size: 20px; color: #3b82f6;">{{ stats.today }}</div>
+    </div>
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #8b5cf6;">
+        <div class="stat-label">Prochain tirage</div>
+        <div class="stat-value" style="font-size: 16px; color: #8b5cf6;">{{ stats.next_draw or 'Aucun' }}</div>
+    </div>
+</div>
+
+<!-- ==================== ACTIONS ==================== -->
+<div class="table-container mb-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-bolt"></i> Actions</div>
+    </div>
+    <div style="padding: 16px 20px;">
+        <div class="flex" style="gap: 12px; flex-wrap: wrap;">
+            <button class="btn btn-primary" onclick="triggerDraw()">
+                <i class="fas fa-play"></i> Déclencher un tirage
+            </button>
+            <button class="btn btn-success" onclick="scheduleDraws()">
+                <i class="fas fa-calendar-plus"></i> Planifier les tirages
+            </button>
+            <button class="btn btn-warning" onclick="cancelPendingDraws()">
+                <i class="fas fa-times"></i> Annuler les tirages en attente
+            </button>
+            <button class="btn btn-secondary" onclick="refreshDraws()">
+                <i class="fas fa-sync"></i> Rafraîchir
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== FILTRES ==================== -->
+<div class="table-container mb-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-filter"></i> Filtres</div>
+    </div>
+    <div style="padding: 16px 20px;">
+        <form method="GET" action="{{ url_for('admin_keno_draws') }}" id="filterForm">
+            <div class="grid-3">
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Statut</label>
+                    <select name="status" class="form-control">
+                        <option value="">Tous</option>
+                        <option value="pending" {% if filters.status == 'pending' %}selected{% endif %}>En attente</option>
+                        <option value="completed" {% if filters.status == 'completed' %}selected{% endif %}>Terminé</option>
+                        <option value="cancelled" {% if filters.status == 'cancelled' %}selected{% endif %}>Annulé</option>
+                    </select>
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Période</label>
+                    <select name="period" class="form-control">
+                        <option value="">Toutes</option>
+                        <option value="today" {% if filters.period == 'today' %}selected{% endif %}>Aujourd'hui</option>
+                        <option value="week" {% if filters.period == 'week' %}selected{% endif %}>Cette semaine</option>
+                        <option value="month" {% if filters.period == 'month' %}selected{% endif %}>Ce mois</option>
+                    </select>
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>&nbsp;</label>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-search"></i> Filtrer
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- ==================== LISTE ==================== -->
+<div class="table-container">
+    <div class="table-header">
+        <div class="title">
+            <i class="fas fa-list"></i> Tirages ({{ pagination.total }})
+        </div>
+        <div class="actions">
+            <button class="btn btn-secondary" onclick="exportDraws()">
+                <i class="fas fa-file-export"></i> Exporter
+            </button>
+        </div>
+    </div>
+    
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 30px;">
+                        <input type="checkbox" id="selectAll" onchange="toggleAllDraws()">
+                    </th>
+                    <th>#</th>
+                    <th>Date</th>
+                    <th>Numéros</th>
+                    <th>Paris</th>
+                    <th>Volume</th>
+                    <th>Payout</th>
+                    <th>Jackpot</th>
+                    <th>Statut</th>
+                    <th style="width: 100px;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for draw in draws %}
+                <tr>
+                    <td>
+                        <input type="checkbox" class="draw-checkbox" value="{{ draw.id }}">
+                    </td>
+                    <td style="font-weight: 600;">#{{ draw.draw_number }}</td>
+                    <td class="text-muted" style="font-size: 12px;">
+                        {{ draw.draw_time.strftime('%d/%m/%Y %H:%M') }}
+                    </td>
+                    <td>
+                        {% if draw.numbers %}
+                        <div class="flex" style="gap: 2px; flex-wrap: wrap;">
+                            {% for num in draw.numbers[:8] %}
+                            <span style="display: inline-block; width: 24px; height: 24px; border-radius: 50%; background: #d1fae5; color: #065f46; font-size: 10px; text-align: center; line-height: 24px; font-weight: 600;">
+                                {{ num }}
+                            </span>
+                            {% endfor %}
+                            {% if draw.numbers|length > 8 %}
+                            <span style="font-size: 10px; color: #94a3b8;">+{{ draw.numbers|length - 8 }}</span>
+                            {% endif %}
+                        </div>
+                        {% else %}
+                        <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ draw.total_bets or 0 }}</td>
+                    <td>{{ draw.total_amount|format_number }} HTG</td>
+                    <td>{{ draw.total_payout|format_number }} HTG</td>
+                    <td>
+                        {% if draw.jackpot_amount > 0 %}
+                        <span style="color: #059669; font-weight: 600;">{{ draw.jackpot_amount|format_number }} HTG</span>
+                        {% if draw.jackpot_won %}
+                        <span class="badge success" style="font-size: 9px;">🏆</span>
+                        {% endif %}
+                        {% else %}
+                        <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <span class="badge {% if draw.status == 'completed' %}success{% elif draw.status == 'pending' %}warning{% else %}danger{% endif %}">
+                            {{ draw.status }}
+                        </span>
+                    </td>
+                    <td>
+                        <div class="flex" style="gap: 4px;">
+                            <button class="btn btn-sm btn-secondary" onclick="viewDraw('{{ draw.id }}')" title="Voir">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                            {% if draw.status == 'pending' %}
+                            <button class="btn btn-sm btn-success" onclick="triggerDraw('{{ draw.id }}')" title="Déclencher">
+                                <i class="fas fa-play"></i>
+                            </button>
+                            <button class="btn btn-sm btn-danger" onclick="cancelDraw('{{ draw.id }}')" title="Annuler">
+                                <i class="fas fa-times"></i>
+                            </button>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="10" class="text-center text-muted" style="padding: 40px;">
+                        <i class="fas fa-dice" style="font-size: 40px; display: block; margin-bottom: 12px; opacity: 0.3;"></i>
+                        Aucun tirage trouvé
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- ==================== PAGINATION ==================== -->
+    {% if pagination.pages > 1 %}
+    <div class="pagination">
+        <a href="{{ url_for('admin_keno_draws', page=1, **request.args) }}" 
+           class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
+            <i class="fas fa-angle-double-left"></i>
+        </a>
+        
+        {% if pagination.has_prev %}
+        <a href="{{ url_for('admin_keno_draws', page=pagination.page-1, **request.args) }}" class="page-item">
+            <i class="fas fa-chevron-left"></i>
+        </a>
+        {% endif %}
+        
+        {% for p in range(1, pagination.pages + 1) %}
+            {% if p == pagination.page %}
+                <span class="page-item active">{{ p }}</span>
+            {% elif p <= 3 or p > pagination.pages - 3 or (p >= pagination.page - 2 and p <= pagination.page + 2) %}
+                <a href="{{ url_for('admin_keno_draws', page=p, **request.args) }}" class="page-item">{{ p }}</a>
+            {% elif p == 4 or p == pagination.pages - 3 %}
+                <span class="page-item">...</span>
+            {% endif %}
+        {% endfor %}
+        
+        {% if pagination.has_next %}
+        <a href="{{ url_for('admin_keno_draws', page=pagination.page+1, **request.args) }}" class="page-item">
+            <i class="fas fa-chevron-right"></i>
+        </a>
+        {% endif %}
+        
+        <a href="{{ url_for('admin_keno_draws', page=pagination.pages, **request.args) }}" 
+           class="page-item {% if not pagination.has_next %}disabled{% endif %}">
+            <i class="fas fa-angle-double-right"></i>
+        </a>
+    </div>
+    {% endif %}
+</div>
+
+<!-- ==================== MODAL DÉTAILS TIRAGE ==================== -->
+<div class="modal-overlay" id="drawModal">
+    <div class="modal" style="max-width: 700px;">
+        <div class="modal-header">
+            <h2 id="drawModalTitle">Détails du tirage</h2>
+            <button class="modal-close" onclick="closeModal('drawModal')">&times;</button>
+        </div>
+        <div id="drawModalContent">
+            <p class="text-muted text-center">Chargement...</p>
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    // ==================== SÉLECTION TOUS ====================
+    function toggleAllDraws() {
+        const checked = document.getElementById('selectAll').checked;
+        document.querySelectorAll('.draw-checkbox').forEach(cb => cb.checked = checked);
+    }
+    
+    // ==================== DÉCLENCHER TIRAGE ====================
+    function triggerDraw(drawId) {
+        const url = drawId ? `/admin/api/keno/draws/${drawId}/trigger` : '/admin/api/keno/draws/trigger';
+        if (!drawId && !confirm('Déclencher un nouveau tirage ?')) return;
+        
+        fetch(url, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Tirage déclenché avec succès', 'success');
+                setTimeout(() => location.reload(), 1500);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            showToast('Erreur réseau', 'error');
+        });
+    }
+    
+    // ==================== PLANIFIER TIRAGES ====================
+    function scheduleDraws() {
+        if (!confirm('Planifier les tirages pour les prochaines 24h ?')) return;
+        
+        fetch('/admin/api/keno/draws/schedule', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Tirages planifiés avec succès', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        });
+    }
+    
+    // ==================== ANNULER TIRAGES EN ATTENTE ====================
+    function cancelPendingDraws() {
+        if (!confirm('Annuler tous les tirages en attente ?')) return;
+        
+        fetch('/admin/api/keno/draws/cancel-pending', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Tirages annulés', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        });
+    }
+    
+    // ==================== ANNULER UN TIRAGE ====================
+    function cancelDraw(drawId) {
+        if (!confirm('Annuler ce tirage ?')) return;
+        
+        fetch(`/admin/api/keno/draws/${drawId}/cancel`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast('Tirage annulé', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        });
+    }
+    
+    // ==================== VOIR TIRAGE ====================
+    function viewDraw(drawId) {
+        openModal('drawModal');
+        document.getElementById('drawModalTitle').textContent = 'Chargement...';
+        document.getElementById('drawModalContent').innerHTML = '<p class="text-muted text-center">Chargement...</p>';
+        
+        fetch(`/admin/api/keno/draws/${drawId}`)
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('drawModalTitle').textContent = `Tirage #${data.draw_number}`;
+            
+            let html = `
+                <div style="margin-bottom: 16px;">
+                    <p><strong>Date:</strong> ${new Date(data.draw_time).toLocaleString()}</p>
+                    <p><strong>Statut:</strong> <span class="badge ${data.status === 'completed' ? 'success' : data.status === 'pending' ? 'warning' : 'danger'}">${data.status}</span></p>
+                    <p><strong>Total paris:</strong> ${data.total_bets}</p>
+                    <p><strong>Volume:</strong> ${data.total_amount} HTG</p>
+                    <p><strong>Payout:</strong> ${data.total_payout} HTG</p>
+                    ${data.jackpot_amount > 0 ? `<p><strong>Jackpot:</strong> ${data.jackpot_amount} HTG ${data.jackpot_won ? '🏆 GAGNÉ' : ''}</p>` : ''}
+                </div>
+                <div>
+                    <p><strong>Numéros tirés:</strong></p>
+                    <div class="flex" style="gap: 4px; flex-wrap: wrap;">
+                        ${data.numbers ? data.numbers.map(n => `<span style="display: inline-block; width: 32px; height: 32px; border-radius: 50%; background: #059669; color: white; font-size: 12px; text-align: center; line-height: 32px; font-weight: 600;">${n}</span>`).join('') : '<span class="text-muted">Non disponible</span>'}
+                    </div>
+                </div>
+                ${data.bets ? `<div style="margin-top: 16px; max-height: 300px; overflow-y: auto;">
+                    <p><strong>Paris (${data.bets.length}):</strong></p>
+                    <table style="width: 100%; font-size: 12px; border-collapse: collapse;">
+                        <thead>
+                            <tr style="background: #f8fafc;">
+                                <th style="padding: 4px 8px; text-align: left;">Joueur</th>
+                                <th style="padding: 4px 8px; text-align: center;">Numéros</th>
+                                <th style="padding: 4px 8px; text-align: right;">Mise</th>
+                                <th style="padding: 4px 8px; text-align: right;">Gain</th>
+                                <th style="padding: 4px 8px; text-align: center;">Statut</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${data.bets.map(b => `
+                                <tr>
+                                    <td style="padding: 4px 8px;">${b.user_name || b.ticket_number || b.user_id?.slice(0,8)}</td>
+                                    <td style="padding: 4px 8px; text-align: center;">${b.picks.join(', ')}</td>
+                                    <td style="padding: 4px 8px; text-align: right;">${b.stake} HTG</td>
+                                    <td style="padding: 4px 8px; text-align: right; color: ${b.winnings > 0 ? '#22c55e' : '#94a3b8'};">${b.winnings} HTG</td>
+                                    <td style="padding: 4px 8px; text-align: center;"><span class="badge ${b.status === 'won' ? 'success' : b.status === 'lost' ? 'danger' : 'warning'}">${b.status}</span></td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>` : ''}
+            `;
+            
+            document.getElementById('drawModalContent').innerHTML = html;
+        })
+        .catch(() => {
+            document.getElementById('drawModalContent').innerHTML = '<p class="text-danger text-center">Erreur de chargement</p>';
+        });
+    }
+    
+    // ==================== EXPORT ====================
+    function exportDraws() {
+        const form = document.getElementById('filterForm');
+        const params = new URLSearchParams(new FormData(form));
+        window.location.href = '/admin/api/keno/draws/export?' + params.toString();
+    }
+    
+    // ==================== RECHARGE ====================
+    function refreshDraws() {
+        location.reload();
+    }
+</script>
+{% endblock %}
+{% endblock %}

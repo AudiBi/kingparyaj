@@ -1,0 +1,181 @@
+<!-- app/templates/admin/agents/create.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Créer un agent - Administration{% endblock %}
+
+{% block page_title %}Créer un agent{% endblock %}
+{% block page_subtitle %}Ajouter un nouvel agent de bureau{% endblock %}
+
+{% block content %}
+<div class="grid-2">
+    <!-- ==================== FORMULAIRE ==================== -->
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-user-plus"></i> Informations de l'agent</div>
+        </div>
+        <div style="padding: 24px;">
+            <form id="createForm" onsubmit="return submitCreate(event)">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Prénom <span class="text-danger">*</span></label>
+                        <input type="text" name="first_name" class="form-control" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Nom <span class="text-danger">*</span></label>
+                        <input type="text" name="last_name" class="form-control" required>
+                    </div>
+                </div>
+                
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Téléphone <span class="text-danger">*</span></label>
+                        <input type="tel" name="phone" class="form-control" placeholder="34XX-XXXX" required>
+                        <div class="help-text">Format: 3X-XX-XXXX ou 4X-XX-XXXX</div>
+                    </div>
+                    <div class="form-group">
+                        <label>Email</label>
+                        <input type="email" name="email" class="form-control" placeholder="email@exemple.com">
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Carte d'identité</label>
+                    <input type="text" name="national_id" class="form-control" placeholder="NIF">
+                </div>
+                
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Mot de passe <span class="text-danger">*</span></label>
+                        <input type="password" name="password" class="form-control" required>
+                        <div class="help-text">Min 8 caractères, une majuscule, une minuscule et un chiffre</div>
+                    </div>
+                    <div class="form-group">
+                        <label>Confirmer le mot de passe <span class="text-danger">*</span></label>
+                        <input type="password" name="password_confirm" class="form-control" required>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Bureau d'affectation <span class="text-danger">*</span></label>
+                    <select name="bureau_id" class="form-control" required>
+                        <option value="">Sélectionner un bureau</option>
+                        {% for bureau in bureaus %}
+                        <option value="{{ bureau.id }}">{{ bureau.name }} - {{ bureau.city }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" name="is_active" checked>
+                        Actif
+                    </label>
+                </div>
+                
+                <div class="modal-footer" style="margin-top: 24px; border-top: 1px solid #e2e8f0; padding-top: 16px;">
+                    <a href="{{ url_for('admin_agents') }}" class="btn btn-secondary">Annuler</a>
+                    <button type="submit" class="btn btn-success">
+                        <i class="fas fa-plus"></i> Créer l'agent
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- ==================== INFORMATIONS ==================== -->
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-info-circle"></i> Informations</div>
+        </div>
+        <div style="padding: 20px;">
+            <div style="background: #f0fdf4; border-radius: 8px; padding: 16px; border-left: 4px solid #22c55e; margin-bottom: 16px;">
+                <h4 style="margin: 0 0 8px 0; color: #065f46;"><i class="fas fa-lightbulb"></i> À savoir</h4>
+                <p style="margin: 0; color: #065f46; font-size: 14px;">
+                    Les agents peuvent gérer les tickets, encaisser les dépôts et payer les gains dans les bureaux.
+                </p>
+            </div>
+            
+            <div style="background: #fef3c7; border-radius: 8px; padding: 16px; border-left: 4px solid #f59e0b;">
+                <h4 style="margin: 0 0 8px 0; color: #92400e;"><i class="fas fa-exclamation-triangle"></i> Permissions</h4>
+                <ul style="margin: 0; padding-left: 20px; color: #92400e; font-size: 14px;">
+                    <li>Créer et gérer des tickets</li>
+                    <li>Effectuer des dépôts cash</li>
+                    <li>Payer les retraits</li>
+                    <li>Placer des paris pour les joueurs</li>
+                    <li>Consulter leurs rapports</li>
+                </ul>
+            </div>
+            
+            <div style="margin-top: 16px; padding: 16px; background: #f1f5f9; border-radius: 8px;">
+                <h4 style="margin: 0 0 8px 0; color: #1e293b;">Code agent</h4>
+                <p style="margin: 0; font-size: 13px; color: #64748b;">
+                    Un code unique sera généré automatiquement pour l'agent.
+                    Il sera utilisé pour l'authentification dans l'interface agent.
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    function submitCreate(e) {
+        e.preventDefault();
+        const form = e.target;
+        const data = new FormData(form);
+        
+        // Vérifier les mots de passe
+        const password = data.get('password');
+        const passwordConfirm = data.get('password_confirm');
+        
+        if (password !== passwordConfirm) {
+            showToast('Les mots de passe ne correspondent pas', 'error');
+            return;
+        }
+        if (password.length < 8) {
+            showToast('Le mot de passe doit contenir au moins 8 caractères', 'error');
+            return;
+        }
+        if (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/\d/.test(password)) {
+            showToast('Le mot de passe doit contenir une majuscule, une minuscule et un chiffre', 'error');
+            return;
+        }
+        
+        // Construire le payload
+        const payload = {
+            first_name: data.get('first_name'),
+            last_name: data.get('last_name'),
+            phone: data.get('phone').replace(/[^0-9]/g, ''),
+            email: data.get('email') || null,
+            national_id: data.get('national_id') || null,
+            password: password,
+            bureau_id: data.get('bureau_id'),
+            is_active: data.get('is_active') === 'on'
+        };
+        
+        fetch('/admin/api/agents', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Agent créé avec succès', 'success');
+                setTimeout(() => window.location.href = '/admin/agents', 1500);
+            } else {
+                showToast(data.error || 'Erreur lors de la création', 'error');
+            }
+        })
+        .catch(() => {
+            showToast('Erreur réseau', 'error');
+        });
+    }
+</script>
+{% endblock %}
+{% endblock %}

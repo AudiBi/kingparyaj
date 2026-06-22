@@ -1,0 +1,322 @@
+<!-- app/templates/admin/transactions/detail.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Détails transaction - Administration{% endblock %}
+
+{% block page_title %}Détails de la transaction{% endblock %}
+{% block page_subtitle %}{{ transaction.reference }}{% endblock %}
+
+{% block content %}
+<!-- ==================== EN-TÊTE ==================== -->
+<div class="flex-between mb-3" style="flex-wrap: wrap; gap: 12px;">
+    <div class="flex-center" style="gap: 16px;">
+        <div style="width: 56px; height: 56px; border-radius: 50%; background: {% if transaction.transaction_type in ['deposit', 'win', 'bonus'] %}#22c55e{% else %}#ef4444{% endif %}; display: flex; align-items: center; justify-content: center; font-size: 24px; color: white;">
+            <i class="fas fa-{% if transaction.transaction_type == 'deposit' %}arrow-down{% elif transaction.transaction_type == 'withdrawal' %}arrow-up{% elif transaction.transaction_type == 'win' %}trophy{% elif transaction.transaction_type == 'bet' %}dice{% else %}credit-card{% endif %}"></i>
+        </div>
+        <div>
+            <h2 style="font-size: 20px; font-weight: 600; margin: 0;">{{ transaction.reference }}</h2>
+            <p style="color: #94a3b8; margin: 4px 0 0;">
+                <span class="badge {% if transaction.transaction_type == 'deposit' %}success{% elif transaction.transaction_type == 'withdrawal' %}danger{% elif transaction.transaction_type == 'win' %}success{% elif transaction.transaction_type == 'bet' %}gray{% else %}warning{% endif %}">
+                    {{ transaction.transaction_type }}
+                </span>
+                &nbsp;|&nbsp; {{ transaction.created_at.strftime('%d/%m/%Y %H:%M') }}
+            </p>
+        </div>
+    </div>
+    <div class="flex" style="gap: 8px;">
+        {% if transaction.status == 'pending' %}
+        <button class="btn btn-success" onclick="confirmTransaction('{{ transaction.id }}')">
+            <i class="fas fa-check"></i> Confirmer
+        </button>
+        <button class="btn btn-danger" onclick="cancelTransaction('{{ transaction.id }}')">
+            <i class="fas fa-times"></i> Annuler
+        </button>
+        {% endif %}
+        <a href="{{ url_for('admin_transactions') }}" class="btn btn-secondary">
+            <i class="fas fa-arrow-left"></i> Retour
+        </a>
+    </div>
+</div>
+
+<!-- ==================== INFORMATIONS ==================== -->
+<div class="grid-2">
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-info-circle"></i> Informations générales</div>
+        </div>
+        <div style="padding: 20px;">
+            <table style="width: 100%; border-collapse: collapse;">
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8; width: 40%;">Référence</td>
+                    <td style="padding: 8px 0; font-family: monospace; font-weight: 500;">{{ transaction.reference }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Type</td>
+                    <td style="padding: 8px 0;">
+                        <span class="badge {% if transaction.transaction_type == 'deposit' %}success{% elif transaction.transaction_type == 'withdrawal' %}danger{% elif transaction.transaction_type == 'win' %}success{% elif transaction.transaction_type == 'bet' %}gray{% else %}warning{% endif %}">
+                            {{ transaction.transaction_type }}
+                        </span>
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Statut</td>
+                    <td style="padding: 8px 0;">
+                        <span class="badge {% if transaction.status == 'completed' %}success{% elif transaction.status == 'pending' %}warning{% elif transaction.status == 'failed' %}danger{% else %}gray{% endif %}">
+                            {{ transaction.status }}
+                        </span>
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Méthode de paiement</td>
+                    <td style="padding: 8px 0;">{{ transaction.payment_method or 'N/A' }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Utilisateur</td>
+                    <td style="padding: 8px 0;">
+                        {% if transaction.user %}
+                        <a href="{{ url_for('admin_user_detail', user_id=transaction.user_id) }}" style="color: #0f172a; text-decoration: none; font-weight: 500;">
+                            {{ transaction.user.full_name or transaction.user.phone }}
+                        </a>
+                        {% else %}
+                        <span class="text-muted">Utilisateur supprimé</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Date de création</td>
+                    <td style="padding: 8px 0;">{{ transaction.created_at.strftime('%d/%m/%Y %H:%M:%S') }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Date de complétion</td>
+                    <td style="padding: 8px 0;">{{ transaction.completed_at.strftime('%d/%m/%Y %H:%M:%S') if transaction.completed_at else 'En attente' }}</td>
+                </tr>
+                {% if transaction.failure_reason %}
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Raison d'échec</td>
+                    <td style="padding: 8px 0; color: #ef4444;">{{ transaction.failure_reason }}</td>
+                </tr>
+                {% endif %}
+            </table>
+        </div>
+    </div>
+    
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-coins"></i> Montants</div>
+        </div>
+        <div style="padding: 20px;">
+            <table style="width: 100%; border-collapse: collapse;">
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8; width: 40%;">Montant</td>
+                    <td style="padding: 8px 0; font-size: 28px; font-weight: 700; color: {% if transaction.transaction_type in ['deposit', 'win', 'bonus'] %}#22c55e{% else %}#ef4444{% endif %};">
+                        {{ transaction.amount|format_number }} HTG
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Frais</td>
+                    <td style="padding: 8px 0;">{{ transaction.fee|format_number }} HTG</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Solde avant</td>
+                    <td style="padding: 8px 0;">{{ transaction.balance_before|format_number }} HTG</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Solde après</td>
+                    <td style="padding: 8px 0; font-weight: 600;">{{ transaction.balance_after|format_number }} HTG</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Variation</td>
+                    <td style="padding: 8px 0; color: {% if transaction.amount > 0 %}#22c55e{% else %}#ef4444{% endif %}; font-weight: 600;">
+                        {{ (transaction.balance_after - transaction.balance_before)|format_number }} HTG
+                    </td>
+                </tr>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== CONTEXTE ==================== -->
+<div class="table-container mt-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-link"></i> Contexte</div>
+    </div>
+    <div style="padding: 20px;">
+        <div class="grid-2">
+            <div>
+                <h4 style="margin: 0 0 8px 0; font-size: 14px; color: #94a3b8;">Références liées</h4>
+                <table style="width: 100%; border-collapse: collapse;">
+                    {% if transaction.bet_id %}
+                    <tr>
+                        <td style="padding: 4px 0; color: #94a3b8; width: 40%;">Pari</td>
+                        <td style="padding: 4px 0;">
+                            <a href="{{ url_for('admin_keno_draw_detail', draw_id=transaction.bet_id) }}" style="color: #3b82f6;">
+                                {{ transaction.bet_id[:8] }}
+                            </a>
+                        </td>
+                    </tr>
+                    {% endif %}
+                    {% if transaction.draw_id %}
+                    <tr>
+                        <td style="padding: 4px 0; color: #94a3b8;">Tirage</td>
+                        <td style="padding: 4px 0;">
+                            <a href="{{ url_for('admin_keno_draw_detail', draw_id=transaction.draw_id) }}" style="color: #3b82f6;">
+                                {{ transaction.draw_id[:8] }}
+                            </a>
+                        </td>
+                    </tr>
+                    {% endif %}
+                    {% if transaction.ticket_id %}
+                    <tr>
+                        <td style="padding: 4px 0; color: #94a3b8;">Ticket</td>
+                        <td style="padding: 4px 0;">
+                            <a href="{{ url_for('admin_ticket_detail', ticket_id=transaction.ticket_id) }}" style="color: #3b82f6;">
+                                {{ transaction.ticket_id[:8] }}
+                            </a>
+                        </td>
+                    </tr>
+                    {% endif %}
+                    {% if transaction.external_reference %}
+                    <tr>
+                        <td style="padding: 4px 0; color: #94a3b8;">Référence externe</td>
+                        <td style="padding: 4px 0; font-family: monospace;">{{ transaction.external_reference }}</td>
+                    </tr>
+                    {% endif %}
+                </table>
+            </div>
+            <div>
+                <h4 style="margin: 0 0 8px 0; font-size: 14px; color: #94a3b8;">Informations de sécurité</h4>
+                <table style="width: 100%; border-collapse: collapse;">
+                    <tr>
+                        <td style="padding: 4px 0; color: #94a3b8; width: 40%;">IP</td>
+                        <td style="padding: 4px 0; font-family: monospace;">{{ transaction.ip_address or 'N/A' }}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 4px 0; color: #94a3b8;">User-Agent</td>
+                        <td style="padding: 4px 0; font-size: 12px; word-break: break-all;">{{ transaction.user_agent or 'N/A' }}</td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MÉTADONNÉES ==================== -->
+{% if transaction.metadata %}
+<div class="table-container mt-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-code"></i> Métadonnées</div>
+    </div>
+    <div style="padding: 20px;">
+        <pre style="background: #f1f5f9; padding: 16px; border-radius: 8px; font-size: 12px; overflow-x: auto; margin: 0;">
+{{ transaction.metadata|tojson(indent=2) }}
+        </pre>
+    </div>
+</div>
+{% endif %}
+
+<!-- ==================== MODAL CONFIRMATION ==================== -->
+<div class="modal-overlay" id="confirmModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Confirmer la transaction</h2>
+            <button class="modal-close" onclick="closeModal('confirmModal')">&times;</button>
+        </div>
+        <p>Êtes-vous sûr de vouloir confirmer cette transaction ?</p>
+        <p style="color: #94a3b8; font-size: 14px;">Référence: <strong>{{ transaction.reference }}</strong></p>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('confirmModal')">Annuler</button>
+            <button class="btn btn-success" id="confirmTxBtn">Confirmer</button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MODAL ANNULATION ==================== -->
+<div class="modal-overlay" id="cancelModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Annuler la transaction</h2>
+            <button class="modal-close" onclick="closeModal('cancelModal')">&times;</button>
+        </div>
+        <p>Référence: <strong>{{ transaction.reference }}</strong></p>
+        <div class="form-group">
+            <label>Raison de l'annulation</label>
+            <input type="text" id="cancelReason" class="form-control" placeholder="Raison de l'annulation...">
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('cancelModal')">Annuler</button>
+            <button class="btn btn-danger" id="cancelTxBtn">Confirmer l'annulation</button>
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    // ==================== CONFIRMER TRANSACTION ====================
+    document.getElementById('confirmTxBtn').addEventListener('click', function() {
+        fetch('/admin/api/transactions/{{ transaction.id }}/confirm', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            closeModal('confirmModal');
+            if (data.success) {
+                showToast(data.message || 'Transaction confirmée', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            closeModal('confirmModal');
+            showToast('Erreur réseau', 'error');
+        });
+    });
+    
+    // ==================== ANNULER TRANSACTION ====================
+    document.getElementById('cancelTxBtn').addEventListener('click', function() {
+        const reason = document.getElementById('cancelReason').value.trim();
+        if (!reason) {
+            showToast('Veuillez saisir une raison', 'warning');
+            return;
+        }
+        
+        fetch('/admin/api/transactions/{{ transaction.id }}/cancel', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ reason: reason })
+        })
+        .then(response => response.json())
+        .then(data => {
+            closeModal('cancelModal');
+            if (data.success) {
+                showToast(data.message || 'Transaction annulée', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            closeModal('cancelModal');
+            showToast('Erreur réseau', 'error');
+        });
+    });
+    
+    // ==================== CONFIRMER DEPUIS LE BOUTON ====================
+    function confirmTransaction(txId) {
+        openModal('confirmModal');
+    }
+    
+    function cancelTransaction(txId) {
+        document.getElementById('cancelReason').value = '';
+        openModal('cancelModal');
+    }
+</script>
+{% endblock %}
+{% endblock %}

@@ -1,0 +1,487 @@
+<!-- app/templates/admin/transactions/index.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Transactions - Administration{% endblock %}
+
+{% block page_title %}Gestion des transactions{% endblock %}
+{% block page_subtitle %}Historique complet de toutes les transactions financières{% endblock %}
+
+{% block content %}
+<!-- ==================== STATISTIQUES RAPIDES ==================== -->
+<div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); margin-bottom: 20px;">
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #22c55e;">
+        <div class="stat-label">Total volume</div>
+        <div class="stat-value" style="font-size: 20px; color: #22c55e;">{{ stats.total_volume|format_number }} HTG</div>
+    </div>
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #059669;">
+        <div class="stat-label">Dépôts</div>
+        <div class="stat-value" style="font-size: 20px; color: #059669;">{{ stats.total_deposits|format_number }} HTG</div>
+    </div>
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #ef4444;">
+        <div class="stat-label">Retraits</div>
+        <div class="stat-value" style="font-size: 20px; color: #ef4444;">{{ stats.total_withdrawals|format_number }} HTG</div>
+    </div>
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #8b5cf6;">
+        <div class="stat-label">Gains</div>
+        <div class="stat-value" style="font-size: 20px; color: #8b5cf6;">{{ stats.total_wins|format_number }} HTG</div>
+    </div>
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #f59e0b;">
+        <div class="stat-label">En attente</div>
+        <div class="stat-value" style="font-size: 20px; color: #f59e0b;">{{ stats.pending }}</div>
+    </div>
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #3b82f6;">
+        <div class="stat-label">Aujourd'hui</div>
+        <div class="stat-value" style="font-size: 20px; color: #3b82f6;">{{ stats.today }}</div>
+    </div>
+</div>
+
+<!-- ==================== FILTRES ==================== -->
+<div class="table-container mb-3">
+    <div class="table-header">
+        <div class="title">
+            <i class="fas fa-filter"></i> Filtres
+        </div>
+        <div class="actions">
+            <button class="btn btn-sm btn-secondary" onclick="resetFilters()">
+                <i class="fas fa-undo"></i> Réinitialiser
+            </button>
+        </div>
+    </div>
+    <div style="padding: 16px 20px;">
+        <form method="GET" action="{{ url_for('admin_transactions') }}" id="filterForm">
+            <div class="grid-3">
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Recherche</label>
+                    <input type="text" name="search" class="form-control" 
+                           placeholder="Référence, utilisateur..." 
+                           value="{{ filters.search or '' }}">
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Type</label>
+                    <select name="type" class="form-control">
+                        <option value="">Tous les types</option>
+                        {% for type in transaction_types %}
+                        <option value="{{ type }}" {% if filters.type == type %}selected{% endif %}>
+                            {{ type|capitalize }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Statut</label>
+                    <select name="status" class="form-control">
+                        <option value="">Tous les statuts</option>
+                        {% for status in statuses %}
+                        <option value="{{ status }}" {% if filters.status == status %}selected{% endif %}>
+                            {{ status|capitalize }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Méthode</label>
+                    <select name="method" class="form-control">
+                        <option value="">Toutes</option>
+                        <option value="moncash" {% if filters.method == 'moncash' %}selected{% endif %}>MonCash</option>
+                        <option value="natcash" {% if filters.method == 'natcash' %}selected{% endif %}>NatCash</option>
+                        <option value="cash" {% if filters.method == 'cash' %}selected{% endif %}>Cash</option>
+                        <option value="bank_transfer" {% if filters.method == 'bank_transfer' %}selected{% endif %}>Virement</option>
+                    </select>
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Du</label>
+                    <input type="date" name="start_date" class="form-control" value="{{ filters.start_date or '' }}">
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Au</label>
+                    <input type="date" name="end_date" class="form-control" value="{{ filters.end_date or '' }}">
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Montant min</label>
+                    <input type="number" name="min_amount" class="form-control" 
+                           placeholder="Min" value="{{ filters.min_amount or '' }}">
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Montant max</label>
+                    <input type="number" name="max_amount" class="form-control" 
+                           placeholder="Max" value="{{ filters.max_amount or '' }}">
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>&nbsp;</label>
+                    <div class="flex" style="gap: 8px;">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-search"></i> Filtrer
+                        </button>
+                        <button type="button" class="btn btn-secondary" onclick="exportTransactions()">
+                            <i class="fas fa-file-export"></i> Exporter
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </form>
+        <div class="flex gap-1 mt-2">
+            <button class="btn btn-sm btn-secondary" onclick="setDateRange(1)">Aujourd'hui</button>
+            <button class="btn btn-sm btn-secondary" onclick="setDateRange(7)">7 jours</button>
+            <button class="btn btn-sm btn-secondary" onclick="setDateRange(30)">30 jours</button>
+            <button class="btn btn-sm btn-secondary" onclick="setDateRange(90)">90 jours</button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== LISTE ==================== -->
+<div class="table-container">
+    <div class="table-header">
+        <div class="title">
+            <i class="fas fa-list"></i> Transactions ({{ pagination.total }})
+        </div>
+        <div class="actions">
+            <button class="btn btn-secondary" onclick="refreshTable()">
+                <i class="fas fa-sync"></i>
+            </button>
+        </div>
+    </div>
+    
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>Référence</th>
+                    <th>Utilisateur</th>
+                    <th>Type</th>
+                    <th>Méthode</th>
+                    <th>Montant</th>
+                    <th>Frais</th>
+                    <th>Solde</th>
+                    <th>Statut</th>
+                    <th>Date</th>
+                    <th style="width: 80px;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for tx in transactions %}
+                <tr>
+                    <td>
+                        <span style="font-family: monospace; font-size: 12px; background: #f1f5f9; padding: 2px 8px; border-radius: 4px;">
+                            {{ tx.reference }}
+                        </span>
+                    </td>
+                    <td>
+                        {% if tx.user %}
+                        <a href="{{ url_for('admin_user_detail', user_id=tx.user_id) }}" style="color: #0f172a; text-decoration: none;">
+                            <div class="flex-center" style="gap: 8px;">
+                                <div style="width: 28px; height: 28px; border-radius: 50%; background: #e2e8f0; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; color: #475569;">
+                                    {{ (tx.user.full_name or tx.user.phone)[:1]|upper }}
+                                </div>
+                                <div>
+                                    <div style="font-size: 13px; font-weight: 500;">{{ tx.user.full_name or tx.user.phone }}</div>
+                                    <div style="font-size: 11px; color: #94a3b8;">{{ tx.user.phone }}</div>
+                                </div>
+                            </div>
+                        </a>
+                        {% else %}
+                        <span class="text-muted">Utilisateur supprimé</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <span class="badge {% if tx.transaction_type == 'deposit' %}success{% elif tx.transaction_type == 'withdrawal' %}danger{% elif tx.transaction_type == 'win' %}success{% elif tx.transaction_type == 'bet' %}gray{% elif tx.transaction_type == 'bonus' %}info{% else %}warning{% endif %}">
+                            {{ tx.transaction_type }}
+                        </span>
+                    </td>
+                    <td>
+                        {% if tx.payment_method %}
+                        <span class="badge gray">{{ tx.payment_method }}</span>
+                        {% else %}
+                        <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+                    <td class="{% if tx.transaction_type in ['deposit', 'win', 'bonus'] %}text-success{% else %}text-danger{% endif %}" style="font-weight: 600;">
+                        {{ tx.amount|format_number }} HTG
+                    </td>
+                    <td class="text-muted" style="font-size: 12px;">
+                        {% if tx.fee > 0 %}
+                        {{ tx.fee|format_number }} HTG
+                        {% else %}
+                        -
+                        {% endif %}
+                    </td>
+                    <td>{{ tx.balance_after|format_number }} HTG</td>
+                    <td>
+                        <span class="badge {% if tx.status == 'completed' %}success{% elif tx.status == 'pending' %}warning{% elif tx.status == 'failed' %}danger{% else %}gray{% endif %}">
+                            {{ tx.status }}
+                        </span>
+                    </td>
+                    <td class="text-muted" style="font-size: 12px;">
+                        {{ tx.created_at|timeago }}
+                        <br><span style="font-size: 10px;">{{ tx.created_at.strftime('%H:%M') }}</span>
+                    </td>
+                    <td>
+                        <div class="flex" style="gap: 4px;">
+                            <button class="btn btn-sm btn-secondary" onclick="viewTransaction('{{ tx.id }}')" title="Voir">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                            {% if tx.status == 'pending' %}
+                            <button class="btn btn-sm btn-success" onclick="confirmTransaction('{{ tx.id }}')" title="Confirmer">
+                                <i class="fas fa-check"></i>
+                            </button>
+                            <button class="btn btn-sm btn-danger" onclick="cancelTransaction('{{ tx.id }}')" title="Annuler">
+                                <i class="fas fa-times"></i>
+                            </button>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="10" class="text-center text-muted" style="padding: 40px;">
+                        <i class="fas fa-credit-card" style="font-size: 40px; display: block; margin-bottom: 12px; opacity: 0.3;"></i>
+                        Aucune transaction trouvée
+                        {% if filters.search %}
+                            <br><small>Essayez de modifier vos critères de recherche</small>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- ==================== PAGINATION ==================== -->
+    {% if pagination.pages > 1 %}
+    <div class="pagination">
+        <a href="{{ url_for('admin_transactions', page=1, **request.args) }}" 
+           class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
+            <i class="fas fa-angle-double-left"></i>
+        </a>
+        
+        {% if pagination.has_prev %}
+        <a href="{{ url_for('admin_transactions', page=pagination.page-1, **request.args) }}" class="page-item">
+            <i class="fas fa-chevron-left"></i>
+        </a>
+        {% endif %}
+        
+        {% for p in range(1, pagination.pages + 1) %}
+            {% if p == pagination.page %}
+                <span class="page-item active">{{ p }}</span>
+            {% elif p <= 3 or p > pagination.pages - 3 or (p >= pagination.page - 2 and p <= pagination.page + 2) %}
+                <a href="{{ url_for('admin_transactions', page=p, **request.args) }}" class="page-item">{{ p }}</a>
+            {% elif p == 4 or p == pagination.pages - 3 %}
+                <span class="page-item">...</span>
+            {% endif %}
+        {% endfor %}
+        
+        {% if pagination.has_next %}
+        <a href="{{ url_for('admin_transactions', page=pagination.page+1, **request.args) }}" class="page-item">
+            <i class="fas fa-chevron-right"></i>
+        </a>
+        {% endif %}
+        
+        <a href="{{ url_for('admin_transactions', page=pagination.pages, **request.args) }}" 
+           class="page-item {% if not pagination.has_next %}disabled{% endif %}">
+            <i class="fas fa-angle-double-right"></i>
+        </a>
+    </div>
+    {% endif %}
+</div>
+
+<!-- ==================== MODAL DÉTAILS ==================== -->
+<div class="modal-overlay" id="transactionModal">
+    <div class="modal" style="max-width: 700px;">
+        <div class="modal-header">
+            <h2 id="txModalTitle">Détails de la transaction</h2>
+            <button class="modal-close" onclick="closeModal('transactionModal')">&times;</button>
+        </div>
+        <div id="txModalContent">
+            <p class="text-muted text-center">Chargement...</p>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MODAL CONFIRMATION ==================== -->
+<div class="modal-overlay" id="confirmModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Confirmer la transaction</h2>
+            <button class="modal-close" onclick="closeModal('confirmModal')">&times;</button>
+        </div>
+        <p>Êtes-vous sûr de vouloir confirmer cette transaction ?</p>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('confirmModal')">Annuler</button>
+            <button class="btn btn-success" id="confirmTxBtn">Confirmer</button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MODAL ANNULATION ==================== -->
+<div class="modal-overlay" id="cancelModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Annuler la transaction</h2>
+            <button class="modal-close" onclick="closeModal('cancelModal')">&times;</button>
+        </div>
+        <div class="form-group">
+            <label>Raison de l'annulation</label>
+            <input type="text" id="cancelReason" class="form-control" placeholder="Raison de l'annulation...">
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('cancelModal')">Annuler</button>
+            <button class="btn btn-danger" id="cancelTxBtn">Confirmer l'annulation</button>
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    // ==================== DATE RANGES ====================
+    function setDateRange(days) {
+        const end = new Date();
+        const start = new Date();
+        start.setDate(end.getDate() - days);
+        
+        document.querySelector('input[name="start_date"]').value = start.toISOString().split('T')[0];
+        document.querySelector('input[name="end_date"]').value = end.toISOString().split('T')[0];
+        document.getElementById('filterForm').submit();
+    }
+    
+    // ==================== RÉINITIALISATION FILTRES ====================
+    function resetFilters() {
+        document.querySelectorAll('#filterForm input, #filterForm select').forEach(el => {
+            if (el.type !== 'submit') {
+                el.value = '';
+            }
+        });
+        document.getElementById('filterForm').submit();
+    }
+    
+    // ==================== EXPORT ====================
+    function exportTransactions() {
+        const form = document.getElementById('filterForm');
+        const params = new URLSearchParams(new FormData(form));
+        window.location.href = '/admin/api/transactions/export?' + params.toString();
+    }
+    
+    // ==================== RECHARGE ====================
+    function refreshTable() {
+        location.reload();
+    }
+    
+    // ==================== VOIR TRANSACTION ====================
+    function viewTransaction(txId) {
+        openModal('transactionModal');
+        document.getElementById('txModalTitle').textContent = 'Chargement...';
+        document.getElementById('txModalContent').innerHTML = '<p class="text-muted text-center">Chargement...</p>';
+        
+        fetch(`/admin/api/transactions/${txId}`)
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('txModalTitle').textContent = `Transaction ${data.reference}`;
+            
+            let html = `
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+                    <div>
+                        <p style="margin: 4px 0;"><strong>Référence:</strong> <code>${data.reference}</code></p>
+                        <p style="margin: 4px 0;"><strong>Type:</strong> <span class="badge ${data.transaction_type === 'deposit' ? 'success' : data.transaction_type === 'withdrawal' ? 'danger' : data.transaction_type === 'win' ? 'success' : 'gray'}">${data.transaction_type}</span></p>
+                        <p style="margin: 4px 0;"><strong>Méthode:</strong> ${data.payment_method || 'N/A'}</p>
+                        <p style="margin: 4px 0;"><strong>Statut:</strong> <span class="badge ${data.status === 'completed' ? 'success' : data.status === 'pending' ? 'warning' : 'danger'}">${data.status}</span></p>
+                    </div>
+                    <div>
+                        <p style="margin: 4px 0;"><strong>Montant:</strong> <span style="font-size: 24px; font-weight: 700; color: ${data.transaction_type in ['deposit', 'win', 'bonus'] ? '#22c55e' : '#ef4444'};">${data.amount} HTG</span></p>
+                        <p style="margin: 4px 0;"><strong>Frais:</strong> ${data.fee || 0} HTG</p>
+                        <p style="margin: 4px 0;"><strong>Solde avant:</strong> ${data.balance_before} HTG</p>
+                        <p style="margin: 4px 0;"><strong>Solde après:</strong> ${data.balance_after} HTG</p>
+                    </div>
+                </div>
+                <div style="border-top: 1px solid #e2e8f0; padding-top: 16px;">
+                    <p style="margin: 4px 0;"><strong>Utilisateur:</strong> ${data.user_name || data.user_id}</p>
+                    <p style="margin: 4px 0;"><strong>Date:</strong> ${new Date(data.created_at).toLocaleString()}</p>
+                    ${data.completed_at ? `<p style="margin: 4px 0;"><strong>Complétée le:</strong> ${new Date(data.completed_at).toLocaleString()}</p>` : ''}
+                    ${data.external_reference ? `<p style="margin: 4px 0;"><strong>Référence externe:</strong> ${data.external_reference}</p>` : ''}
+                    ${data.failure_reason ? `<p style="margin: 4px 0; color: #ef4444;"><strong>Raison d'échec:</strong> ${data.failure_reason}</p>` : ''}
+                    ${data.metadata ? `<p style="margin: 4px 0;"><strong>Métadonnées:</strong> <pre style="background: #f1f5f9; padding: 8px; border-radius: 4px; font-size: 12px;">${JSON.stringify(data.metadata, null, 2)}</pre></p>` : ''}
+                </div>
+            `;
+            
+            document.getElementById('txModalContent').innerHTML = html;
+        })
+        .catch(() => {
+            document.getElementById('txModalContent').innerHTML = '<p class="text-danger text-center">Erreur de chargement</p>';
+        });
+    }
+    
+    // ==================== CONFIRMER TRANSACTION ====================
+    let confirmTxId = null;
+    
+    function confirmTransaction(txId) {
+        confirmTxId = txId;
+        openModal('confirmModal');
+    }
+    
+    document.getElementById('confirmTxBtn').addEventListener('click', function() {
+        if (!confirmTxId) return;
+        
+        fetch(`/admin/api/transactions/${confirmTxId}/confirm`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            closeModal('confirmModal');
+            if (data.success) {
+                showToast(data.message || 'Transaction confirmée', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            closeModal('confirmModal');
+            showToast('Erreur réseau', 'error');
+        });
+    });
+    
+    // ==================== ANNULER TRANSACTION ====================
+    let cancelTxId = null;
+    
+    function cancelTransaction(txId) {
+        cancelTxId = txId;
+        document.getElementById('cancelReason').value = '';
+        openModal('cancelModal');
+    }
+    
+    document.getElementById('cancelTxBtn').addEventListener('click', function() {
+        if (!cancelTxId) return;
+        
+        const reason = document.getElementById('cancelReason').value.trim();
+        if (!reason) {
+            showToast('Veuillez saisir une raison', 'warning');
+            return;
+        }
+        
+        fetch(`/admin/api/transactions/${cancelTxId}/cancel`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ reason: reason })
+        })
+        .then(response => response.json())
+        .then(data => {
+            closeModal('cancelModal');
+            if (data.success) {
+                showToast(data.message || 'Transaction annulée', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            closeModal('cancelModal');
+            showToast('Erreur réseau', 'error');
+        });
+    });
+</script>
+{% endblock %}
+{% endblock %}

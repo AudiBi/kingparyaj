@@ -1,0 +1,416 @@
+<!-- app/templates/admin/games/keno/config.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Configuration Keno - Administration{% endblock %}
+
+{% block page_title %}Configuration Keno{% endblock %}
+{% block page_subtitle %}Paramètres et configuration du jeu Keno{% endblock %}
+
+{% block content %}
+<div class="grid-2">
+    <!-- ==================== PARAMÈTRES GÉNÉRAUX ==================== -->
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-cog"></i> Paramètres généraux</div>
+        </div>
+        <div style="padding: 20px;">
+            <form id="configForm" onsubmit="return submitConfig(event)">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                
+                <div class="form-group">
+                    <label>Fréquence des tirages (minutes)</label>
+                    <input type="number" name="draw_interval" class="form-control" 
+                           value="{{ config.draw_interval }}" min="1" max="60" required>
+                    <div class="help-text">Temps entre chaque tirage Keno</div>
+                </div>
+                
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Heure de début</label>
+                        <input type="number" name="start_hour" class="form-control" 
+                               value="{{ config.start_hour }}" min="0" max="23" required>
+                        <div class="help-text">Heure à laquelle les tirages commencent</div>
+                    </div>
+                    <div class="form-group">
+                        <label>Heure de fin</label>
+                        <input type="number" name="end_hour" class="form-control" 
+                               value="{{ config.end_hour }}" min="0" max="23" required>
+                        <div class="help-text">Heure à laquelle les tirages s'arrêtent</div>
+                    </div>
+                </div>
+                
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Mise minimum (HTG)</label>
+                        <input type="number" name="min_bet" class="form-control" 
+                               value="{{ config.min_bet }}" min="1" step="1" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Mise maximum (HTG)</label>
+                        <input type="number" name="max_bet" class="form-control" 
+                               value="{{ config.max_bet }}" min="10" step="10" required>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" name="auto_draw" {% if config.auto_draw %}checked{% endif %}>
+                        Tirages automatiques
+                    </label>
+                    <div class="help-text">Désactiver pour passer en mode manuel</div>
+                </div>
+                
+                <button type="submit" class="btn btn-primary w-full">
+                    <i class="fas fa-save"></i> Enregistrer la configuration
+                </button>
+            </form>
+        </div>
+    </div>
+    
+    <!-- ==================== TABLE DE PAIEMENT ==================== -->
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-table"></i> Table de paiement</div>
+            <div class="actions">
+                <span class="badge info">RTP: {{ config.rtp }}%</span>
+                <button class="btn btn-sm btn-secondary" onclick="resetPaytable()">
+                    <i class="fas fa-undo"></i> Réinitialiser
+                </button>
+            </div>
+        </div>
+        <div style="padding: 20px; max-height: 500px; overflow-y: auto;">
+            <form id="paytableForm" onsubmit="return submitPaytable(event)">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <table style="width: 100%; font-size: 13px; border-collapse: collapse;">
+                    <thead>
+                        <tr style="background: #f8fafc;">
+                            <th style="padding: 8px; text-align: center; border: 1px solid #e2e8f0;">Numéros</th>
+                            {% for hits in range(0, 11) %}
+                            <th style="padding: 8px; text-align: center; border: 1px solid #e2e8f0; min-width: 50px;">
+                                {{ hits }}
+                            </th>
+                            {% endfor %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for picks in range(1, 11) %}
+                        <tr>
+                            <td style="padding: 8px; text-align: center; border: 1px solid #e2e8f0; font-weight: 600; background: #f8fafc;">
+                                {{ picks }}
+                            </td>
+                            {% for hits in range(0, 11) %}
+                            <td style="padding: 4px; text-align: center; border: 1px solid #e2e8f0;">
+                                {% if hits <= picks %}
+                                <input type="number" 
+                                       name="paytable[{{ picks }}][{{ hits }}]" 
+                                       value="{{ paytable.get(picks|string, {}).get(hits|string, 0) }}" 
+                                       class="form-control" 
+                                       style="width: 50px; padding: 4px; text-align: center; {% if hits == 0 %}background: #f1f5f9;{% endif %}"
+                                       {% if hits == 0 %}readonly{% endif %}
+                                       min="0" step="0.5">
+                                {% else %}
+                                <span style="color: #94a3b8;">-</span>
+                                {% endif %}
+                            </td>
+                            {% endfor %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                <div class="help-text mt-1">Les multiplicateurs pour chaque combinaison de numéros choisis et trouvés</div>
+                <button type="submit" class="btn btn-primary mt-2">
+                    <i class="fas fa-save"></i> Enregistrer la table
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== JACKPOT ==================== -->
+<div class="table-container mt-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-trophy"></i> Jackpot progressif</div>
+    </div>
+    <div style="padding: 20px;">
+        <div class="grid-2">
+            <div>
+                <div class="form-group">
+                    <label>Montant actuel</label>
+                    <div style="font-size: 28px; font-weight: 700; color: #059669;">
+                        {{ jackpot.current|format_number }} HTG
+                    </div>
+                    <div class="help-text">Dernière mise à jour: {{ jackpot.updated_at|timeago }}</div>
+                </div>
+                <div class="form-group">
+                    <label>Seuil de déclenchement</label>
+                    <input type="number" id="jackpotThreshold" class="form-control" 
+                           value="{{ jackpot.threshold }}" min="1000" step="1000">
+                    <div class="help-text">Montant minimum pour déclencher le jackpot</div>
+                </div>
+            </div>
+            <div>
+                <div class="form-group">
+                    <label>Historique des jackpots</label>
+                    <div style="max-height: 150px; overflow-y: auto;">
+                        {% for win in jackpot.history %}
+                        <div style="display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #f1f5f9; font-size: 13px;">
+                            <span>{{ win.date|timeago }}</span>
+                            <span style="font-weight: 600; color: #059669;">{{ win.amount|format_number }} HTG</span>
+                            <span class="badge gray">{{ win.winner or 'Anonyme' }}</span>
+                        </div>
+                        {% else %}
+                        <div class="text-muted text-center" style="padding: 20px;">
+                            Aucun jackpot gagné
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div class="flex" style="gap: 8px; margin-top: 8px;">
+                    <button class="btn btn-warning" onclick="resetJackpot()">
+                        <i class="fas fa-undo"></i> Réinitialiser le jackpot
+                    </button>
+                    <button class="btn btn-secondary" onclick="updateJackpotThreshold()">
+                        <i class="fas fa-save"></i> Mettre à jour le seuil
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== DERNIERS TIrages ==================== -->
+<div class="table-container mt-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-history"></i> Derniers tirages</div>
+        <a href="{{ url_for('admin_keno_draws') }}" class="btn btn-sm btn-secondary">Voir tout</a>
+    </div>
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Date</th>
+                    <th>Numéros</th>
+                    <th>Paris</th>
+                    <th>Volume</th>
+                    <th>Payout</th>
+                    <th>Statut</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for draw in recent_draws %}
+                <tr>
+                    <td style="font-weight: 600;">#{{ draw.draw_number }}</td>
+                    <td class="text-muted" style="font-size: 12px;">{{ draw.draw_time|timeago }}</td>
+                    <td>
+                        {% if draw.numbers %}
+                        <div class="flex" style="gap: 2px; flex-wrap: wrap;">
+                            {% for num in draw.numbers[:10] %}
+                            <span style="display: inline-block; width: 24px; height: 24px; border-radius: 50%; background: #d1fae5; color: #065f46; font-size: 10px; text-align: center; line-height: 24px; font-weight: 600;">
+                                {{ num }}
+                            </span>
+                            {% endfor %}
+                            {% if draw.numbers|length > 10 %}
+                            <span style="font-size: 10px; color: #94a3b8;">+{{ draw.numbers|length - 10 }}</span>
+                            {% endif %}
+                        </div>
+                        {% else %}
+                        <span class="text-muted">En attente</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ draw.total_bets or 0 }}</td>
+                    <td>{{ draw.total_amount|format_number }} HTG</td>
+                    <td>{{ draw.total_payout|format_number }} HTG</td>
+                    <td>
+                        <span class="badge {% if draw.status == 'completed' %}success{% elif draw.status == 'pending' %}warning{% else %}danger{% endif %}">
+                            {{ draw.status }}
+                        </span>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="7" class="text-center text-muted" style="padding: 20px;">
+                        Aucun tirage récent
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ==================== MODAL RÉINITIALISATION ==================== -->
+<div class="modal-overlay" id="resetModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Confirmer la réinitialisation</h2>
+            <button class="modal-close" onclick="closeModal('resetModal')">&times;</button>
+        </div>
+        <p>Êtes-vous sûr de vouloir réinitialiser la table de paiement ?</p>
+        <p style="color: #94a3b8; font-size: 14px;">La table reviendra à sa configuration par défaut.</p>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('resetModal')">Annuler</button>
+            <button class="btn btn-danger" id="confirmResetBtn">Réinitialiser</button>
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    // ==================== SOUMISSION CONFIGURATION ====================
+    function submitConfig(e) {
+        e.preventDefault();
+        const form = e.target;
+        const data = new FormData(form);
+        
+        const payload = {
+            draw_interval: parseInt(data.get('draw_interval')),
+            start_hour: parseInt(data.get('start_hour')),
+            end_hour: parseInt(data.get('end_hour')),
+            min_bet: parseInt(data.get('min_bet')),
+            max_bet: parseInt(data.get('max_bet')),
+            auto_draw: data.get('auto_draw') === 'on'
+        };
+        
+        if (payload.start_hour >= payload.end_hour) {
+            showToast('L\'heure de début doit être avant l\'heure de fin', 'error');
+            return;
+        }
+        
+        fetch('/admin/api/keno/config', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Configuration enregistrée avec succès', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            showToast('Erreur réseau', 'error');
+        });
+    }
+    
+    // ==================== SOUMISSION TABLE DE PAIEMENT ====================
+    function submitPaytable(e) {
+        e.preventDefault();
+        const form = e.target;
+        const data = new FormData(form);
+        
+        const paytable = {};
+        for (let [key, value] of data.entries()) {
+            if (key.startsWith('paytable')) {
+                const matches = key.match(/\[(\d+)\]\[(\d+)\]/);
+                if (matches) {
+                    const picks = matches[1];
+                    const hits = matches[2];
+                    if (!paytable[picks]) paytable[picks] = {};
+                    paytable[picks][hits] = parseFloat(value) || 0;
+                }
+            }
+        }
+        
+        fetch('/admin/api/keno/paytable', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ paytable: paytable })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Table de paiement enregistrée', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            showToast('Erreur réseau', 'error');
+        });
+    }
+    
+    // ==================== RÉINITIALISER TABLE DE PAIEMENT ====================
+    function resetPaytable() {
+        openModal('resetModal');
+    }
+    
+    document.getElementById('confirmResetBtn').addEventListener('click', function() {
+        fetch('/admin/api/keno/paytable/reset', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            closeModal('resetModal');
+            if (data.success) {
+                showToast('Table de paiement réinitialisée', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        });
+    });
+    
+    // ==================== JACKPOT ====================
+    function resetJackpot() {
+        if (!confirm('Confirmer la réinitialisation du jackpot ?')) return;
+        
+        fetch('/admin/api/keno/jackpot/reset', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast('Jackpot réinitialisé', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        });
+    }
+    
+    function updateJackpotThreshold() {
+        const threshold = document.getElementById('jackpotThreshold').value;
+        if (!threshold || parseInt(threshold) < 1000) {
+            showToast('Le seuil doit être d\'au moins 1000 HTG', 'error');
+            return;
+        }
+        
+        fetch('/admin/api/keno/jackpot/threshold', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ threshold: parseInt(threshold) })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast('Seuil mis à jour avec succès', 'success');
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        });
+    }
+</script>
+{% endblock %}
+{% endblock %}

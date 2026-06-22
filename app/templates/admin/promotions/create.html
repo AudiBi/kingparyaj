@@ -1,0 +1,377 @@
+<!-- app/templates/admin/promotions/create.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Créer une promotion - Administration{% endblock %}
+
+{% block page_title %}Créer une promotion{% endblock %}
+{% block page_subtitle %}Ajouter une nouvelle offre promotionnelle{% endblock %}
+
+{% block content %}
+<div class="grid-2">
+    <!-- ==================== FORMULAIRE ==================== -->
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-plus-circle"></i> Informations de la promotion</div>
+        </div>
+        <div style="padding: 24px;">
+            <form id="createForm" onsubmit="return submitCreate(event)">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                
+                <div class="form-group">
+                    <label>Nom de la promotion <span class="text-danger">*</span></label>
+                    <input type="text" name="name" class="form-control" placeholder="Ex: Bonus de bienvenue 100%" required>
+                </div>
+                
+                <div class="form-group">
+                    <label>Code promotionnel</label>
+                    <input type="text" name="code" class="form-control" placeholder="Ex: WELCOME100" 
+                           oninput="this.value = this.value.toUpperCase()">
+                    <div class="help-text">Laissez vide pour générer automatiquement</div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Description</label>
+                    <textarea name="description" class="form-control" rows="3" placeholder="Description détaillée de la promotion..."></textarea>
+                </div>
+                
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Type de promotion <span class="text-danger">*</span></label>
+                        <select name="type" class="form-control" id="promoType" required>
+                            <option value="">Sélectionner</option>
+                            <option value="deposit_bonus">Bonus de dépôt</option>
+                            <option value="cashback">Cashback</option>
+                            <option value="free_bet">Pari gratuit</option>
+                            <option value="multiplier">Multiplicateur</option>
+                            <option value="referral">Parrainage</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Statut</label>
+                        <select name="status" class="form-control">
+                            <option value="draft">Brouillon</option>
+                            <option value="active">Actif</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Date de début <span class="text-danger">*</span></label>
+                        <input type="date" name="start_date" class="form-control" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Date de fin <span class="text-danger">*</span></label>
+                        <input type="date" name="end_date" class="form-control" required>
+                    </div>
+                </div>
+                
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Dépôt minimum (HTG)</label>
+                        <input type="number" name="min_deposit" class="form-control" placeholder="Optionnel" step="10">
+                    </div>
+                    <div class="form-group">
+                        <label>Bonus maximum (HTG)</label>
+                        <input type="number" name="max_bonus" class="form-control" placeholder="Optionnel" step="10">
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Exigence de mise</label>
+                    <input type="number" name="wagering_requirement" class="form-control" value="1" min="1">
+                    <div class="help-text">Nombre de fois que le bonus doit être misé</div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Budget total (HTG)</label>
+                    <input type="number" name="total_budget" class="form-control" placeholder="Optionnel (illimité)" step="100">
+                </div>
+                
+                <div class="form-group">
+                    <label>Jeux éligibles</label>
+                    <div style="display: flex; gap: 16px; margin-top: 4px;">
+                        <label>
+                            <input type="checkbox" name="eligible_games" value="keno" checked>
+                            Keno
+                        </label>
+                        <label>
+                            <input type="checkbox" name="eligible_games" value="lucky" checked>
+                            Lucky Wheel
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" name="new_users_only">
+                            Nouveaux utilisateurs uniquement
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" name="first_deposit_only">
+                            Premier dépôt uniquement
+                        </label>
+                    </div>
+                </div>
+                
+                <!-- Configuration spécifique au type -->
+                <div id="configFields" style="display: none; border-top: 1px solid #e2e8f0; padding-top: 16px; margin-top: 16px;">
+                    <h4 style="margin: 0 0 12px 0;">Configuration spécifique</h4>
+                    <div id="configContent"></div>
+                </div>
+                
+                <div class="modal-footer" style="margin-top: 24px; border-top: 1px solid #e2e8f0; padding-top: 16px;">
+                    <a href="{{ url_for('admin_promotions') }}" class="btn btn-secondary">Annuler</a>
+                    <button type="submit" class="btn btn-success">
+                        <i class="fas fa-plus"></i> Créer la promotion
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- ==================== INFORMATIONS ==================== -->
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-info-circle"></i> Conseils</div>
+        </div>
+        <div style="padding: 20px;">
+            <div style="background: #eff6ff; border-radius: 8px; padding: 16px; border-left: 4px solid #3b82f6; margin-bottom: 16px;">
+                <h4 style="margin: 0 0 8px 0; color: #1e40af;"><i class="fas fa-lightbulb"></i> Types de promotions</h4>
+                <ul style="margin: 0; padding-left: 20px; color: #1e40af; font-size: 14px;">
+                    <li><strong>Bonus de dépôt</strong>: % de bonus sur le dépôt</li>
+                    <li><strong>Cashback</strong>: Remboursement en % des pertes</li>
+                    <li><strong>Pari gratuit</strong>: Pari offert</li>
+                    <li><strong>Multiplicateur</strong>: Multiplie les gains</li>
+                    <li><strong>Parrainage</strong>: Récompense pour parrainage</li>
+                </ul>
+            </div>
+            
+            <div style="background: #fef3c7; border-radius: 8px; padding: 16px; border-left: 4px solid #f59e0b;">
+                <h4 style="margin: 0 0 8px 0; color: #92400e;"><i class="fas fa-exclamation-triangle"></i> Bonnes pratiques</h4>
+                <ul style="margin: 0; padding-left: 20px; color: #92400e; font-size: 14px;">
+                    <li>Fixez une date de début et de fin</li>
+                    <li>Définissez un budget réaliste</li>
+                    <li>Exigence de mise: entre 1x et 10x</li>
+                    <li>Testez la promotion avant activation</li>
+                </ul>
+            </div>
+            
+            <div style="margin-top: 16px; padding: 16px; background: #f1f5f9; border-radius: 8px;">
+                <h4 style="margin: 0 0 8px 0; color: #1e293b;">Configuration par type</h4>
+                <div style="font-size: 13px; color: #64748b;">
+                    <p><strong>Deposit Bonus:</strong> {"min_deposit": 100, "bonus_percent": 100, "max_bonus": 500, "wagering": 10}</p>
+                    <p><strong>Cashback:</strong> {"percentage": 10, "max_cashback": 1000, "period_days": 7}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    // ==================== TYPE DE PROMOTION ====================
+    document.getElementById('promoType').addEventListener('change', function() {
+        const type = this.value;
+        const configDiv = document.getElementById('configFields');
+        const configContent = document.getElementById('configContent');
+        
+        if (!type) {
+            configDiv.style.display = 'none';
+            return;
+        }
+        
+        configDiv.style.display = 'block';
+        
+        let html = '';
+        
+        switch(type) {
+            case 'deposit_bonus':
+                html = `
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label>Pourcentage de bonus <span class="text-danger">*</span></label>
+                            <input type="number" name="config_bonus_percent" class="form-control" value="100" min="1" required>
+                            <div class="help-text">% de bonus sur le dépôt</div>
+                        </div>
+                        <div class="form-group">
+                            <label>Bonus maximum (HTG)</label>
+                            <input type="number" name="config_max_bonus" class="form-control" placeholder="Optionnel" step="10">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Dépôt minimum (HTG)</label>
+                        <input type="number" name="config_min_deposit" class="form-control" value="100" step="10" required>
+                    </div>
+                `;
+                break;
+                
+            case 'cashback':
+                html = `
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label>Pourcentage de cashback <span class="text-danger">*</span></label>
+                            <input type="number" name="config_percentage" class="form-control" value="10" min="1" max="100" required>
+                            <div class="help-text">% de cashback sur les pertes</div>
+                        </div>
+                        <div class="form-group">
+                            <label>Cashback maximum (HTG)</label>
+                            <input type="number" name="config_max_cashback" class="form-control" placeholder="Optionnel" step="10">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Période (jours)</label>
+                        <input type="number" name="config_period_days" class="form-control" value="7" min="1" required>
+                    </div>
+                `;
+                break;
+                
+            case 'free_bet':
+                html = `
+                    <div class="form-group">
+                        <label>Montant du pari gratuit <span class="text-danger">*</span></label>
+                        <input type="number" name="config_free_bet_amount" class="form-control" step="10" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Jeux autorisés</label>
+                        <select name="config_allowed_games" class="form-control">
+                            <option value="all">Tous les jeux</option>
+                            <option value="keno">Keno uniquement</option>
+                            <option value="lucky">Lucky uniquement</option>
+                        </select>
+                    </div>
+                `;
+                break;
+                
+            case 'multiplier':
+                html = `
+                    <div class="form-group">
+                        <label>Multiplicateur <span class="text-danger">*</span></label>
+                        <input type="number" name="config_multiplier" class="form-control" value="2" min="1" step="0.5" required>
+                        <div class="help-text">Ex: 2 = double les gains</div>
+                    </div>
+                    <div class="form-group">
+                        <label>Gain maximum (HTG)</label>
+                        <input type="number" name="config_max_win" class="form-control" placeholder="Optionnel" step="10">
+                    </div>
+                `;
+                break;
+                
+            case 'referral':
+                html = `
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label>Récompense parrain <span class="text-danger">*</span></label>
+                            <input type="number" name="config_referral_bonus" class="form-control" step="10" required>
+                            <div class="help-text">Montant offert au parrain</div>
+                        </div>
+                        <div class="form-group">
+                            <label>Récompense filleul <span class="text-danger">*</span></label>
+                            <input type="number" name="config_referred_bonus" class="form-control" step="10" required>
+                            <div class="help-text">Montant offert au filleul</div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Dépôt minimum du filleul</label>
+                        <input type="number" name="config_min_deposit" class="form-control" value="100" step="10" required>
+                    </div>
+                `;
+                break;
+        }
+        
+        configContent.innerHTML = html;
+    });
+    
+    // ==================== SOUMISSION ====================
+    function submitCreate(e) {
+        e.preventDefault();
+        const form = e.target;
+        const data = new FormData(form);
+        
+        // Collecter les jeux éligibles
+        const eligibleGames = [];
+        document.querySelectorAll('input[name="eligible_games"]:checked').forEach(cb => {
+            eligibleGames.push(cb.value);
+        });
+        
+        // Construire la configuration
+        const config = {};
+        const type = data.get('type');
+        
+        switch(type) {
+            case 'deposit_bonus':
+                config.bonus_percent = parseInt(data.get('config_bonus_percent'));
+                config.min_deposit = parseInt(data.get('config_min_deposit'));
+                if (data.get('config_max_bonus')) {
+                    config.max_bonus = parseInt(data.get('config_max_bonus'));
+                }
+                break;
+            case 'cashback':
+                config.percentage = parseInt(data.get('config_percentage'));
+                config.period_days = parseInt(data.get('config_period_days'));
+                if (data.get('config_max_cashback')) {
+                    config.max_cashback = parseInt(data.get('config_max_cashback'));
+                }
+                break;
+            case 'free_bet':
+                config.free_bet_amount = parseInt(data.get('config_free_bet_amount'));
+                config.allowed_games = data.get('config_allowed_games');
+                break;
+            case 'multiplier':
+                config.multiplier = parseFloat(data.get('config_multiplier'));
+                if (data.get('config_max_win')) {
+                    config.max_win = parseInt(data.get('config_max_win'));
+                }
+                break;
+            case 'referral':
+                config.referral_bonus = parseInt(data.get('config_referral_bonus'));
+                config.referred_bonus = parseInt(data.get('config_referred_bonus'));
+                config.min_deposit = parseInt(data.get('config_min_deposit'));
+                break;
+        }
+        
+        const payload = {
+            name: data.get('name'),
+            code: data.get('code') || null,
+            description: data.get('description') || null,
+            type: type,
+            status: data.get('status'),
+            config: config,
+            start_date: data.get('start_date'),
+            end_date: data.get('end_date'),
+            min_deposit: data.get('min_deposit') ? parseFloat(data.get('min_deposit')) : null,
+            max_bonus: data.get('max_bonus') ? parseFloat(data.get('max_bonus')) : null,
+            wagering_requirement: parseInt(data.get('wagering_requirement')),
+            eligible_games: eligibleGames,
+            new_users_only: data.get('new_users_only') === 'on',
+            first_deposit_only: data.get('first_deposit_only') === 'on',
+            total_budget: data.get('total_budget') ? parseFloat(data.get('total_budget')) : null
+        };
+        
+        fetch('/admin/api/promotions', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Promotion créée avec succès', 'success');
+                setTimeout(() => window.location.href = '/admin/promotions', 1500);
+            } else {
+                showToast(data.error || 'Erreur lors de la création', 'error');
+            }
+        })
+        .catch(() => {
+            showToast('Erreur réseau', 'error');
+        });
+    }
+</script>
+{% endblock %}
+{% endblock %}

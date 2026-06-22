@@ -1,0 +1,773 @@
+<!-- app/templates/admin/tickets/index.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Gestion des tickets - Administration{% endblock %}
+
+{% block page_title %}Gestion des tickets{% endblock %}
+{% block page_subtitle %}Suivi de tous les tickets de jeu (joueurs sans compte){% endblock %}
+
+{% block content %}
+<!-- ==================== STATISTIQUES RAPIDES ==================== -->
+<div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); margin-bottom: 20px;">
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #3b82f6;">
+        <div class="stat-label">Total tickets</div>
+        <div class="stat-value" style="font-size: 20px;">{{ stats.total }}</div>
+    </div>
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #22c55e;">
+        <div class="stat-label">Actifs</div>
+        <div class="stat-value" style="font-size: 20px; color: #22c55e;">{{ stats.active }}</div>
+    </div>
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #059669;">
+        <div class="stat-label">Solde total</div>
+        <div class="stat-value" style="font-size: 20px; color: #059669;">{{ stats.total_balance|format_number }} HTG</div>
+    </div>
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #f59e0b;">
+        <div class="stat-label">Expirent bientôt</div>
+        <div class="stat-value" style="font-size: 20px; color: #f59e0b;">{{ stats.expiring_soon }}</div>
+    </div>
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #ef4444;">
+        <div class="stat-label">Expirés</div>
+        <div class="stat-value" style="font-size: 20px; color: #ef4444;">{{ stats.expired }}</div>
+    </div>
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #8b5cf6;">
+        <div class="stat-label">Payés</div>
+        <div class="stat-value" style="font-size: 20px; color: #8b5cf6;">{{ stats.paid }}</div>
+    </div>
+</div>
+
+<!-- ==================== FILTRES ==================== -->
+<div class="table-container mb-3">
+    <div class="table-header">
+        <div class="title">
+            <i class="fas fa-filter"></i> Filtres
+        </div>
+        <div class="actions">
+            <button class="btn btn-sm btn-secondary" onclick="resetFilters()">
+                <i class="fas fa-undo"></i> Réinitialiser
+            </button>
+        </div>
+    </div>
+    <div style="padding: 16px 20px;">
+        <form method="GET" action="{{ url_for('admin_tickets') }}" id="filterForm">
+            <div class="grid-3">
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Recherche</label>
+                    <input type="text" name="search" class="form-control" 
+                           placeholder="Numéro ticket, joueur, téléphone..." 
+                           value="{{ filters.search or '' }}">
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Statut</label>
+                    <select name="status" class="form-control">
+                        <option value="">Tous</option>
+                        <option value="active" {% if filters.status == 'active' %}selected{% endif %}>Actif</option>
+                        <option value="paid" {% if filters.status == 'paid' %}selected{% endif %}>Payé</option>
+                        <option value="expired" {% if filters.status == 'expired' %}selected{% endif %}>Expiré</option>
+                        <option value="cancelled" {% if filters.status == 'cancelled' %}selected{% endif %}>Annulé</option>
+                    </select>
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Bureau</label>
+                    <select name="bureau_id" class="form-control">
+                        <option value="">Tous les bureaux</option>
+                        {% for bureau in bureaus %}
+                        <option value="{{ bureau.id }}" {% if filters.bureau_id == bureau.id %}selected{% endif %}>
+                            {{ bureau.name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Agent</label>
+                    <select name="agent_id" class="form-control">
+                        <option value="">Tous les agents</option>
+                        {% for agent in agents %}
+                        <option value="{{ agent.id }}" {% if filters.agent_id == agent.id %}selected{% endif %}>
+                            {{ agent.full_name or agent.phone }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Montant min</label>
+                    <input type="number" name="min_amount" class="form-control" 
+                           placeholder="Min" value="{{ filters.min_amount or '' }}">
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Montant max</label>
+                    <input type="number" name="max_amount" class="form-control" 
+                           placeholder="Max" value="{{ filters.max_amount or '' }}">
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Du</label>
+                    <input type="date" name="start_date" class="form-control" value="{{ filters.start_date or '' }}">
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Au</label>
+                    <input type="date" name="end_date" class="form-control" value="{{ filters.end_date or '' }}">
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>&nbsp;</label>
+                    <div class="flex" style="gap: 8px;">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-search"></i> Filtrer
+                        </button>
+                        <button type="button" class="btn btn-secondary" onclick="exportTickets()">
+                            <i class="fas fa-file-export"></i> Exporter
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </form>
+        <div class="flex gap-1 mt-2">
+            <button class="btn btn-sm btn-secondary" onclick="setDateRange(1)">Aujourd'hui</button>
+            <button class="btn btn-sm btn-secondary" onclick="setDateRange(7)">7 jours</button>
+            <button class="btn btn-sm btn-secondary" onclick="setDateRange(30)">30 jours</button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== LISTE ==================== -->
+<div class="table-container">
+    <div class="table-header">
+        <div class="title">
+            <i class="fas fa-ticket-alt"></i> Tickets ({{ pagination.total }})
+        </div>
+        <div class="actions">
+            <button class="btn btn-secondary" onclick="refreshTable()">
+                <i class="fas fa-sync"></i>
+            </button>
+        </div>
+    </div>
+    
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 30px;">
+                        <input type="checkbox" id="selectAll" onchange="toggleAllTickets()">
+                    </th>
+                    <th>Ticket</th>
+                    <th>Joueur</th>
+                    <th>Bureau</th>
+                    <th>Agent</th>
+                    <th>Montant</th>
+                    <th>Solde</th>
+                    <th>Statut</th>
+                    <th>Expire</th>
+                    <th style="width: 100px;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for ticket in tickets %}
+                <tr>
+                    <td>
+                        <input type="checkbox" class="ticket-checkbox" value="{{ ticket.id }}">
+                    </td>
+                    <td>
+                        <div>
+                            <span style="font-family: monospace; font-size: 13px; font-weight: 600; color: #0f172a;">
+                                {{ ticket.ticket_number }}
+                            </span>
+                            <div style="font-size: 10px; color: #94a3b8;">ID: {{ ticket.id[:8] }}</div>
+                        </div>
+                    </td>
+                    <td>
+                        <div>
+                            <div style="font-weight: 500;">{{ ticket.player_name or 'Anonyme' }}</div>
+                            {% if ticket.player_phone %}
+                            <div style="font-size: 12px; color: #94a3b8;">{{ ticket.player_phone }}</div>
+                            {% endif %}
+                        </div>
+                    </td>
+                    <td>
+                        {% if ticket.bureau %}
+                        <span class="badge info" style="font-size: 11px;">{{ ticket.bureau.name }}</span>
+                        {% else %}
+                        <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if ticket.agent %}
+                        <span style="font-size: 13px;">{{ ticket.agent.full_name or ticket.agent.phone }}</span>
+                        {% else %}
+                        <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+                    <td style="font-weight: 600;">{{ ticket.initial_amount|format_number }} HTG</td>
+                    <td class="{% if ticket.balance > 0 %}text-success{% else %}text-muted{% endif %}" style="font-weight: 600;">
+                        {{ ticket.balance|format_number }} HTG
+                    </td>
+                    <td>
+                        <span class="badge {% if ticket.status == 'active' %}success{% elif ticket.status == 'paid' %}gray{% elif ticket.status == 'expired' %}danger{% elif ticket.status == 'cancelled' %}warning{% endif %}">
+                            {% if ticket.status == 'active' %}<i class="fas fa-check-circle"></i> Actif
+                            {% elif ticket.status == 'paid' %}<i class="fas fa-check"></i> Payé
+                            {% elif ticket.status == 'expired' %}<i class="fas fa-times-circle"></i> Expiré
+                            {% elif ticket.status == 'cancelled' %}<i class="fas fa-ban"></i> Annulé
+                            {% endif %}
+                        </span>
+                    </td>
+                    <td class="text-muted" style="font-size: 12px;">
+                        {{ ticket.expires_at.strftime('%d/%m/%Y') }}
+                        {% if ticket.status == 'active' %}
+                            {% set days = (ticket.expires_at - now).days %}
+                            {% if days <= 2 %}
+                                <span class="badge danger" style="font-size: 9px;">{{ days }}j</span>
+                            {% elif days <= 5 %}
+                                <span class="badge warning" style="font-size: 9px;">{{ days }}j</span>
+                            {% endif %}
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="flex" style="gap: 4px;">
+                            <button class="btn btn-sm btn-secondary" onclick="viewTicket('{{ ticket.id }}')" title="Voir">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                            <button class="btn btn-sm btn-primary" onclick="generateQR('{{ ticket.ticket_number }}')" title="QR Code">
+                                <i class="fas fa-qrcode"></i>
+                            </button>
+                            {% if ticket.status == 'active' %}
+                            <button class="btn btn-sm btn-success" onclick="payoutTicket('{{ ticket.id }}')" title="Payer">
+                                <i class="fas fa-hand-holding-usd"></i>
+                            </button>
+                            <button class="btn btn-sm btn-danger" onclick="cancelTicket('{{ ticket.id }}')" title="Annuler">
+                                <i class="fas fa-times"></i>
+                            </button>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="10" class="text-center text-muted" style="padding: 40px;">
+                        <i class="fas fa-ticket-alt" style="font-size: 40px; display: block; margin-bottom: 12px; opacity: 0.3;"></i>
+                        Aucun ticket trouvé
+                        {% if filters.search %}
+                            <br><small>Essayez de modifier vos critères de recherche</small>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- ==================== PAGINATION ==================== -->
+    {% if pagination.pages > 1 %}
+    <div class="pagination">
+        <a href="{{ url_for('admin_tickets', page=1, **request.args) }}" 
+           class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
+            <i class="fas fa-angle-double-left"></i>
+        </a>
+        
+        {% if pagination.has_prev %}
+        <a href="{{ url_for('admin_tickets', page=pagination.page-1, **request.args) }}" class="page-item">
+            <i class="fas fa-chevron-left"></i>
+        </a>
+        {% endif %}
+        
+        {% for p in range(1, pagination.pages + 1) %}
+            {% if p == pagination.page %}
+                <span class="page-item active">{{ p }}</span>
+            {% elif p <= 3 or p > pagination.pages - 3 or (p >= pagination.page - 2 and p <= pagination.page + 2) %}
+                <a href="{{ url_for('admin_tickets', page=p, **request.args) }}" class="page-item">{{ p }}</a>
+            {% elif p == 4 or p == pagination.pages - 3 %}
+                <span class="page-item">...</span>
+            {% endif %}
+        {% endfor %}
+        
+        {% if pagination.has_next %}
+        <a href="{{ url_for('admin_tickets', page=pagination.page+1, **request.args) }}" class="page-item">
+            <i class="fas fa-chevron-right"></i>
+        </a>
+        {% endif %}
+        
+        <a href="{{ url_for('admin_tickets', page=pagination.pages, **request.args) }}" 
+           class="page-item {% if not pagination.has_next %}disabled{% endif %}">
+            <i class="fas fa-angle-double-right"></i>
+        </a>
+    </div>
+    {% endif %}
+    
+    <!-- ==================== BULK ACTIONS ==================== -->
+    <div style="padding: 12px 20px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+        <div>
+            <span id="selectedCount" style="font-size: 13px; color: #94a3b8;">0 sélectionné</span>
+        </div>
+        <div class="flex" style="gap: 8px;">
+            <button class="btn btn-sm btn-success" onclick="bulkAction('payout')" disabled id="bulkPayout">
+                <i class="fas fa-hand-holding-usd"></i> Payer
+            </button>
+            <button class="btn btn-sm btn-danger" onclick="bulkAction('cancel')" disabled id="bulkCancel">
+                <i class="fas fa-times"></i> Annuler
+            </button>
+            <button class="btn btn-sm btn-secondary" onclick="bulkAction('export')" disabled id="bulkExport">
+                <i class="fas fa-file-export"></i> Exporter
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MODAL QR CODE ==================== -->
+<div class="modal-overlay" id="qrModal">
+    <div class="modal" style="max-width: 400px; text-align: center;">
+        <div class="modal-header">
+            <h2>QR Code du ticket</h2>
+            <button class="modal-close" onclick="closeModal('qrModal')">&times;</button>
+        </div>
+        <div id="qrContent" style="padding: 20px;">
+            <div style="background: white; padding: 20px; border-radius: 12px; display: inline-block;">
+                <div id="qrCodeContainer" style="width: 200px; height: 200px; margin: 0 auto; display: flex; align-items: center; justify-content: center; background: white; border: 2px dashed #e2e8f0; border-radius: 8px;">
+                    <span class="text-muted">Chargement...</span>
+                </div>
+            </div>
+            <div style="margin-top: 16px;">
+                <p style="font-weight: 600; font-family: monospace; font-size: 18px;" id="qrTicketNumber">---</p>
+                <button class="btn btn-primary" onclick="printQR()">
+                    <i class="fas fa-print"></i> Imprimer
+                </button>
+                <button class="btn btn-secondary" onclick="downloadQR()">
+                    <i class="fas fa-download"></i> Télécharger
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MODAL DÉTAILS ==================== -->
+<div class="modal-overlay" id="ticketModal">
+    <div class="modal" style="max-width: 700px;">
+        <div class="modal-header">
+            <h2 id="txModalTitle">Détails du ticket</h2>
+            <button class="modal-close" onclick="closeModal('ticketModal')">&times;</button>
+        </div>
+        <div id="txModalContent">
+            <p class="text-muted text-center">Chargement...</p>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MODAL PAYEMENT ==================== -->
+<div class="modal-overlay" id="payoutModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Confirmer le paiement</h2>
+            <button class="modal-close" onclick="closeModal('payoutModal')">&times;</button>
+        </div>
+        <p>Êtes-vous sûr de vouloir payer ce ticket ?</p>
+        <p style="color: #94a3b8; font-size: 14px;">
+            Le solde de <span id="payoutAmount" style="font-weight: 600; color: #059669;">0</span> HTG sera payé au joueur.
+        </p>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('payoutModal')">Annuler</button>
+            <button class="btn btn-success" id="confirmPayoutBtn">Confirmer le paiement</button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MODAL ANNULATION ==================== -->
+<div class="modal-overlay" id="cancelModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Annuler le ticket</h2>
+            <button class="modal-close" onclick="closeModal('cancelModal')">&times;</button>
+        </div>
+        <div class="form-group">
+            <label>Raison de l'annulation</label>
+            <input type="text" id="cancelReason" class="form-control" placeholder="Raison de l'annulation..." required>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('cancelModal')">Annuler</button>
+            <button class="btn btn-danger" id="confirmCancelBtn">Confirmer l'annulation</button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MODAL BULK ACTION ==================== -->
+<div class="modal-overlay" id="bulkModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2 id="bulkModalTitle">Action groupée</h2>
+            <button class="modal-close" onclick="closeModal('bulkModal')">&times;</button>
+        </div>
+        <p id="bulkModalMessage">Confirmer l'action sur les tickets sélectionnés ?</p>
+        {% if bulk_action == 'payout' %}
+        <div class="form-group" id="bulkReasonGroup" style="display: none;">
+            <label>Raison</label>
+            <input type="text" id="bulkReason" class="form-control" placeholder="Raison...">
+        </div>
+        {% endif %}
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('bulkModal')">Annuler</button>
+            <button class="btn btn-primary" id="confirmBulkBtn">Confirmer</button>
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    // ==================== STATISTIQUES EN TEMPS RÉEL ====================
+    function updateStats() {
+        fetch('/admin/api/tickets/statistics')
+            .then(response => response.json())
+            .then(data => {
+                // Mettre à jour les statistiques
+                document.querySelectorAll('.stat-card .stat-value').forEach((el, index) => {
+                    const keys = ['total', 'active', 'total_balance', 'expiring_soon', 'expired', 'paid'];
+                    if (index < keys.length) {
+                        const value = data[keys[index]];
+                        if (value !== undefined) {
+                            if (keys[index] === 'total_balance') {
+                                el.textContent = value.toLocaleString() + ' HTG';
+                            } else {
+                                el.textContent = value;
+                            }
+                        }
+                    }
+                });
+            })
+            .catch(() => {});
+    }
+    
+    // Mettre à jour toutes les 30 secondes
+    setInterval(updateStats, 30000);
+    
+    // ==================== SÉLECTION TOUS ====================
+    function toggleAllTickets() {
+        const checked = document.getElementById('selectAll').checked;
+        document.querySelectorAll('.ticket-checkbox').forEach(cb => cb.checked = checked);
+        updateSelectedCount();
+    }
+    
+    document.querySelectorAll('.ticket-checkbox').forEach(cb => {
+        cb.addEventListener('change', updateSelectedCount);
+    });
+    
+    function updateSelectedCount() {
+        const selected = document.querySelectorAll('.ticket-checkbox:checked').length;
+        document.getElementById('selectedCount').textContent = selected + ' sélectionné' + (selected > 1 ? 's' : '');
+        
+        const hasSelected = selected > 0;
+        document.getElementById('bulkPayout').disabled = !hasSelected;
+        document.getElementById('bulkCancel').disabled = !hasSelected;
+        document.getElementById('bulkExport').disabled = !hasSelected;
+    }
+    
+    // ==================== DATE RANGES ====================
+    function setDateRange(days) {
+        const end = new Date();
+        const start = new Date();
+        start.setDate(end.getDate() - days);
+        
+        document.querySelector('input[name="start_date"]').value = start.toISOString().split('T')[0];
+        document.querySelector('input[name="end_date"]').value = end.toISOString().split('T')[0];
+        document.getElementById('filterForm').submit();
+    }
+    
+    // ==================== RÉINITIALISATION FILTRES ====================
+    function resetFilters() {
+        document.querySelectorAll('#filterForm input, #filterForm select').forEach(el => {
+            if (el.type !== 'submit') {
+                el.value = '';
+            }
+        });
+        document.getElementById('filterForm').submit();
+    }
+    
+    // ==================== EXPORT ====================
+    function exportTickets() {
+        const form = document.getElementById('filterForm');
+        const params = new URLSearchParams(new FormData(form));
+        window.location.href = '/admin/api/tickets/export?' + params.toString();
+    }
+    
+    // ==================== RECHARGE ====================
+    function refreshTable() {
+        location.reload();
+    }
+    
+    // ==================== QR CODE ====================
+    let currentTicketNumber = '';
+    
+    function generateQR(ticketNumber) {
+        currentTicketNumber = ticketNumber;
+        openModal('qrModal');
+        document.getElementById('qrTicketNumber').textContent = ticketNumber;
+        document.getElementById('qrCodeContainer').innerHTML = '<span class="text-muted">Génération...</span>';
+        
+        fetch(`/admin/api/tickets/${ticketNumber}/qr`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('qrCodeContainer').innerHTML = `<img src="${data.qr_code}" style="width: 200px; height: 200px; object-fit: contain;">`;
+                } else {
+                    document.getElementById('qrCodeContainer').innerHTML = '<span class="text-danger">Erreur de génération</span>';
+                }
+            })
+            .catch(() => {
+                document.getElementById('qrCodeContainer').innerHTML = '<span class="text-danger">Erreur réseau</span>';
+            });
+    }
+    
+    function printQR() {
+        const content = document.getElementById('qrContent').innerHTML;
+        const win = window.open('', '', 'width=400,height=500');
+        win.document.write(`
+            <html>
+                <head><title>QR Code - {{ config.APP_NAME }}</title>
+                <style>
+                    body { text-align: center; font-family: Arial, sans-serif; padding: 20px; }
+                    .container { display: inline-block; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; }
+                    .ticket-number { font-family: monospace; font-size: 18px; font-weight: bold; margin-top: 12px; }
+                </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <h2>Ticket {{ currentTicketNumber }}</h2>
+                        <div>${document.getElementById('qrCodeContainer').innerHTML}</div>
+                        <div class="ticket-number">{{ currentTicketNumber }}</div>
+                        <p style="color: #94a3b8; font-size: 12px; margin-top: 12px;">Présentez ce QR code en bureau</p>
+                    </div>
+                </body>
+            </html>
+        `);
+        win.document.close();
+        win.focus();
+        win.print();
+    }
+    
+    function downloadQR() {
+        const img = document.querySelector('#qrCodeContainer img');
+        if (img) {
+            const link = document.createElement('a');
+            link.download = `ticket_${currentTicketNumber}.png`;
+            link.href = img.src;
+            link.click();
+        }
+    }
+    
+    // ==================== VOIR TICKET ====================
+    function viewTicket(ticketId) {
+        openModal('ticketModal');
+        document.getElementById('txModalTitle').textContent = 'Chargement...';
+        document.getElementById('txModalContent').innerHTML = '<p class="text-muted text-center">Chargement...</p>';
+        
+        fetch(`/admin/api/tickets/${ticketId}`)
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('txModalTitle').textContent = `Ticket ${data.ticket_number}`;
+            
+            let html = `
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+                    <div>
+                        <p style="margin: 4px 0;"><strong>Numéro:</strong> <code style="font-size: 16px;">${data.ticket_number}</code></p>
+                        <p style="margin: 4px 0;"><strong>Joueur:</strong> ${data.player_name || 'Anonyme'}</p>
+                        ${data.player_phone ? `<p style="margin: 4px 0;"><strong>Téléphone:</strong> ${data.player_phone}</p>` : ''}
+                        <p style="margin: 4px 0;"><strong>Statut:</strong> <span class="badge ${data.status === 'active' ? 'success' : data.status === 'paid' ? 'gray' : data.status === 'expired' ? 'danger' : 'warning'}">${data.status}</span></p>
+                    </div>
+                    <div>
+                        <p style="margin: 4px 0;"><strong>Montant initial:</strong> <span style="font-weight: 600;">${data.initial_amount} HTG</span></p>
+                        <p style="margin: 4px 0;"><strong>Solde restant:</strong> <span style="font-weight: 600; color: ${data.balance > 0 ? '#059669' : '#94a3b8'};">${data.balance} HTG</span></p>
+                        <p style="margin: 4px 0;"><strong>Expire le:</strong> ${new Date(data.expires_at).toLocaleDateString()}</p>
+                        ${data.paid_at ? `<p style="margin: 4px 0;"><strong>Payé le:</strong> ${new Date(data.paid_at).toLocaleDateString()}</p>` : ''}
+                    </div>
+                </div>
+                <div style="border-top: 1px solid #e2e8f0; padding-top: 16px;">
+                    <p style="margin: 4px 0;"><strong>Bureau:</strong> ${data.bureau_name || 'N/A'}</p>
+                    <p style="margin: 4px 0;"><strong>Agent:</strong> ${data.agent_name || 'N/A'}</p>
+                    <p style="margin: 4px 0;"><strong>Créé le:</strong> ${new Date(data.created_at).toLocaleString()}</p>
+                </div>
+                ${data.bets && data.bets.length > 0 ? `
+                <div style="border-top: 1px solid #e2e8f0; padding-top: 16px; margin-top: 16px;">
+                    <p style="font-weight: 600; margin-bottom: 8px;">Paris effectués (${data.bets.length})</p>
+                    <table style="width: 100%; font-size: 12px; border-collapse: collapse;">
+                        <thead>
+                            <tr style="background: #f8fafc;">
+                                <th style="padding: 4px 8px; text-align: left;">Jeu</th>
+                                <th style="padding: 4px 8px; text-align: right;">Mise</th>
+                                <th style="padding: 4px 8px; text-align: right;">Gain</th>
+                                <th style="padding: 4px 8px; text-align: center;">Statut</th>
+                                <th style="padding: 4px 8px; text-align: center;">Date</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${data.bets.map(b => `
+                                <tr>
+                                    <td style="padding: 4px 8px;">${b.game}</td>
+                                    <td style="padding: 4px 8px; text-align: right;">${b.stake} HTG</td>
+                                    <td style="padding: 4px 8px; text-align: right; color: ${b.winnings > 0 ? '#22c55e' : '#94a3b8'};">${b.winnings} HTG</td>
+                                    <td style="padding: 4px 8px; text-align: center;"><span class="badge ${b.status === 'won' ? 'success' : b.status === 'lost' ? 'danger' : 'warning'}">${b.status}</span></td>
+                                    <td style="padding: 4px 8px; text-align: center; font-size: 11px; color: #94a3b8;">${new Date(b.date).toLocaleDateString()}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+                ` : ''}
+            `;
+            
+            document.getElementById('txModalContent').innerHTML = html;
+        })
+        .catch(() => {
+            document.getElementById('txModalContent').innerHTML = '<p class="text-danger text-center">Erreur de chargement</p>';
+        });
+    }
+    
+    // ==================== PAYER TICKET ====================
+    let payoutTicketId = null;
+    let payoutAmount = 0;
+    
+    function payoutTicket(ticketId) {
+        payoutTicketId = ticketId;
+        
+        // Récupérer le solde
+        fetch(`/admin/api/tickets/${ticketId}`)
+            .then(response => response.json())
+            .then(data => {
+                payoutAmount = data.balance;
+                document.getElementById('payoutAmount').textContent = data.balance;
+                openModal('payoutModal');
+            })
+            .catch(() => {
+                showToast('Erreur lors du chargement du ticket', 'error');
+            });
+    }
+    
+    document.getElementById('confirmPayoutBtn').addEventListener('click', function() {
+        if (!payoutTicketId) return;
+        
+        fetch(`/admin/api/tickets/${payoutTicketId}/payout`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            closeModal('payoutModal');
+            if (data.success) {
+                showToast(data.message || 'Ticket payé avec succès', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            closeModal('payoutModal');
+            showToast('Erreur réseau', 'error');
+        });
+    });
+    
+    // ==================== ANNULER TICKET ====================
+    let cancelTicketId = null;
+    
+    function cancelTicket(ticketId) {
+        cancelTicketId = ticketId;
+        document.getElementById('cancelReason').value = '';
+        openModal('cancelModal');
+    }
+    
+    document.getElementById('confirmCancelBtn').addEventListener('click', function() {
+        if (!cancelTicketId) return;
+        
+        const reason = document.getElementById('cancelReason').value.trim();
+        if (!reason) {
+            showToast('Veuillez saisir une raison', 'warning');
+            return;
+        }
+        
+        fetch(`/admin/api/tickets/${cancelTicketId}/cancel`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ reason: reason })
+        })
+        .then(response => response.json())
+        .then(data => {
+            closeModal('cancelModal');
+            if (data.success) {
+                showToast(data.message || 'Ticket annulé avec succès', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            closeModal('cancelModal');
+            showToast('Erreur réseau', 'error');
+        });
+    });
+    
+    // ==================== ACTIONS GROUPÉES ====================
+    let bulkActionType = null;
+    let bulkTicketIds = [];
+    
+    function bulkAction(action) {
+        bulkTicketIds = Array.from(document.querySelectorAll('.ticket-checkbox:checked')).map(cb => cb.value);
+        if (bulkTicketIds.length === 0) return;
+        
+        bulkActionType = action;
+        const labels = {
+            'payout': 'Paiement',
+            'cancel': 'Annulation',
+            'export': 'Export'
+        };
+        const messages = {
+            'payout': 'Confirmer le paiement des tickets sélectionnés ?',
+            'cancel': 'Confirmer l\'annulation des tickets sélectionnés ?',
+            'export': 'Exporter les tickets sélectionnés ?'
+        };
+        
+        document.getElementById('bulkModalTitle').textContent = labels[action] + ' - ' + bulkTicketIds.length + ' ticket' + (bulkTicketIds.length > 1 ? 's' : '');
+        document.getElementById('bulkModalMessage').textContent = messages[action];
+        
+        // Afficher le champ raison pour l'annulation
+        document.getElementById('bulkReasonGroup').style.display = action === 'cancel' ? 'block' : 'none';
+        
+        openModal('bulkModal');
+    }
+    
+    document.getElementById('confirmBulkBtn').addEventListener('click', function() {
+        if (!bulkActionType || bulkTicketIds.length === 0) return;
+        
+        let payload = { ticket_ids: bulkTicketIds };
+        
+        // Ajouter la raison pour l'annulation
+        if (bulkActionType === 'cancel') {
+            const reason = document.getElementById('bulkReason').value.trim();
+            if (!reason) {
+                showToast('Veuillez saisir une raison', 'warning');
+                return;
+            }
+            payload.reason = reason;
+        }
+        
+        fetch(`/admin/api/tickets/bulk/${bulkActionType}`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        })
+        .then(response => response.json())
+        .then(data => {
+            closeModal('bulkModal');
+            if (data.success) {
+                showToast(data.message || 'Action effectuée avec succès', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            closeModal('bulkModal');
+            showToast('Erreur réseau', 'error');
+        });
+    });
+</script>
+{% endblock %}
+{% endblock %}

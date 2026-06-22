@@ -1,0 +1,562 @@
+<!-- app/templates/admin/audit/logs.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Logs d'audit - Administration{% endblock %}
+
+{% block page_title %}Logs d'audit{% endblock %}
+{% block page_subtitle %}Journal complet des actions pour la conformité LEH{% endblock %}
+
+{% block content %}
+<!-- ==================== STATISTIQUES RAPIDES ==================== -->
+<div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); margin-bottom: 20px;">
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #3b82f6;">
+        <div class="stat-label">Total logs</div>
+        <div class="stat-value" style="font-size: 20px;">{{ stats.total }}</div>
+    </div>
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #22c55e;">
+        <div class="stat-label">Exportés LEH</div>
+        <div class="stat-value" style="font-size: 20px; color: #22c55e;">{{ stats.exported }}</div>
+    </div>
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #f59e0b;">
+        <div class="stat-label">En attente</div>
+        <div class="stat-value" style="font-size: 20px; color: #f59e0b;">{{ stats.pending }}</div>
+    </div>
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #8b5cf6;">
+        <div class="stat-label">Aujourd'hui</div>
+        <div class="stat-value" style="font-size: 20px; color: #8b5cf6;">{{ stats.today }}</div>
+    </div>
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #ef4444;">
+        <div class="stat-label">Actions critiques</div>
+        <div class="stat-value" style="font-size: 20px; color: #ef4444;">{{ stats.critical }}</div>
+    </div>
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #22c55e;">
+        <div class="stat-label">Rétention</div>
+        <div class="stat-value" style="font-size: 16px; color: #22c55e;">{{ stats.retention_days }} jours</div>
+    </div>
+</div>
+
+<!-- ==================== FILTRES ==================== -->
+<div class="table-container mb-3">
+    <div class="table-header">
+        <div class="title">
+            <i class="fas fa-filter"></i> Filtres
+        </div>
+        <div class="actions">
+            <button class="btn btn-sm btn-secondary" onclick="resetFilters()">
+                <i class="fas fa-undo"></i> Réinitialiser
+            </button>
+        </div>
+    </div>
+    <div style="padding: 16px 20px;">
+        <form method="GET" action="{{ url_for('admin_audit_logs') }}" id="filterForm">
+            <div class="grid-3">
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Recherche</label>
+                    <input type="text" name="search" class="form-control" 
+                           placeholder="Utilisateur, action, resource..." 
+                           value="{{ filters.search or '' }}">
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Action</label>
+                    <select name="action" class="form-control">
+                        <option value="">Toutes les actions</option>
+                        {% for action in actions %}
+                        <option value="{{ action }}" {% if filters.action == action %}selected{% endif %}>
+                            {{ action|replace('_', ' ')|capitalize }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Resource</label>
+                    <select name="resource_type" class="form-control">
+                        <option value="">Toutes</option>
+                        <option value="user" {% if filters.resource_type == 'user' %}selected{% endif %}>Utilisateur</option>
+                        <option value="wallet" {% if filters.resource_type == 'wallet' %}selected{% endif %}>Portefeuille</option>
+                        <option value="bet" {% if filters.resource_type == 'bet' %}selected{% endif %}>Pari</option>
+                        <option value="transaction" {% if filters.resource_type == 'transaction' %}selected{% endif %}>Transaction</option>
+                        <option value="ticket" {% if filters.resource_type == 'ticket' %}selected{% endif %}>Ticket</option>
+                        <option value="admin" {% if filters.resource_type == 'admin' %}selected{% endif %}>Admin</option>
+                    </select>
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Utilisateur</label>
+                    <input type="text" name="user_id" class="form-control" 
+                           placeholder="ID utilisateur" value="{{ filters.user_id or '' }}">
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>IP</label>
+                    <input type="text" name="ip_address" class="form-control" 
+                           placeholder="Adresse IP" value="{{ filters.ip_address or '' }}">
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Export LEH</label>
+                    <select name="leh_exported" class="form-control">
+                        <option value="">Tous</option>
+                        <option value="true" {% if filters.leh_exported == 'true' %}selected{% endif %}>Exporté</option>
+                        <option value="false" {% if filters.leh_exported == 'false' %}selected{% endif %}>Non exporté</option>
+                    </select>
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Du</label>
+                    <input type="date" name="start_date" class="form-control" value="{{ filters.start_date or '' }}">
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Au</label>
+                    <input type="date" name="end_date" class="form-control" value="{{ filters.end_date or '' }}">
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>&nbsp;</label>
+                    <div class="flex" style="gap: 8px;">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-search"></i> Filtrer
+                        </button>
+                        <button type="button" class="btn btn-secondary" onclick="exportLogs()">
+                            <i class="fas fa-file-export"></i> Exporter
+                        </button>
+                        <button type="button" class="btn btn-success" onclick="exportToLEH()">
+                            <i class="fas fa-file-export"></i> Export LEH
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </form>
+        <div class="flex gap-1 mt-2">
+            <button class="btn btn-sm btn-secondary" onclick="setDateRange(1)">Aujourd'hui</button>
+            <button class="btn btn-sm btn-secondary" onclick="setDateRange(7)">7 jours</button>
+            <button class="btn btn-sm btn-secondary" onclick="setDateRange(30)">30 jours</button>
+            <button class="btn btn-sm btn-secondary" onclick="setDateRange(90)">90 jours</button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== LISTE ==================== -->
+<div class="table-container">
+    <div class="table-header">
+        <div class="title">
+            <i class="fas fa-clipboard-list"></i> Logs d'audit ({{ pagination.total }})
+        </div>
+        <div class="actions">
+            <button class="btn btn-secondary" onclick="refreshTable()">
+                <i class="fas fa-sync"></i>
+            </button>
+        </div>
+    </div>
+    
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 30px;">
+                        <input type="checkbox" id="selectAll" onchange="toggleAllLogs()">
+                    </th>
+                    <th>Date</th>
+                    <th>Utilisateur</th>
+                    <th>Action</th>
+                    <th>Resource</th>
+                    <th>Anciennes valeurs</th>
+                    <th>Nouvelles valeurs</th>
+                    <th>IP</th>
+                    <th>Export LEH</th>
+                    <th style="width: 80px;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in logs %}
+                <tr>
+                    <td>
+                        <input type="checkbox" class="log-checkbox" value="{{ log.id }}">
+                    </td>
+                    <td class="text-muted" style="font-size: 12px; white-space: nowrap;">
+                        {{ log.created_at.strftime('%d/%m/%Y %H:%M:%S') }}
+                    </td>
+                    <td>
+                        {% if log.user %}
+                        <a href="{{ url_for('admin_user_detail', user_id=log.user_id) }}" style="color: #0f172a; text-decoration: none;">
+                            <div class="flex-center" style="gap: 6px;">
+                                <div style="width: 28px; height: 28px; border-radius: 50%; background: #e2e8f0; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; color: #475569;">
+                                    {{ (log.user.full_name or log.user.phone)[:1]|upper }}
+                                </div>
+                                <div>
+                                    <div style="font-size: 13px; font-weight: 500;">{{ log.user.full_name or log.user.phone }}</div>
+                                    <div style="font-size: 10px; color: #94a3b8;">{{ log.user_id[:8] }}</div>
+                                </div>
+                            </div>
+                        </a>
+                        {% else %}
+                        <span class="text-muted" style="font-size: 13px;">{{ log.user_id[:8] or 'Système' }}</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <span class="badge {% if log.action in ['login', 'logout', 'login_failed'] %}info{% elif log.action in ['bet_placed', 'bet_settled', 'draw_generated'] %}purple{% elif log.action in ['deposit', 'withdrawal'] %}success{% elif log.action in ['user_blocked', 'account_frozen'] %}danger{% elif log.action in ['kyc_submitted', 'kyc_verified'] %}warning{% else %}gray{% endif %}">
+                            {{ log.action|replace('_', ' ')|capitalize }}
+                        </span>
+                    </td>
+                    <td style="font-size: 12px;">{{ log.resource_type or '-' }}</td>
+                    <td style="font-size: 11px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                        {% if log.old_values %}
+                        <span class="text-muted" title="{{ log.old_values|tojson }}">
+                            {{ log.old_values|tojson|truncate(30) }}
+                        </span>
+                        {% else %}
+                        <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+                    <td style="font-size: 11px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                        {% if log.new_values %}
+                        <span class="text-success" title="{{ log.new_values|tojson }}">
+                            {{ log.new_values|tojson|truncate(30) }}
+                        </span>
+                        {% else %}
+                        <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+                    <td style="font-family: monospace; font-size: 11px;">{{ log.ip_address or '-' }}</td>
+                    <td>
+                        {% if log.leh_exported %}
+                            <span class="badge success" style="font-size: 10px;">
+                                <i class="fas fa-check"></i> {{ log.leh_exported_at.strftime('%d/%m/%Y') if log.leh_exported_at else 'Exporté' }}
+                            </span>
+                        {% else %}
+                            <span class="badge warning" style="font-size: 10px;">
+                                <i class="fas fa-clock"></i> En attente
+                            </span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="flex" style="gap: 4px;">
+                            <button class="btn btn-sm btn-secondary" onclick="viewLog('{{ log.id }}')" title="Voir">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                            {% if not log.leh_exported %}
+                            <button class="btn btn-sm btn-success" onclick="markExported('{{ log.id }}')" title="Exporter LEH">
+                                <i class="fas fa-file-export"></i>
+                            </button>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="10" class="text-center text-muted" style="padding: 40px;">
+                        <i class="fas fa-clipboard-list" style="font-size: 40px; display: block; margin-bottom: 12px; opacity: 0.3;"></i>
+                        Aucun log d'audit trouvé
+                        {% if filters.search %}
+                            <br><small>Essayez de modifier vos critères de recherche</small>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- ==================== PAGINATION ==================== -->
+    {% if pagination.pages > 1 %}
+    <div class="pagination">
+        <a href="{{ url_for('admin_audit_logs', page=1, **request.args) }}" 
+           class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
+            <i class="fas fa-angle-double-left"></i>
+        </a>
+        
+        {% if pagination.has_prev %}
+        <a href="{{ url_for('admin_audit_logs', page=pagination.page-1, **request.args) }}" class="page-item">
+            <i class="fas fa-chevron-left"></i>
+        </a>
+        {% endif %}
+        
+        {% for p in range(1, pagination.pages + 1) %}
+            {% if p == pagination.page %}
+                <span class="page-item active">{{ p }}</span>
+            {% elif p <= 3 or p > pagination.pages - 3 or (p >= pagination.page - 2 and p <= pagination.page + 2) %}
+                <a href="{{ url_for('admin_audit_logs', page=p, **request.args) }}" class="page-item">{{ p }}</a>
+            {% elif p == 4 or p == pagination.pages - 3 %}
+                <span class="page-item">...</span>
+            {% endif %}
+        {% endfor %}
+        
+        {% if pagination.has_next %}
+        <a href="{{ url_for('admin_audit_logs', page=pagination.page+1, **request.args) }}" class="page-item">
+            <i class="fas fa-chevron-right"></i>
+        </a>
+        {% endif %}
+        
+        <a href="{{ url_for('admin_audit_logs', page=pagination.pages, **request.args) }}" 
+           class="page-item {% if not pagination.has_next %}disabled{% endif %}">
+            <i class="fas fa-angle-double-right"></i>
+        </a>
+    </div>
+    {% endif %}
+    
+    <!-- ==================== BULK ACTIONS ==================== -->
+    <div style="padding: 12px 20px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+        <div>
+            <span id="selectedCount" style="font-size: 13px; color: #94a3b8;">0 sélectionné</span>
+        </div>
+        <div class="flex" style="gap: 8px;">
+            <button class="btn btn-sm btn-success" onclick="bulkAction('export')" disabled id="bulkExport">
+                <i class="fas fa-file-export"></i> Exporter LEH
+            </button>
+            <button class="btn btn-sm btn-secondary" onclick="bulkAction('download')" disabled id="bulkDownload">
+                <i class="fas fa-download"></i> Télécharger
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MODAL DÉTAILS ==================== -->
+<div class="modal-overlay" id="logModal">
+    <div class="modal" style="max-width: 800px;">
+        <div class="modal-header">
+            <h2 id="logModalTitle">Détails du log d'audit</h2>
+            <button class="modal-close" onclick="closeModal('logModal')">&times;</button>
+        </div>
+        <div id="logModalContent">
+            <p class="text-muted text-center">Chargement...</p>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MODAL EXPORT LEH ==================== -->
+<div class="modal-overlay" id="lehModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Export LEH</h2>
+            <button class="modal-close" onclick="closeModal('lehModal')">&times;</button>
+        </div>
+        <p>Confirmer l'export des logs sélectionnés vers la LEH ?</p>
+        <p style="color: #94a3b8; font-size: 14px;">
+            <span id="lehCount">0</span> logs seront marqués comme exportés.
+        </p>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('lehModal')">Annuler</button>
+            <button class="btn btn-success" id="confirmLehBtn">Confirmer l'export</button>
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    // ==================== STATISTIQUES EN TEMPS RÉEL ====================
+    function updateStats() {
+        fetch('/admin/api/audit/statistics')
+            .then(response => response.json())
+            .then(data => {
+                document.querySelectorAll('.stat-card .stat-value').forEach((el, index) => {
+                    const keys = ['total', 'exported', 'pending', 'today', 'critical'];
+                    if (index < keys.length) {
+                        const value = data[keys[index]];
+                        if (value !== undefined) {
+                            if (keys[index] === 'retention_days') {
+                                el.textContent = value + ' jours';
+                            } else {
+                                el.textContent = value;
+                            }
+                        }
+                    }
+                });
+            })
+            .catch(() => {});
+    }
+    
+    // Mettre à jour toutes les 60 secondes
+    setInterval(updateStats, 60000);
+    
+    // ==================== SÉLECTION TOUS ====================
+    function toggleAllLogs() {
+        const checked = document.getElementById('selectAll').checked;
+        document.querySelectorAll('.log-checkbox').forEach(cb => cb.checked = checked);
+        updateSelectedCount();
+    }
+    
+    document.querySelectorAll('.log-checkbox').forEach(cb => {
+        cb.addEventListener('change', updateSelectedCount);
+    });
+    
+    function updateSelectedCount() {
+        const selected = document.querySelectorAll('.log-checkbox:checked').length;
+        document.getElementById('selectedCount').textContent = selected + ' sélectionné' + (selected > 1 ? 's' : '');
+        
+        const hasSelected = selected > 0;
+        document.getElementById('bulkExport').disabled = !hasSelected;
+        document.getElementById('bulkDownload').disabled = !hasSelected;
+    }
+    
+    // ==================== DATE RANGES ====================
+    function setDateRange(days) {
+        const end = new Date();
+        const start = new Date();
+        start.setDate(end.getDate() - days);
+        
+        document.querySelector('input[name="start_date"]').value = start.toISOString().split('T')[0];
+        document.querySelector('input[name="end_date"]').value = end.toISOString().split('T')[0];
+        document.getElementById('filterForm').submit();
+    }
+    
+    // ==================== RÉINITIALISATION FILTRES ====================
+    function resetFilters() {
+        document.querySelectorAll('#filterForm input, #filterForm select').forEach(el => {
+            if (el.type !== 'submit') {
+                el.value = '';
+            }
+        });
+        document.getElementById('filterForm').submit();
+    }
+    
+    // ==================== EXPORT ====================
+    function exportLogs() {
+        const form = document.getElementById('filterForm');
+        const params = new URLSearchParams(new FormData(form));
+        window.location.href = '/admin/api/audit/export?' + params.toString();
+    }
+    
+    // ==================== EXPORT LEH ====================
+    function exportToLEH() {
+        const form = document.getElementById('filterForm');
+        const params = new URLSearchParams(new FormData(form));
+        window.location.href = '/admin/api/audit/leh/export?' + params.toString();
+    }
+    
+    // ==================== RECHARGE ====================
+    function refreshTable() {
+        location.reload();
+    }
+    
+    // ==================== VOIR LOG ====================
+    function viewLog(logId) {
+        openModal('logModal');
+        document.getElementById('logModalTitle').textContent = 'Chargement...';
+        document.getElementById('logModalContent').innerHTML = '<p class="text-muted text-center">Chargement...</p>';
+        
+        fetch(`/admin/api/audit/logs/${logId}`)
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('logModalTitle').textContent = `Log #${data.id[:8]}`;
+            
+            let html = `
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+                    <div>
+                        <p style="margin: 4px 0;"><strong>Date:</strong> ${new Date(data.created_at).toLocaleString()}</p>
+                        <p style="margin: 4px 0;"><strong>Action:</strong> <span class="badge ${data.action_color}">${data.action}</span></p>
+                        <p style="margin: 4px 0;"><strong>Resource:</strong> ${data.resource_type || 'N/A'}</p>
+                        <p style="margin: 4px 0;"><strong>Resource ID:</strong> <code>${data.resource_id || 'N/A'}</code></p>
+                    </div>
+                    <div>
+                        <p style="margin: 4px 0;"><strong>Utilisateur:</strong> ${data.user_name || data.user_id || 'Système'}</p>
+                        <p style="margin: 4px 0;"><strong>IP:</strong> ${data.ip_address || 'N/A'}</p>
+                        <p style="margin: 4px 0;"><strong>Session:</strong> ${data.session_id || 'N/A'}</p>
+                        <p style="margin: 4px 0;"><strong>Export LEH:</strong> ${data.leh_exported ? '<span class="badge success">Oui</span>' : '<span class="badge warning">Non</span>'}</p>
+                    </div>
+                </div>
+                ${data.reason ? `<div style="border-top: 1px solid #e2e8f0; padding-top: 16px; margin-bottom: 16px;">
+                    <p style="margin: 4px 0;"><strong>Raison:</strong> ${data.reason}</p>
+                </div>` : ''}
+                <div style="border-top: 1px solid #e2e8f0; padding-top: 16px;">
+                    <div class="grid-2">
+                        ${data.old_values ? `
+                        <div>
+                            <p style="font-weight: 600; margin-bottom: 8px;">Anciennes valeurs</p>
+                            <pre style="background: #f1f5f9; padding: 12px; border-radius: 4px; font-size: 12px; overflow-x: auto;">${JSON.stringify(data.old_values, null, 2)}</pre>
+                        </div>
+                        ` : ''}
+                        ${data.new_values ? `
+                        <div>
+                            <p style="font-weight: 600; margin-bottom: 8px;">Nouvelles valeurs</p>
+                            <pre style="background: #f1f5f9; padding: 12px; border-radius: 4px; font-size: 12px; overflow-x: auto;">${JSON.stringify(data.new_values, null, 2)}</pre>
+                        </div>
+                        ` : ''}
+                    </div>
+                </div>
+                ${data.metadata ? `
+                <div style="border-top: 1px solid #e2e8f0; padding-top: 16px; margin-top: 16px;">
+                    <p style="font-weight: 600; margin-bottom: 8px;">Métadonnées</p>
+                    <pre style="background: #f1f5f9; padding: 12px; border-radius: 4px; font-size: 12px; overflow-x: auto;">${JSON.stringify(data.metadata, null, 2)}</pre>
+                </div>
+                ` : ''}
+            `;
+            
+            document.getElementById('logModalContent').innerHTML = html;
+        })
+        .catch(() => {
+            document.getElementById('logModalContent').innerHTML = '<p class="text-danger text-center">Erreur de chargement</p>';
+        });
+    }
+    
+    // ==================== MARQUER COMME EXPORTÉ ====================
+    function markExported(logId) {
+        if (!confirm('Marquer ce log comme exporté vers la LEH ?')) return;
+        
+        fetch(`/admin/api/audit/logs/${logId}/leh-export`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast('Log marqué comme exporté', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            showToast('Erreur réseau', 'error');
+        });
+    }
+    
+    // ==================== ACTIONS GROUPÉES ====================
+    let bulkActionType = null;
+    let bulkLogIds = [];
+    
+    function bulkAction(action) {
+        bulkLogIds = Array.from(document.querySelectorAll('.log-checkbox:checked')).map(cb => cb.value);
+        if (bulkLogIds.length === 0) return;
+        
+        bulkActionType = action;
+        
+        if (action === 'export') {
+            document.getElementById('lehCount').textContent = bulkLogIds.length;
+            openModal('lehModal');
+        } else if (action === 'download') {
+            // Télécharger les logs sélectionnés
+            downloadSelectedLogs();
+        }
+    }
+    
+    document.getElementById('confirmLehBtn').addEventListener('click', function() {
+        if (!bulkActionType || bulkLogIds.length === 0) return;
+        
+        fetch('/admin/api/audit/logs/bulk/leh-export', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ log_ids: bulkLogIds })
+        })
+        .then(response => response.json())
+        .then(data => {
+            closeModal('lehModal');
+            if (data.success) {
+                showToast(data.message || 'Logs exportés avec succès', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            closeModal('lehModal');
+            showToast('Erreur réseau', 'error');
+        });
+    });
+    
+    function downloadSelectedLogs() {
+        const ids = bulkLogIds.join(',');
+        window.location.href = `/admin/api/audit/logs/download?ids=${ids}`;
+    }
+</script>
+{% endblock %}
+{% endblock %}

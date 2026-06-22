@@ -1,6 +1,65 @@
 # app/schemas/__init__.py
 """Schémas Pydantic pour l'API"""
 
+from app.schemas.admin import (
+    # Auth
+    AdminLogin,
+    AdminTokenResponse,
+    
+    # Users
+    AdminUserBase,
+    AdminUserCreate,
+    AdminUserUpdate,
+    AdminUserResponse,
+    
+    # Agents
+    AdminAgentCreate,
+    AdminAgentUpdate,
+    
+    # Bureaus
+    AdminBureauBase,
+    AdminBureauCreate,
+    AdminBureauUpdate,
+    
+    # Keno
+    AdminKenoConfig,
+    AdminKenoPaytableUpdate,
+    
+    # Lucky
+    LuckyWheelSegment,
+    AdminLuckyConfig,
+    
+    # Transactions
+    AdminTransactionFilter,
+    
+    # Reports
+    AdminReportRequest,
+    AdminFinancialReport,
+    AdminGameReport,
+    AdminComplianceReport,
+    
+    # Promotions
+    AdminPromotionBase,
+    AdminPromotionCreate,
+    AdminPromotionUpdate,
+    
+    # Audit
+    AdminAuditFilter,
+    AdminAuditExportRequest,
+    
+    # Settings
+    AdminSettings,
+    AdminSecuritySettings,
+    
+    # Dashboard
+    AdminDashboardStats,
+    AdminDashboardCharts,
+    
+    # Responses
+    AdminApiResponse,
+    AdminPaginatedResponse,
+)
+
 from app.schemas.common import (
     PaginatedResponse,
     PaginationParams,
@@ -105,6 +164,38 @@ from app.schemas.promotion import (
 )
 
 __all__ = [
+      # Admin
+    "AdminLogin",
+    "AdminTokenResponse",
+    "AdminUserBase",
+    "AdminUserCreate",
+    "AdminUserUpdate",
+    "AdminUserResponse",
+    "AdminAgentCreate",
+    "AdminAgentUpdate",
+    "AdminBureauBase",
+    "AdminBureauCreate",
+    "AdminBureauUpdate",
+    "AdminKenoConfig",
+    "AdminKenoPaytableUpdate",
+    "LuckyWheelSegment",
+    "AdminLuckyConfig",
+    "AdminTransactionFilter",
+    "AdminReportRequest",
+    "AdminFinancialReport",
+    "AdminGameReport",
+    "AdminComplianceReport",
+    "AdminPromotionBase",
+    "AdminPromotionCreate",
+    "AdminPromotionUpdate",
+    "AdminAuditFilter",
+    "AdminAuditExportRequest",
+    "AdminSettings",
+    "AdminSecuritySettings",
+    "AdminDashboardStats",
+    "AdminDashboardCharts",
+    "AdminApiResponse",
+    "AdminPaginatedResponse",
     # Common
     "PaginatedResponse",
     "PaginationParams",

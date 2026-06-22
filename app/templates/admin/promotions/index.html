@@ -1,0 +1,440 @@
+<!-- app/templates/admin/promotions/index.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Promotions - Administration{% endblock %}
+
+{% block page_title %}Gestion des promotions{% endblock %}
+{% block page_subtitle %}Gérez les bonus et offres promotionnelles{% endblock %}
+
+{% block content %}
+<!-- ==================== STATISTIQUES RAPIDES ==================== -->
+<div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); margin-bottom: 20px;">
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #3b82f6;">
+        <div class="stat-label">Total promotions</div>
+        <div class="stat-value" style="font-size: 20px;">{{ stats.total }}</div>
+    </div>
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #22c55e;">
+        <div class="stat-label">Actives</div>
+        <div class="stat-value" style="font-size: 20px; color: #22c55e;">{{ stats.active }}</div>
+    </div>
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #f59e0b;">
+        <div class="stat-label">En attente</div>
+        <div class="stat-value" style="font-size: 20px; color: #f59e0b;">{{ stats.pending }}</div>
+    </div>
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #ef4444;">
+        <div class="stat-label">Expirées</div>
+        <div class="stat-value" style="font-size: 20px; color: #ef4444;">{{ stats.expired }}</div>
+    </div>
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #8b5cf6;">
+        <div class="stat-label">Budget utilisé</div>
+        <div class="stat-value" style="font-size: 20px; color: #8b5cf6;">{{ stats.used_budget|format_number }} HTG</div>
+    </div>
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #059669;">
+        <div class="stat-label">Total réclamations</div>
+        <div class="stat-value" style="font-size: 20px; color: #059669;">{{ stats.total_claims }}</div>
+    </div>
+</div>
+
+<!-- ==================== FILTRES ==================== -->
+<div class="table-container mb-3">
+    <div class="table-header">
+        <div class="title">
+            <i class="fas fa-filter"></i> Filtres
+        </div>
+        <div class="actions">
+            <button class="btn btn-sm btn-secondary" onclick="resetFilters()">
+                <i class="fas fa-undo"></i> Réinitialiser
+            </button>
+        </div>
+    </div>
+    <div style="padding: 16px 20px;">
+        <form method="GET" action="{{ url_for('admin_promotions') }}" id="filterForm">
+            <div class="grid-3">
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Recherche</label>
+                    <input type="text" name="search" class="form-control" 
+                           placeholder="Nom, code..." 
+                           value="{{ filters.search or '' }}">
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Statut</label>
+                    <select name="status" class="form-control">
+                        <option value="">Tous</option>
+                        <option value="active" {% if filters.status == 'active' %}selected{% endif %}>Actif</option>
+                        <option value="draft" {% if filters.status == 'draft' %}selected{% endif %}>Brouillon</option>
+                        <option value="paused" {% if filters.status == 'paused' %}selected{% endif %}>En pause</option>
+                        <option value="expired" {% if filters.status == 'expired' %}selected{% endif %}>Expiré</option>
+                    </select>
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Type</label>
+                    <select name="type" class="form-control">
+                        <option value="">Tous</option>
+                        <option value="deposit_bonus" {% if filters.type == 'deposit_bonus' %}selected{% endif %}>Bonus de dépôt</option>
+                        <option value="cashback" {% if filters.type == 'cashback' %}selected{% endif %}>Cashback</option>
+                        <option value="free_bet" {% if filters.type == 'free_bet' %}selected{% endif %}>Pari gratuit</option>
+                        <option value="multiplier" {% if filters.type == 'multiplier' %}selected{% endif %}>Multiplicateur</option>
+                        <option value="referral" {% if filters.type == 'referral' %}selected{% endif %}>Parrainage</option>
+                    </select>
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Du</label>
+                    <input type="date" name="start_date" class="form-control" value="{{ filters.start_date or '' }}">
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>Au</label>
+                    <input type="date" name="end_date" class="form-control" value="{{ filters.end_date or '' }}">
+                </div>
+                <div class="form-group" style="margin-bottom: 0;">
+                    <label>&nbsp;</label>
+                    <div class="flex" style="gap: 8px;">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-search"></i> Filtrer
+                        </button>
+                        <a href="{{ url_for('admin_promotion_create') }}" class="btn btn-success">
+                            <i class="fas fa-plus"></i> Ajouter
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- ==================== LISTE ==================== -->
+<div class="table-container">
+    <div class="table-header">
+        <div class="title">
+            <i class="fas fa-tags"></i> Promotions ({{ pagination.total }})
+        </div>
+        <div class="actions">
+            <button class="btn btn-secondary" onclick="refreshTable()">
+                <i class="fas fa-sync"></i>
+            </button>
+        </div>
+    </div>
+    
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 30px;">
+                        <input type="checkbox" id="selectAll" onchange="toggleAllPromotions()">
+                    </th>
+                    <th>Nom</th>
+                    <th>Code</th>
+                    <th>Type</th>
+                    <th>Période</th>
+                    <th>Budget</th>
+                    <th>Réclamations</th>
+                    <th>Statut</th>
+                    <th style="width: 120px;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for promo in promotions %}
+                <tr>
+                    <td>
+                        <input type="checkbox" class="promo-checkbox" value="{{ promo.id }}">
+                    </td>
+                    <td>
+                        <div>
+                            <div style="font-weight: 500;">{{ promo.name }}</div>
+                            <div style="font-size: 12px; color: #94a3b8;">{{ promo.description[:50] }}{% if promo.description|length > 50 %}...{% endif %}</div>
+                        </div>
+                    </td>
+                    <td>
+                        {% if promo.code %}
+                        <span style="font-family: monospace; font-size: 12px; background: #f1f5f9; padding: 2px 8px; border-radius: 4px;">
+                            {{ promo.code }}
+                        </span>
+                        {% else %}
+                        <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <span class="badge {% if promo.type == 'deposit_bonus' %}success{% elif promo.type == 'cashback' %}info{% elif promo.type == 'free_bet' %}warning{% elif promo.type == 'multiplier' %}purple{% else %}gray{% endif %}">
+                            {{ promo.type|replace('_', ' ')|capitalize }}
+                        </span>
+                    </td>
+                    <td style="font-size: 12px;">
+                        <div>{{ promo.start_date.strftime('%d/%m/%Y') }}</div>
+                        <div style="color: #94a3b8;">→ {{ promo.end_date.strftime('%d/%m/%Y') }}</div>
+                    </td>
+                    <td>
+                        <div style="font-weight: 600;">
+                            {% if promo.total_budget %}
+                            {{ promo.total_budget|format_number }} HTG
+                            {% else %}
+                            Illimité
+                            {% endif %}
+                        </div>
+                        {% if promo.total_budget %}
+                        <div style="font-size: 11px; color: #94a3b8;">
+                            Utilisé: {{ promo.used_budget|format_number }} HTG
+                            ({{ ((promo.used_budget / promo.total_budget) * 100)|round(1) }}%)
+                        </div>
+                        <div style="background: #e2e8f0; border-radius: 4px; height: 4px; overflow: hidden; margin-top: 2px;">
+                            <div style="width: {{ ((promo.used_budget / promo.total_budget) * 100)|round(1) }}%; background: {% if ((promo.used_budget / promo.total_budget) * 100) > 80 %}#ef4444{% elif ((promo.used_budget / promo.total_budget) * 100) > 50 %}#f59e0b{% else %}#22c55e{% endif %}; height: 100%;"></div>
+                        </div>
+                        {% endif %}
+                    </td>
+                    <td style="text-align: center;">
+                        <div style="font-weight: 600;">{{ promo.total_claims }}</div>
+                        <div style="font-size: 11px; color: #94a3b8;">{{ promo.total_bonus_given|format_number }} HTG</div>
+                    </td>
+                    <td>
+                        <span class="badge {% if promo.status == 'active' %}success{% elif promo.status == 'draft' %}gray{% elif promo.status == 'paused' %}warning{% else %}danger{% endif %}">
+                            {{ promo.status }}
+                        </span>
+                        {% if promo.status == 'active' and promo.end_date < now %}
+                        <span class="badge danger" style="font-size: 9px;">Expiré</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="flex" style="gap: 4px;">
+                            <a href="{{ url_for('admin_promotion_detail', promo_id=promo.id) }}" 
+                               class="btn btn-sm btn-secondary" title="Voir">
+                                <i class="fas fa-eye"></i>
+                            </a>
+                            <a href="{{ url_for('admin_promotion_edit', promo_id=promo.id) }}" 
+                               class="btn btn-sm btn-primary" title="Modifier">
+                                <i class="fas fa-edit"></i>
+                            </a>
+                            <button class="btn btn-sm btn-danger" 
+                                    onclick="confirmDelete('{{ promo.id }}', '{{ promo.name }}')" 
+                                    title="Supprimer">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="9" class="text-center text-muted" style="padding: 40px;">
+                        <i class="fas fa-tags" style="font-size: 40px; display: block; margin-bottom: 12px; opacity: 0.3;"></i>
+                        Aucune promotion trouvée
+                        {% if filters.search %}
+                            <br><small>Essayez de modifier vos critères de recherche</small>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- ==================== PAGINATION ==================== -->
+    {% if pagination.pages > 1 %}
+    <div class="pagination">
+        <a href="{{ url_for('admin_promotions', page=1, **request.args) }}" 
+           class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
+            <i class="fas fa-angle-double-left"></i>
+        </a>
+        
+        {% if pagination.has_prev %}
+        <a href="{{ url_for('admin_promotions', page=pagination.page-1, **request.args) }}" class="page-item">
+            <i class="fas fa-chevron-left"></i>
+        </a>
+        {% endif %}
+        
+        {% for p in range(1, pagination.pages + 1) %}
+            {% if p == pagination.page %}
+                <span class="page-item active">{{ p }}</span>
+            {% elif p <= 3 or p > pagination.pages - 3 or (p >= pagination.page - 2 and p <= pagination.page + 2) %}
+                <a href="{{ url_for('admin_promotions', page=p, **request.args) }}" class="page-item">{{ p }}</a>
+            {% elif p == 4 or p == pagination.pages - 3 %}
+                <span class="page-item">...</span>
+            {% endif %}
+        {% endfor %}
+        
+        {% if pagination.has_next %}
+        <a href="{{ url_for('admin_promotions', page=pagination.page+1, **request.args) }}" class="page-item">
+            <i class="fas fa-chevron-right"></i>
+        </a>
+        {% endif %}
+        
+        <a href="{{ url_for('admin_promotions', page=pagination.pages, **request.args) }}" 
+           class="page-item {% if not pagination.has_next %}disabled{% endif %}">
+            <i class="fas fa-angle-double-right"></i>
+        </a>
+    </div>
+    {% endif %}
+    
+    <!-- ==================== BULK ACTIONS ==================== -->
+    <div style="padding: 12px 20px; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+        <div>
+            <span id="selectedCount" style="font-size: 13px; color: #94a3b8;">0 sélectionné</span>
+        </div>
+        <div class="flex" style="gap: 8px;">
+            <button class="btn btn-sm btn-success" onclick="bulkAction('activate')" disabled id="bulkActivate">
+                <i class="fas fa-play"></i> Activer
+            </button>
+            <button class="btn btn-sm btn-warning" onclick="bulkAction('pause')" disabled id="bulkPause">
+                <i class="fas fa-pause"></i> Pause
+            </button>
+            <button class="btn btn-sm btn-danger" onclick="bulkAction('delete')" disabled id="bulkDelete">
+                <i class="fas fa-trash"></i> Supprimer
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MODAL SUPPRESSION ==================== -->
+<div class="modal-overlay" id="deleteModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Confirmer la suppression</h2>
+            <button class="modal-close" onclick="closeModal('deleteModal')">&times;</button>
+        </div>
+        <p id="deleteMessage">Êtes-vous sûr de vouloir supprimer cette promotion ? Cette action est irréversible.</p>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('deleteModal')">Annuler</button>
+            <button class="btn btn-danger" id="confirmDeleteBtn">Supprimer</button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MODAL BULK ACTION ==================== -->
+<div class="modal-overlay" id="bulkModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2 id="bulkModalTitle">Action groupée</h2>
+            <button class="modal-close" onclick="closeModal('bulkModal')">&times;</button>
+        </div>
+        <p id="bulkModalMessage">Confirmer l'action sur les promotions sélectionnées ?</p>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('bulkModal')">Annuler</button>
+            <button class="btn btn-primary" id="confirmBulkBtn">Confirmer</button>
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    // ==================== SÉLECTION TOUS ====================
+    function toggleAllPromotions() {
+        const checked = document.getElementById('selectAll').checked;
+        document.querySelectorAll('.promo-checkbox').forEach(cb => cb.checked = checked);
+        updateSelectedCount();
+    }
+    
+    document.querySelectorAll('.promo-checkbox').forEach(cb => {
+        cb.addEventListener('change', updateSelectedCount);
+    });
+    
+    function updateSelectedCount() {
+        const selected = document.querySelectorAll('.promo-checkbox:checked').length;
+        document.getElementById('selectedCount').textContent = selected + ' sélectionné' + (selected > 1 ? 's' : '');
+        
+        const hasSelected = selected > 0;
+        document.getElementById('bulkActivate').disabled = !hasSelected;
+        document.getElementById('bulkPause').disabled = !hasSelected;
+        document.getElementById('bulkDelete').disabled = !hasSelected;
+    }
+    
+    // ==================== SUPPRESSION INDIVIDUELLE ====================
+    let deletePromoId = null;
+    
+    function confirmDelete(promoId, promoName) {
+        deletePromoId = promoId;
+        document.getElementById('deleteMessage').textContent = 
+            `Êtes-vous sûr de vouloir supprimer la promotion "${promoName || promoId}" ? Cette action est irréversible.`;
+        openModal('deleteModal');
+    }
+    
+    document.getElementById('confirmDeleteBtn').addEventListener('click', function() {
+        if (deletePromoId) {
+            fetch(`/admin/api/promotions/${deletePromoId}`, {
+                method: 'DELETE',
+                headers: {
+                    'X-CSRFToken': '{{ csrf_token() }}',
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                closeModal('deleteModal');
+                if (data.success) {
+                    showToast('Promotion supprimée avec succès', 'success');
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    showToast(data.error || 'Erreur lors de la suppression', 'error');
+                }
+            })
+            .catch(() => {
+                closeModal('deleteModal');
+                showToast('Erreur réseau', 'error');
+            });
+        }
+    });
+    
+    // ==================== ACTIONS GROUPÉES ====================
+    let bulkActionType = null;
+    let bulkPromoIds = [];
+    
+    function bulkAction(action) {
+        bulkPromoIds = Array.from(document.querySelectorAll('.promo-checkbox:checked')).map(cb => cb.value);
+        if (bulkPromoIds.length === 0) return;
+        
+        bulkActionType = action;
+        const labels = {
+            'activate': 'Activer',
+            'pause': 'Mettre en pause',
+            'delete': 'Supprimer'
+        };
+        const messages = {
+            'activate': 'Activer les promotions sélectionnées ?',
+            'pause': 'Mettre en pause les promotions sélectionnées ?',
+            'delete': 'Supprimer définitivement les promotions sélectionnées ?'
+        };
+        
+        document.getElementById('bulkModalTitle').textContent = labels[action] + ' - ' + bulkPromoIds.length + ' promotion' + (bulkPromoIds.length > 1 ? 's' : '');
+        document.getElementById('bulkModalMessage').textContent = messages[action];
+        openModal('bulkModal');
+    }
+    
+    document.getElementById('confirmBulkBtn').addEventListener('click', function() {
+        if (!bulkActionType || bulkPromoIds.length === 0) return;
+        
+        fetch(`/admin/api/promotions/bulk/${bulkActionType}`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ promo_ids: bulkPromoIds })
+        })
+        .then(response => response.json())
+        .then(data => {
+            closeModal('bulkModal');
+            if (data.success) {
+                showToast(data.message || 'Action effectuée avec succès', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            closeModal('bulkModal');
+            showToast('Erreur réseau', 'error');
+        });
+    });
+    
+    // ==================== RECHARGE ====================
+    function refreshTable() {
+        location.reload();
+    }
+    
+    // ==================== RÉINITIALISATION FILTRES ====================
+    function resetFilters() {
+        document.querySelectorAll('#filterForm input, #filterForm select').forEach(el => {
+            if (el.type !== 'submit') {
+                el.value = '';
+            }
+        });
+        document.getElementById('filterForm').submit();
+    }
+</script>
+{% endblock %}
+{% endblock %}

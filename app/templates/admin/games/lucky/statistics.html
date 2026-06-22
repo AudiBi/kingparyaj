@@ -1,0 +1,314 @@
+<!-- app/templates/admin/games/lucky/statistics.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Statistiques Lucky Wheel - Administration{% endblock %}
+
+{% block page_title %}Statistiques Lucky Wheel{% endblock %}
+{% block page_subtitle %}Analyse détaillée de la roue de la chance{% endblock %}
+
+{% block content %}
+<!-- ==================== FILTRES ==================== -->
+<div class="table-container mb-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-filter"></i> Période</div>
+    </div>
+    <div style="padding: 16px 20px;">
+        <form method="GET" action="{{ url_for('admin_lucky_statistics') }}" class="grid-3">
+            <div class="form-group" style="margin-bottom: 0;">
+                <label>Du</label>
+                <input type="date" name="start_date" class="form-control" value="{{ start_date }}">
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+                <label>Au</label>
+                <input type="date" name="end_date" class="form-control" value="{{ end_date }}">
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+                <label>&nbsp;</label>
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-search"></i> Générer
+                </button>
+            </div>
+        </form>
+        <div class="flex gap-1 mt-2">
+            <button class="btn btn-sm btn-secondary" onclick="setDateRange(7)">7 jours</button>
+            <button class="btn btn-sm btn-secondary" onclick="setDateRange(30)">30 jours</button>
+            <button class="btn btn-sm btn-secondary" onclick="setDateRange(90)">90 jours</button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== STATISTIQUES GLOBALES ==================== -->
+<div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); margin-bottom: 20px;">
+    <div class="stat-card" style="padding: 16px; border-left: 3px solid #8b5cf6;">
+        <div class="stat-label">Total parties</div>
+        <div class="stat-value" style="font-size: 24px;">{{ stats.total_plays }}</div>
+    </div>
+    <div class="stat-card" style="padding: 16px; border-left: 3px solid #059669;">
+        <div class="stat-label">Volume total</div>
+        <div class="stat-value" style="font-size: 24px; color: #059669;">{{ stats.total_stake|format_number }} HTG</div>
+    </div>
+    <div class="stat-card" style="padding: 16px; border-left: 3px solid #ef4444;">
+        <div class="stat-label">Payout total</div>
+        <div class="stat-value" style="font-size: 24px; color: #ef4444;">{{ stats.total_wins|format_number }} HTG</div>
+    </div>
+    <div class="stat-card" style="padding: 16px; border-left: 3px solid #f59e0b;">
+        <div class="stat-label">RTP</div>
+        <div class="stat-value" style="font-size: 24px; color: #f59e0b;">{{ stats.rtp }}%</div>
+    </div>
+    <div class="stat-card" style="padding: 16px; border-left: 3px solid #3b82f6;">
+        <div class="stat-label">Multiplicateur max</div>
+        <div class="stat-value" style="font-size: 24px; color: #3b82f6;">x{{ stats.max_multiplier }}</div>
+    </div>
+    <div class="stat-card" style="padding: 16px; border-left: 3px solid #8b5cf6;">
+        <div class="stat-label">Gain max</div>
+        <div class="stat-value" style="font-size: 24px; color: #8b5cf6;">{{ stats.max_win|format_number }} HTG</div>
+    </div>
+</div>
+
+<!-- ==================== GRAPHIQUES ==================== -->
+<div class="grid-2">
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-chart-line"></i> Évolution des parties</div>
+        </div>
+        <div style="padding: 20px;">
+            <canvas id="playsChart" height="250"></canvas>
+        </div>
+    </div>
+    
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-chart-pie"></i> Répartition des segments</div>
+        </div>
+        <div style="padding: 20px;">
+            <canvas id="segmentsChart" height="250"></canvas>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== SEGMENTS LES PLUS POPULAIRES ==================== -->
+<div class="table-container mt-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-list"></i> Popularité des segments</div>
+    </div>
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>Segment</th>
+                    <th>Multiplicateur</th>
+                    <th>Nombre de sorties</th>
+                    <th>Fréquence</th>
+                    <th>Poids théorique</th>
+                    <th>Écart</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for segment in segment_stats %}
+                <tr>
+                    <td>
+                        <div class="flex-center" style="gap: 8px;">
+                            <span style="display: inline-block; width: 16px; height: 16px; border-radius: 4px; background-color: {{ segment.color }};"></span>
+                            {{ segment.label }}
+                        </div>
+                    </td>
+                    <td>x{{ segment.multiplier }}</td>
+                    <td>{{ segment.count }}</td>
+                    <td>{{ "%.1f"|format(segment.frequency) }}%</td>
+                    <td>{{ "%.1f"|format(segment.theoretical_weight) }}%</td>
+                    <td>
+                        {% set diff = segment.frequency - segment.theoretical_weight %}
+                        <span class="badge {% if diff > 0 %}success{% elif diff < 0 %}danger{% else %}gray{% endif %}">
+                            {{ "%.1f"|format(diff) }}%
+                        </span>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ==================== ÉVOLUTION QUOTIDIENNE ==================== -->
+<div class="table-container mt-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-table"></i> Évolution quotidienne</div>
+    </div>
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Parties</th>
+                    <th>Volume</th>
+                    <th>Payout</th>
+                    <th>RTP</th>
+                    <th>Multiplicateur max</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for day in daily_data %}
+                <tr>
+                    <td>{{ day.date }}</td>
+                    <td>{{ day.plays }}</td>
+                    <td>{{ day.stake|format_number }} HTG</td>
+                    <td>{{ day.wins|format_number }} HTG</td>
+                    <td>
+                        <span class="badge {% if day.rtp > 80 %}success{% elif day.rtp > 60 %}warning{% else %}danger{% endif %}">
+                            {{ day.rtp }}%
+                        </span>
+                    </td>
+                    <td>x{{ day.max_multiplier }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ==================== JACKPOT ==================== -->
+<div class="table-container mt-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-trophy"></i> Historique des gros gains</div>
+    </div>
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Joueur</th>
+                    <th>Segment</th>
+                    <th>Multiplicateur</th>
+                    <th>Gain</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for win in big_wins %}
+                <tr>
+                    <td class="text-muted" style="font-size: 12px;">{{ win.date|timeago }}</td>
+                    <td>{{ win.player or 'Anonyme' }}</td>
+                    <td>
+                        <div class="flex-center" style="gap: 4px;">
+                            <span style="display: inline-block; width: 12px; height: 12px; border-radius: 3px; background-color: {{ win.color }};"></span>
+                            {{ win.segment }}
+                        </div>
+                    </td>
+                    <td>x{{ win.multiplier }}</td>
+                    <td style="font-weight: 600; color: #059669;">{{ win.amount|format_number }} HTG</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="5" class="text-center text-muted" style="padding: 20px;">
+                        Aucun gros gain enregistré
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    // ==================== DATE RANGES ====================
+    function setDateRange(days) {
+        const end = new Date();
+        const start = new Date();
+        start.setDate(end.getDate() - days);
+        
+        document.querySelector('input[name="start_date"]').value = start.toISOString().split('T')[0];
+        document.querySelector('input[name="end_date"]').value = end.toISOString().split('T')[0];
+        document.querySelector('form').submit();
+    }
+    
+    // ==================== GRAPHIQUES ====================
+    document.addEventListener('DOMContentLoaded', function() {
+        const chartData = {{ chart_data|tojson }};
+        
+        // Graphique des parties
+        const ctx1 = document.getElementById('playsChart').getContext('2d');
+        new Chart(ctx1, {
+            type: 'bar',
+            data: {
+                labels: chartData.labels,
+                datasets: [
+                    {
+                        label: 'Parties',
+                        data: chartData.plays,
+                        backgroundColor: 'rgba(139, 92, 246, 0.7)',
+                        borderColor: '#8b5cf6',
+                        borderWidth: 1
+                    },
+                    {
+                        label: 'Volume (HTG)',
+                        data: chartData.stake,
+                        backgroundColor: 'rgba(5, 150, 105, 0.7)',
+                        borderColor: '#059669',
+                        borderWidth: 1
+                    },
+                    {
+                        label: 'Payout (HTG)',
+                        data: chartData.wins,
+                        backgroundColor: 'rgba(239, 68, 68, 0.7)',
+                        borderColor: '#ef4444',
+                        borderWidth: 1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            usePointStyle: true,
+                            padding: 20
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) {
+                                return value.toLocaleString();
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        
+        // Graphique des segments
+        const ctx2 = document.getElementById('segmentsChart').getContext('2d');
+        const segmentData = chartData.segment_distribution || [];
+        new Chart(ctx2, {
+            type: 'doughnut',
+            data: {
+                labels: segmentData.map(s => s.label),
+                datasets: [{
+                    data: segmentData.map(s => s.count),
+                    backgroundColor: segmentData.map(s => s.color),
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            usePointStyle: true,
+                            padding: 15
+                        }
+                    }
+                },
+                cutout: '60%'
+            }
+        });
+    });
+</script>
+{% endblock %}
+{% endblock %}

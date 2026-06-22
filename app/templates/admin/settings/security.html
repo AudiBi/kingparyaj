@@ -1,0 +1,502 @@
+<!-- app/templates/admin/settings/security.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Sécurité - Administration{% endblock %}
+
+{% block page_title %}Paramètres de sécurité{% endblock %}
+{% block page_subtitle %}Configuration de la sécurité de l'application{% endblock %}
+
+{% block content %}
+<!-- ==================== ONGLETS ==================== -->
+<div style="display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px;">
+    <a href="{{ url_for('admin_settings_general') }}" 
+       class="btn btn-secondary" style="border-radius: 8px 8px 0 0; background: transparent; color: #64748b; padding: 10px 20px; text-decoration: none; border: 1px solid transparent;">
+        <i class="fas fa-cog"></i> Général
+    </a>
+    <a href="{{ url_for('admin_settings_security') }}" 
+       class="btn btn-primary" style="border-radius: 8px 8px 0 0; background: #059669; color: white; padding: 10px 20px; text-decoration: none;">
+        <i class="fas fa-shield-alt"></i> Sécurité
+    </a>
+</div>
+
+<div class="grid-2">
+    <!-- ==================== AUTHENTIFICATION ==================== -->
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-lock"></i> Authentification</div>
+        </div>
+        <div style="padding: 20px;">
+            <form id="authForm" onsubmit="return submitAuth(event)">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" name="two_factor_auth" {% if security.two_factor_auth %}checked{% endif %}>
+                        Authentification à deux facteurs
+                    </label>
+                    <div class="help-text">Les administrateurs devront utiliser une application d'authentification</div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Temps de session (minutes)</label>
+                    <input type="number" name="session_timeout_minutes" class="form-control" 
+                           value="{{ security.session_timeout_minutes }}" min="15" max="1440" required>
+                    <div class="help-text">Temps avant expiration de la session</div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Tentatives de connexion max</label>
+                    <input type="number" name="max_login_attempts" class="form-control" 
+                           value="{{ security.max_login_attempts }}" min="3" max="10" required>
+                    <div class="help-text">Nombre de tentatives avant blocage</div>
+                </div>
+                
+                <button type="submit" class="btn btn-primary w-full">
+                    <i class="fas fa-save"></i> Enregistrer
+                </button>
+            </form>
+        </div>
+    </div>
+    
+    <!-- ==================== POLITIQUE DE MOT DE PASSE ==================== -->
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-key"></i> Politique de mot de passe</div>
+        </div>
+        <div style="padding: 20px;">
+            <form id="passwordForm" onsubmit="return submitPassword(event)">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                
+                <div class="form-group">
+                    <label>Longueur minimale</label>
+                    <input type="number" name="min_length" class="form-control" 
+                           value="{{ security.password_policy.min_length }}" min="6" max="20" required>
+                </div>
+                
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" name="require_uppercase" {% if security.password_policy.require_uppercase %}checked{% endif %}>
+                        Exiger une majuscule
+                    </label>
+                </div>
+                
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" name="require_lowercase" {% if security.password_policy.require_lowercase %}checked{% endif %}>
+                        Exiger une minuscule
+                    </label>
+                </div>
+                
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" name="require_numbers" {% if security.password_policy.require_numbers %}checked{% endif %}>
+                        Exiger un chiffre
+                    </label>
+                </div>
+                
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" name="require_special" {% if security.password_policy.require_special %}checked{% endif %}>
+                        Exiger un caractère spécial
+                    </label>
+                </div>
+                
+                <button type="submit" class="btn btn-primary w-full">
+                    <i class="fas fa-save"></i> Enregistrer
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== IPS WHITELIST ==================== -->
+<div class="table-container mt-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-network-wired"></i> IP Whitelist</div>
+        <div class="actions">
+            <button class="btn btn-sm btn-primary" onclick="addIP()">
+                <i class="fas fa-plus"></i> Ajouter une IP
+            </button>
+        </div>
+    </div>
+    <div style="padding: 20px;">
+        <form id="ipForm" onsubmit="return submitIPs(event)">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            
+            <div id="ipList">
+                {% if security.ip_whitelist %}
+                    {% for ip in security.ip_whitelist %}
+                    <div class="ip-item" style="display: flex; gap: 8px; margin-bottom: 8px; align-items: center;">
+                        <input type="text" name="ips[]" class="form-control" value="{{ ip }}" 
+                               placeholder="Ex: 192.168.1.1" style="flex: 1;">
+                        <button type="button" class="btn btn-sm btn-danger" onclick="removeIP(this)">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="ip-item" style="display: flex; gap: 8px; margin-bottom: 8px; align-items: center;">
+                        <input type="text" name="ips[]" class="form-control" placeholder="Ex: 192.168.1.1" style="flex: 1;">
+                        <button type="button" class="btn btn-sm btn-danger" onclick="removeIP(this)">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                {% endif %}
+            </div>
+            
+            <div class="help-text mt-1">Seules les IP listées auront accès à l'administration. Laissez vide pour autoriser toutes les IP.</div>
+            
+            <button type="submit" class="btn btn-primary w-full mt-2">
+                <i class="fas fa-save"></i> Enregistrer la whitelist
+            </button>
+        </form>
+    </div>
+</div>
+
+<!-- ==================== RATE LIMITING ==================== -->
+<div class="table-container mt-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-tachometer-alt"></i> Rate Limiting</div>
+    </div>
+    <div style="padding: 20px;">
+        <form id="rateLimitForm" onsubmit="return submitRateLimit(event)">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            
+            <div class="grid-2">
+                <div class="form-group">
+                    <label>Requêtes maximum</label>
+                    <input type="number" name="rate_limit_requests" class="form-control" 
+                           value="{{ security.rate_limit_requests }}" min="10" required>
+                </div>
+                <div class="form-group">
+                    <label>Période (secondes)</label>
+                    <input type="number" name="rate_limit_period" class="form-control" 
+                           value="{{ security.rate_limit_period }}" min="1" required>
+                </div>
+            </div>
+            
+            <button type="submit" class="btn btn-primary w-full">
+                <i class="fas fa-save"></i> Enregistrer
+            </button>
+        </form>
+    </div>
+</div>
+
+<!-- ==================== SESSIONS ACTIVES ==================== -->
+<div class="table-container mt-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-users"></i> Sessions actives</div>
+        <div class="actions">
+            <button class="btn btn-sm btn-danger" onclick="terminateAllSessions()">
+                <i class="fas fa-sign-out-alt"></i> Terminer toutes
+            </button>
+        </div>
+    </div>
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>Utilisateur</th>
+                    <th>IP</th>
+                    <th>Début</th>
+                    <th>Dernière activité</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for session in active_sessions %}
+                <tr>
+                    <td>{{ session.user_name }}</td>
+                    <td style="font-family: monospace;">{{ session.ip_address }}</td>
+                    <td class="text-muted" style="font-size: 12px;">{{ session.created_at|timeago }}</td>
+                    <td class="text-muted" style="font-size: 12px;">{{ session.last_activity|timeago }}</td>
+                    <td>
+                        <button class="btn btn-sm btn-danger" onclick="terminateSession('{{ session.id }}')">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="5" class="text-center text-muted" style="padding: 20px;">
+                        Aucune session active
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ==================== LOGS DE SÉCURITÉ ==================== -->
+<div class="table-container mt-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-shield-alt"></i> Logs de sécurité récents</div>
+        <a href="{{ url_for('admin_audit_logs') }}" class="btn btn-sm btn-secondary">Voir tout</a>
+    </div>
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Action</th>
+                    <th>Utilisateur</th>
+                    <th>IP</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in security_logs %}
+                <tr>
+                    <td class="text-muted" style="font-size: 12px;">{{ log.created_at|timeago }}</td>
+                    <td>
+                        <span class="badge {% if log.action == 'login' %}success{% elif log.action == 'login_failed' %}danger{% elif log.action == 'logout' %}gray{% else %}warning{% endif %}">
+                            {{ log.action|replace('_', ' ')|capitalize }}
+                        </span>
+                    </td>
+                    <td>{{ log.user_name or log.user_id[:8] }}</td>
+                    <td style="font-family: monospace;">{{ log.ip_address or '-' }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="4" class="text-center text-muted" style="padding: 20px;">
+                        Aucun log de sécurité
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ==================== MODAL IP ==================== -->
+<div class="modal-overlay" id="ipModal">
+    <div class="modal" style="max-width: 400px;">
+        <div class="modal-header">
+            <h2>Ajouter une IP</h2>
+            <button class="modal-close" onclick="closeModal('ipModal')">&times;</button>
+        </div>
+        <div class="form-group">
+            <label>Adresse IP</label>
+            <input type="text" id="newIP" class="form-control" placeholder="Ex: 192.168.1.1">
+            <div class="help-text">Format: IPv4 ou IPv6</div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('ipModal')">Annuler</button>
+            <button class="btn btn-primary" onclick="addIPConfirm()">Ajouter</button>
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    // ==================== SOUMISSION AUTH ====================
+    function submitAuth(e) {
+        e.preventDefault();
+        const form = e.target;
+        const data = new FormData(form);
+        
+        const payload = {
+            two_factor_auth: data.get('two_factor_auth') === 'on',
+            session_timeout_minutes: parseInt(data.get('session_timeout_minutes')),
+            max_login_attempts: parseInt(data.get('max_login_attempts'))
+        };
+        
+        fetch('/admin/api/settings/security/auth', {
+            method: 'PUT',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Paramètres d\'authentification enregistrés', 'success');
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            showToast('Erreur réseau', 'error');
+        });
+    }
+    
+    // ==================== SOUMISSION POLITIQUE MOT DE PASSE ====================
+    function submitPassword(e) {
+        e.preventDefault();
+        const form = e.target;
+        const data = new FormData(form);
+        
+        const payload = {
+            min_length: parseInt(data.get('min_length')),
+            require_uppercase: data.get('require_uppercase') === 'on',
+            require_lowercase: data.get('require_lowercase') === 'on',
+            require_numbers: data.get('require_numbers') === 'on',
+            require_special: data.get('require_special') === 'on'
+        };
+        
+        fetch('/admin/api/settings/security/password', {
+            method: 'PUT',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Politique de mot de passe enregistrée', 'success');
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            showToast('Erreur réseau', 'error');
+        });
+    }
+    
+    // ==================== IPS WHITELIST ====================
+    function addIP() {
+        document.getElementById('newIP').value = '';
+        openModal('ipModal');
+    }
+    
+    function addIPConfirm() {
+        const ip = document.getElementById('newIP').value.trim();
+        if (!ip) {
+            showToast('Veuillez saisir une adresse IP', 'warning');
+            return;
+        }
+        
+        const container = document.getElementById('ipList');
+        const div = document.createElement('div');
+        div.className = 'ip-item';
+        div.style.cssText = 'display: flex; gap: 8px; margin-bottom: 8px; align-items: center;';
+        div.innerHTML = `
+            <input type="text" name="ips[]" class="form-control" value="${ip}" placeholder="Ex: 192.168.1.1" style="flex: 1;">
+            <button type="button" class="btn btn-sm btn-danger" onclick="removeIP(this)">
+                <i class="fas fa-times"></i>
+            </button>
+        `;
+        container.appendChild(div);
+        
+        closeModal('ipModal');
+        showToast('IP ajoutée', 'success');
+    }
+    
+    function removeIP(btn) {
+        btn.closest('.ip-item').remove();
+    }
+    
+    function submitIPs(e) {
+        e.preventDefault();
+        const form = e.target;
+        const data = new FormData(form);
+        const ips = data.getAll('ips[]').filter(ip => ip.trim());
+        
+        fetch('/admin/api/settings/security/whitelist', {
+            method: 'PUT',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ ip_whitelist: ips })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Whitelist enregistrée avec succès', 'success');
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            showToast('Erreur réseau', 'error');
+        });
+    }
+    
+    // ==================== RATE LIMITING ====================
+    function submitRateLimit(e) {
+        e.preventDefault();
+        const form = e.target;
+        const data = new FormData(form);
+        
+        const payload = {
+            rate_limit_requests: parseInt(data.get('rate_limit_requests')),
+            rate_limit_period: parseInt(data.get('rate_limit_period'))
+        };
+        
+        fetch('/admin/api/settings/security/ratelimit', {
+            method: 'PUT',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Rate limiting enregistré', 'success');
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            showToast('Erreur réseau', 'error');
+        });
+    }
+    
+    // ==================== SESSIONS ====================
+    function terminateSession(sessionId) {
+        if (!confirm('Terminer cette session ?')) return;
+        
+        fetch(`/admin/api/sessions/${sessionId}/terminate`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast('Session terminée', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            showToast('Erreur réseau', 'error');
+        });
+    }
+    
+    function terminateAllSessions() {
+        if (!confirm('Terminer toutes les sessions actives (sauf la vôtre) ?')) return;
+        
+        fetch('/admin/api/sessions/terminate-all', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast('Toutes les sessions ont été terminées', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            showToast('Erreur réseau', 'error');
+        });
+    }
+</script>
+{% endblock %}
+{% endblock %}

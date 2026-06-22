@@ -1,0 +1,326 @@
+<!-- app/templates/admin/dashboard.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Tableau de bord - Administration{% endblock %}
+
+{% block page_title %}Tableau de bord{% endblock %}
+{% block page_subtitle %}Vue d'ensemble de votre plateforme{% endblock %}
+
+{% block content %}
+<!-- ==================== STATISTIQUES ==================== -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-icon green"><i class="fas fa-users"></i></div>
+        <div class="stat-label">Utilisateurs</div>
+        <div class="stat-value">{{ stats.users.total }}</div>
+        <div class="stat-change up">+{{ stats.users.new_today }} aujourd'hui</div>
+    </div>
+    
+    <div class="stat-card">
+        <div class="stat-icon blue"><i class="fas fa-coins"></i></div>
+        <div class="stat-label">Volume total</div>
+        <div class="stat-value">{{ stats.transactions.total_volume|format_number }} HTG</div>
+        <div class="stat-change up">+{{ stats.transactions.today_volume|format_number }} HTG</div>
+    </div>
+    
+    <div class="stat-card">
+        <div class="stat-icon purple"><i class="fas fa-trophy"></i></div>
+        <div class="stat-label">Gains distribués</div>
+        <div class="stat-value">{{ stats.transactions.total_wins|format_number }} HTG</div>
+        <div class="stat-change down">-{{ stats.transactions.today_wins|format_number }} HTG</div>
+    </div>
+    
+    <div class="stat-card">
+        <div class="stat-icon orange"><i class="fas fa-dice"></i></div>
+        <div class="stat-label">Paris aujourd'hui</div>
+        <div class="stat-value">{{ stats.games.today_bets }}</div>
+        <div class="stat-change up">+{{ stats.games.today_bets|default(0) }}</div>
+    </div>
+    
+    <div class="stat-card">
+        <div class="stat-icon red"><i class="fas fa-ticket-alt"></i></div>
+        <div class="stat-label">Tickets actifs</div>
+        <div class="stat-value">{{ stats.tickets.active }}</div>
+        <div class="stat-change warning">Expirent dans {{ stats.tickets.expiring_soon }}</div>
+    </div>
+    
+    <div class="stat-card">
+        <div class="stat-icon green"><i class="fas fa-store"></i></div>
+        <div class="stat-label">Bureaux</div>
+        <div class="stat-value">{{ stats.bureaus.total }}</div>
+        <div class="stat-change up">{{ stats.bureaus.active }} actifs</div>
+    </div>
+</div>
+
+<!-- ==================== CHARTES ==================== -->
+<div class="grid-2 mb-3">
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-chart-line"></i> Volume des transactions</div>
+            <select id="chartPeriod" onchange="updateChart()" class="form-control" style="width:auto;padding:4px 12px;">
+                <option value="7">7 jours</option>
+                <option value="30" selected>30 jours</option>
+                <option value="90">90 jours</option>
+            </select>
+        </div>
+        <div style="padding:20px;">
+            <canvas id="transactionChart" height="250"></canvas>
+        </div>
+    </div>
+    
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-dice"></i> Répartition des jeux</div>
+        </div>
+        <div style="padding:20px;">
+            <canvas id="gamesChart" height="250"></canvas>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== DERNIÈRES ACTIVITÉS ==================== -->
+<div class="grid-2">
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-clock"></i> Dernières transactions</div>
+            <a href="{{ url_for('admin_transactions') }}" class="btn btn-sm btn-secondary">Voir tout</a>
+        </div>
+        <div class="table-responsive">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Utilisateur</th>
+                        <th>Type</th>
+                        <th>Montant</th>
+                        <th>Statut</th>
+                        <th>Date</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for tx in recent_transactions %}
+                    <tr>
+                        <td>{{ tx.user_name or tx.user_id[:8] }}</td>
+                        <td>
+                            {% if tx.type == 'deposit' %}
+                                <span class="badge success"><i class="fas fa-arrow-down"></i> Dépôt</span>
+                            {% elif tx.type == 'withdrawal' %}
+                                <span class="badge danger"><i class="fas fa-arrow-up"></i> Retrait</span>
+                            {% elif tx.type == 'win' %}
+                                <span class="badge success"><i class="fas fa-trophy"></i> Gain</span>
+                            {% else %}
+                                <span class="badge gray">{{ tx.type }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-{% if tx.type == 'deposit' or tx.type == 'win' %}success{% else %}danger{% endif %}">
+                            {{ tx.amount|format_number }} HTG
+                        </td>
+                        <td><span class="badge {% if tx.status == 'completed' %}success{% else %}warning{% endif %}">{{ tx.status }}</span></td>
+                        <td class="text-muted" style="font-size:12px;">{{ tx.created_at|timeago }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="5" class="text-center text-muted">Aucune transaction récente</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-users"></i> Nouveaux utilisateurs</div>
+            <a href="{{ url_for('admin_users') }}" class="btn btn-sm btn-secondary">Voir tout</a>
+        </div>
+        <div class="table-responsive">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Utilisateur</th>
+                        <th>Téléphone</th>
+                        <th>KYC</th>
+                        <th>Date</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for user in recent_users %}
+                    <tr>
+                        <td>{{ user.full_name or user.phone }}</td>
+                        <td>{{ user.phone }}</td>
+                        <td>
+                            <span class="badge {% if user.kyc_status == 'verified' %}success{% elif user.kyc_status == 'pending' %}warning{% else %}danger{% endif %}">
+                                {{ user.kyc_status }}
+                            </span>
+                        </td>
+                        <td class="text-muted" style="font-size:12px;">{{ user.created_at|timeago }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="4" class="text-center text-muted">Aucun nouvel utilisateur</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== ALERTES ==================== -->
+{% if alerts %}
+<div class="table-container mt-3" style="border-left:4px solid #f59e0b;">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-exclamation-triangle text-warning"></i> Alertes système</div>
+    </div>
+    <div style="padding:12px 20px;">
+        {% for alert in alerts %}
+        <div style="padding:8px 0;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;gap:12px;">
+            <i class="fas fa-circle" style="font-size:8px;color:{% if alert.level == 'critical' %}#ef4444{% elif alert.level == 'warning' %}#f59e0b{% else %}#3b82f6{% endif %};"></i>
+            <span>{{ alert.message }}</span>
+            <span class="text-muted" style="font-size:12px;margin-left:auto;">{{ alert.created_at|timeago }}</span>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- ==================== SCRIPTS CHARTS ==================== -->
+{% block extra_js %}
+<script>
+    // ==================== TRANSACTION CHART ====================
+    let transactionChart = null;
+    
+    function initTransactionChart(data) {
+        const ctx = document.getElementById('transactionChart').getContext('2d');
+        
+        if (transactionChart) {
+            transactionChart.destroy();
+        }
+        
+        transactionChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: data.labels,
+                datasets: [
+                    {
+                        label: 'Dépôts',
+                        data: data.deposits,
+                        borderColor: '#059669',
+                        backgroundColor: 'rgba(5, 150, 105, 0.1)',
+                        fill: true,
+                        tension: 0.4
+                    },
+                    {
+                        label: 'Retraits',
+                        data: data.withdrawals,
+                        borderColor: '#ef4444',
+                        backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                        fill: true,
+                        tension: 0.4
+                    },
+                    {
+                        label: 'Gains',
+                        data: data.wins,
+                        borderColor: '#7c3aed',
+                        backgroundColor: 'rgba(124, 58, 237, 0.1)',
+                        fill: true,
+                        tension: 0.4
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            usePointStyle: true,
+                            padding: 20
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) {
+                                return value.toLocaleString() + ' HTG';
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+    
+    // ==================== GAMES CHART ====================
+    function initGamesChart(data) {
+        const ctx = document.getElementById('gamesChart').getContext('2d');
+        
+        new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Keno', 'Lucky Wheel'],
+                datasets: [{
+                    data: [data.keno, data.lucky],
+                    backgroundColor: ['#059669', '#7c3aed'],
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            usePointStyle: true,
+                            padding: 20
+                        }
+                    }
+                },
+                cutout: '70%'
+            }
+        });
+    }
+    
+    // ==================== CHARGEMENT DES DONNÉES ====================
+    document.addEventListener('DOMContentLoaded', function() {
+        // Charger les données pour les graphiques
+        fetch('/admin/api/dashboard/charts')
+            .then(response => response.json())
+            .then(data => {
+                initTransactionChart(data.transactions);
+                initGamesChart(data.games);
+            })
+            .catch(error => console.error('Error loading charts:', error));
+    });
+    
+    // ==================== MISE À JOUR ====================
+    function updateChart() {
+        const period = document.getElementById('chartPeriod').value;
+        fetch(`/admin/api/dashboard/charts?period=${period}`)
+            .then(response => response.json())
+            .then(data => {
+                initTransactionChart(data.transactions);
+            })
+            .catch(error => console.error('Error updating chart:', error));
+    }
+    
+    // ==================== AUTO-REFRESH ====================
+    // Rafraîchir les données toutes les 30 secondes
+    setInterval(function() {
+        fetch('/admin/api/dashboard/stats')
+            .then(response => response.json())
+            .then(data => {
+                // Mettre à jour les statistiques
+                document.querySelectorAll('.stat-value').forEach((el, index) => {
+                    const keys = ['users.total', 'transactions.total_volume', 'transactions.total_wins', 'games.today_bets'];
+                    if (index < keys.length) {
+                        const value = data[keys[index]];
+                        if (value !== undefined) {
+                            el.textContent = typeof value === 'number' ? value.toLocaleString() : value;
+                        }
+                    }
+                });
+            })
+            .catch(() => {});
+    }, 30000);
+</script>
+{% endblock %}

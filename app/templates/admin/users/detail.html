@@ -1,0 +1,404 @@
+<!-- app/templates/admin/users/detail.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Détails utilisateur - Administration{% endblock %}
+
+{% block page_title %}Détails utilisateur{% endblock %}
+{% block page_subtitle %}{{ user.full_name or user.phone }}{% endblock %}
+
+{% block content %}
+<!-- ==================== EN-TÊTE ==================== -->
+<div class="flex-between mb-3" style="flex-wrap: wrap; gap: 12px;">
+    <div class="flex-center" style="gap: 16px;">
+        <div style="width: 64px; height: 64px; border-radius: 50%; background: #059669; display: flex; align-items: center; justify-content: center; font-size: 28px; font-weight: 700; color: white;">
+            {{ (user.full_name or user.phone)[:1]|upper }}
+        </div>
+        <div>
+            <h2 style="font-size: 22px; font-weight: 600; margin: 0;">{{ user.full_name or 'Non renseigné' }}</h2>
+            <p style="color: #94a3b8; margin: 4px 0 0;">
+                <i class="fas fa-phone"></i> {{ user.phone }}
+                {% if user.email %}
+                &nbsp;|&nbsp; <i class="fas fa-envelope"></i> {{ user.email }}
+                {% endif %}
+            </p>
+        </div>
+    </div>
+    <div class="flex" style="gap: 8px;">
+        <a href="{{ url_for('admin_user_edit', user_id=user.id) }}" class="btn btn-primary">
+            <i class="fas fa-edit"></i> Modifier
+        </a>
+        <a href="{{ url_for('admin_users') }}" class="btn btn-secondary">
+            <i class="fas fa-arrow-left"></i> Retour
+        </a>
+    </div>
+</div>
+
+<!-- ==================== STATISTIQUES ==================== -->
+<div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-bottom: 20px;">
+    <div class="stat-card" style="padding: 16px;">
+        <div class="stat-label">Solde</div>
+        <div class="stat-value" style="font-size: 24px; color: #059669;">{{ wallet.balance|format_number }} HTG</div>
+    </div>
+    <div class="stat-card" style="padding: 16px; border-left: 3px solid #3b82f6;">
+        <div class="stat-label">Total misé</div>
+        <div class="stat-value" style="font-size: 24px;">{{ stats.total_volume|format_number }} HTG</div>
+    </div>
+    <div class="stat-card" style="padding: 16px; border-left: 3px solid #22c55e;">
+        <div class="stat-label">Total gagné</div>
+        <div class="stat-value" style="font-size: 24px; color: #22c55e;">{{ stats.total_wins|format_number }} HTG</div>
+    </div>
+    <div class="stat-card" style="padding: 16px; border-left: 3px solid #8b5cf6;">
+        <div class="stat-label">Taux de réussite</div>
+        <div class="stat-value" style="font-size: 24px; color: #8b5cf6;">{{ stats.win_rate }}%</div>
+    </div>
+    <div class="stat-card" style="padding: 16px; border-left: 3px solid #f59e0b;">
+        <div class="stat-label">Nombre de paris</div>
+        <div class="stat-value" style="font-size: 24px;">{{ stats.total_bets }}</div>
+    </div>
+    <div class="stat-card" style="padding: 16px; border-left: 3px solid #ef4444;">
+        <div class="stat-label">Inscrit le</div>
+        <div class="stat-value" style="font-size: 18px;">{{ user.created_at.strftime('%d/%m/%Y') }}</div>
+    </div>
+</div>
+
+<!-- ==================== INFORMATIONS ==================== -->
+<div class="grid-2">
+    <!-- Informations personnelles -->
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-user"></i> Informations personnelles</div>
+        </div>
+        <div style="padding: 20px;">
+            <table style="width: 100%; border-collapse: collapse;">
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8; width: 40%;">Nom complet</td>
+                    <td style="padding: 8px 0; font-weight: 500;">{{ user.full_name or 'Non renseigné' }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Téléphone</td>
+                    <td style="padding: 8px 0; font-weight: 500; font-family: monospace;">{{ user.phone }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Email</td>
+                    <td style="padding: 8px 0;">{{ user.email or 'Non renseigné' }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Carte d'identité</td>
+                    <td style="padding: 8px 0;">{{ user.national_id or 'Non renseigné' }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Rôle</td>
+                    <td style="padding: 8px 0;">
+                        <span class="badge {% if user.role == 'admin' %}danger{% elif user.role == 'agent' %}warning{% else %}gray{% endif %}">
+                            {{ user.role }}
+                        </span>
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Statut KYC</td>
+                    <td style="padding: 8px 0;">
+                        <span class="badge {% if user.kyc_status == 'verified' %}success{% elif user.kyc_status == 'pending' %}warning{% else %}danger{% endif %}">
+                            {{ user.kyc_status }}
+                        </span>
+                        {% if user.kyc_status == 'verified' and user.kyc_verified_at %}
+                            <small class="text-muted" style="font-size: 11px;">({{ user.kyc_verified_at|timeago }})</small>
+                        {% endif %}
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Statut compte</td>
+                    <td style="padding: 8px 0;">
+                        {% if user.is_locked %}
+                            <span class="badge danger"><i class="fas fa-lock"></i> Bloqué</span>
+                            {% if user.lock_reason %}
+                                <br><small class="text-muted">Raison: {{ user.lock_reason }}</small>
+                            {% endif %}
+                        {% elif user.is_active %}
+                            <span class="badge success"><i class="fas fa-check-circle"></i> Actif</span>
+                        {% else %}
+                            <span class="badge gray"><i class="fas fa-times-circle"></i> Inactif</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Dernière connexion</td>
+                    <td style="padding: 8px 0;">{{ user.last_login|timeago if user.last_login else 'Jamais' }}</td>
+                </tr>
+            </table>
+        </div>
+    </div>
+    
+    <!-- Portefeuille -->
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-wallet"></i> Portefeuille</div>
+            <div class="actions">
+                <button class="btn btn-sm btn-success" onclick="openCreditModal()">
+                    <i class="fas fa-plus"></i> Créditer
+                </button>
+                <button class="btn btn-sm btn-danger" onclick="openDebitModal()">
+                    <i class="fas fa-minus"></i> Débiter
+                </button>
+            </div>
+        </div>
+        <div style="padding: 20px;">
+            <table style="width: 100%; border-collapse: collapse;">
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8; width: 40%;">Solde actuel</td>
+                    <td style="padding: 8px 0; font-size: 24px; font-weight: 700; color: #059669;">
+                        {{ wallet.balance|format_number }} HTG
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Total déposé</td>
+                    <td style="padding: 8px 0; font-weight: 500;">{{ wallet.total_deposited|format_number }} HTG</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Total retiré</td>
+                    <td style="padding: 8px 0; font-weight: 500;">{{ wallet.total_withdrawn|format_number }} HTG</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Total gagné</td>
+                    <td style="padding: 8px 0; font-weight: 500; color: #22c55e;">{{ wallet.total_won|format_number }} HTG</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Bonus reçus</td>
+                    <td style="padding: 8px 0; font-weight: 500;">{{ wallet.total_bonus_received|format_number }} HTG</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #94a3b8;">Retraits en attente</td>
+                    <td style="padding: 8px 0; font-weight: 500; color: #f59e0b;">{{ wallet.pending_withdrawals|format_number }} HTG</td>
+                </tr>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== DERNIÈRES TRANSACTIONS ==================== -->
+<div class="table-container mt-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-list"></i> Dernières transactions</div>
+        <a href="{{ url_for('admin_transactions') }}?user_id={{ user.id }}" class="btn btn-sm btn-secondary">Voir tout</a>
+    </div>
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>Référence</th>
+                    <th>Type</th>
+                    <th>Méthode</th>
+                    <th>Montant</th>
+                    <th>Solde</th>
+                    <th>Statut</th>
+                    <th>Date</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for tx in transactions %}
+                <tr>
+                    <td style="font-family: monospace; font-size: 12px;">{{ tx.reference }}</td>
+                    <td>
+                        <span class="badge {% if tx.transaction_type == 'deposit' %}success{% elif tx.transaction_type == 'withdrawal' %}danger{% elif tx.transaction_type == 'win' %}success{% elif tx.transaction_type == 'bet' %}gray{% else %}info{% endif %}">
+                            {{ tx.transaction_type }}
+                        </span>
+                    </td>
+                    <td>{{ tx.payment_method or 'N/A' }}</td>
+                    <td class="{% if tx.transaction_type in ['deposit', 'win'] %}text-success{% else %}text-danger{% endif %}">
+                        {{ tx.amount|format_number }} HTG
+                    </td>
+                    <td>{{ tx.balance_after|format_number }} HTG</td>
+                    <td>
+                        <span class="badge {% if tx.status == 'completed' %}success{% elif tx.status == 'pending' %}warning{% else %}danger{% endif %}">
+                            {{ tx.status }}
+                        </span>
+                    </td>
+                    <td class="text-muted" style="font-size: 12px;">{{ tx.created_at|timeago }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="7" class="text-center text-muted" style="padding: 30px;">
+                        Aucune transaction
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ==================== DERNIERS PARIS ==================== -->
+<div class="table-container mt-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-dice"></i> Derniers paris</div>
+        <a href="{{ url_for('admin_keno_history') }}?user_id={{ user.id }}" class="btn btn-sm btn-secondary">Voir tout</a>
+    </div>
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Jeu</th>
+                    <th>Numéros</th>
+                    <th>Mise</th>
+                    <th>Gain</th>
+                    <th>Statut</th>
+                    <th>Date</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for bet in bets %}
+                <tr>
+                    <td style="font-family: monospace; font-size: 12px;">{{ bet.id[:8] }}</td>
+                    <td>Keno</td>
+                    <td>{{ bet.picks|join(', ') }}</td>
+                    <td>{{ bet.stake|format_number }} HTG</td>
+                    <td class="{% if bet.winnings > 0 %}text-success{% endif %}">
+                        {{ bet.winnings|format_number }} HTG
+                    </td>
+                    <td>
+                        <span class="badge {% if bet.status == 'won' %}success{% elif bet.status == 'lost' %}danger{% else %}warning{% endif %}">
+                            {{ bet.status }}
+                        </span>
+                    </td>
+                    <td class="text-muted" style="font-size: 12px;">{{ bet.placed_at|timeago }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="7" class="text-center text-muted" style="padding: 30px;">
+                        Aucun pari
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ==================== MODAL CRÉDIT ==================== -->
+<div class="modal-overlay" id="creditModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Créditer le compte</h2>
+            <button class="modal-close" onclick="closeModal('creditModal')">&times;</button>
+        </div>
+        <form id="creditForm" onsubmit="return submitCredit(event)">
+            <div class="form-group">
+                <label>Montant (HTG)</label>
+                <input type="number" name="amount" class="form-control" min="1" step="100" required>
+            </div>
+            <div class="form-group">
+                <label>Raison</label>
+                <input type="text" name="reason" class="form-control" placeholder="Ex: Bonus, Correction, etc." required>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('creditModal')">Annuler</button>
+                <button type="submit" class="btn btn-success">Créditer</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- ==================== MODAL DÉBIT ==================== -->
+<div class="modal-overlay" id="debitModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Débiter le compte</h2>
+            <button class="modal-close" onclick="closeModal('debitModal')">&times;</button>
+        </div>
+        <form id="debitForm" onsubmit="return submitDebit(event)">
+            <div class="form-group">
+                <label>Montant (HTG)</label>
+                <input type="number" name="amount" class="form-control" min="1" step="100" required>
+            </div>
+            <div class="form-group">
+                <label>Raison</label>
+                <input type="text" name="reason" class="form-control" placeholder="Ex: Ajustement, Correction, etc." required>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('debitModal')">Annuler</button>
+                <button type="submit" class="btn btn-danger">Débiter</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    // ==================== CRÉDIT ====================
+    function openCreditModal() {
+        document.getElementById('creditForm').reset();
+        openModal('creditModal');
+    }
+    
+    function submitCredit(e) {
+        e.preventDefault();
+        const form = e.target;
+        const data = new FormData(form);
+        
+        fetch(`/admin/api/users/{{ user.id }}/credit`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                amount: parseFloat(data.get('amount')),
+                reason: data.get('reason')
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            closeModal('creditModal');
+            if (data.success) {
+                showToast(data.message || 'Crédit effectué avec succès', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            closeModal('creditModal');
+            showToast('Erreur réseau', 'error');
+        });
+    }
+    
+    // ==================== DÉBIT ====================
+    function openDebitModal() {
+        document.getElementById('debitForm').reset();
+        openModal('debitModal');
+    }
+    
+    function submitDebit(e) {
+        e.preventDefault();
+        const form = e.target;
+        const data = new FormData(form);
+        
+        fetch(`/admin/api/users/{{ user.id }}/debit`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                amount: parseFloat(data.get('amount')),
+                reason: data.get('reason')
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            closeModal('debitModal');
+            if (data.success) {
+                showToast(data.message || 'Débit effectué avec succès', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            closeModal('debitModal');
+            showToast('Erreur réseau', 'error');
+        });
+    }
+</script>
+{% endblock %}
+{% endblock %}

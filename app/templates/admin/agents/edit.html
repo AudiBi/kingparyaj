@@ -1,0 +1,319 @@
+<!-- app/templates/admin/agents/edit.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Modifier un agent - Administration{% endblock %}
+
+{% block page_title %}Modifier un agent{% endblock %}
+{% block page_subtitle %}{{ agent.full_name or agent.phone }}{% endblock %}
+
+{% block content %}
+<div class="grid-2">
+    <!-- ==================== FORMULAIRE ==================== -->
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-user-edit"></i> Informations de l'agent</div>
+        </div>
+        <div style="padding: 24px;">
+            <form id="editForm" onsubmit="return submitEdit(event)">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Prénom <span class="text-danger">*</span></label>
+                        <input type="text" name="first_name" class="form-control" value="{{ agent.first_name or '' }}" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Nom <span class="text-danger">*</span></label>
+                        <input type="text" name="last_name" class="form-control" value="{{ agent.last_name or '' }}" required>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Téléphone</label>
+                    <input type="tel" name="phone" class="form-control" value="{{ agent.phone }}" disabled>
+                    <div class="help-text">Le numéro de téléphone ne peut pas être modifié</div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" name="email" class="form-control" value="{{ agent.email or '' }}">
+                </div>
+                
+                <div class="form-group">
+                    <label>Carte d'identité</label>
+                    <input type="text" name="national_id" class="form-control" value="{{ agent.national_id or '' }}">
+                </div>
+                
+                <div class="form-group">
+                    <label>Bureau d'affectation <span class="text-danger">*</span></label>
+                    <select name="bureau_id" class="form-control" required>
+                        <option value="">Sélectionner un bureau</option>
+                        {% for bureau in bureaus %}
+                        <option value="{{ bureau.id }}" {% if agent.bureau_id == bureau.id %}selected{% endif %}>
+                            {{ bureau.name }} - {{ bureau.city }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label>Nouveau mot de passe</label>
+                    <input type="password" name="password" class="form-control" placeholder="Laisser vide pour ne pas changer">
+                    <div class="help-text">Min 8 caractères, une majuscule, une minuscule et un chiffre</div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Confirmer le mot de passe</label>
+                    <input type="password" name="password_confirm" class="form-control" placeholder="Confirmer le mot de passe">
+                </div>
+                
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" name="is_active" {% if agent.is_active %}checked{% endif %}>
+                        Actif
+                    </label>
+                </div>
+                
+                <div class="modal-footer" style="margin-top: 24px; border-top: 1px solid #e2e8f0; padding-top: 16px;">
+                    <a href="{{ url_for('admin_agents') }}" class="btn btn-secondary">Annuler</a>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-save"></i> Enregistrer
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <!-- ==================== STATISTIQUES ET ACTIONS ==================== -->
+    <div>
+        <!-- Statistiques de l'agent -->
+        <div class="table-container mb-3">
+            <div class="table-header">
+                <div class="title"><i class="fas fa-chart-bar"></i> Statistiques</div>
+            </div>
+            <div style="padding: 20px;">
+                <div class="stats-grid" style="grid-template-columns: 1fr 1fr; gap: 12px;">
+                    <div class="stat-card" style="padding: 12px; box-shadow: none; border: 1px solid #e2e8f0;">
+                        <div class="stat-label">Paris aujourd'hui</div>
+                        <div class="stat-value" style="font-size: 20px;">{{ agent_stats.today_bets or 0 }}</div>
+                    </div>
+                    <div class="stat-card" style="padding: 12px; box-shadow: none; border: 1px solid #e2e8f0;">
+                        <div class="stat-label">Tickets créés</div>
+                        <div class="stat-value" style="font-size: 20px;">{{ agent_stats.today_tickets or 0 }}</div>
+                    </div>
+                    <div class="stat-card" style="padding: 12px; box-shadow: none; border: 1px solid #e2e8f0;">
+                        <div class="stat-label">Encaissements</div>
+                        <div class="stat-value" style="font-size: 20px; color: #22c55e;">{{ agent_stats.today_cash_in|format_number }} HTG</div>
+                    </div>
+                    <div class="stat-card" style="padding: 12px; box-shadow: none; border: 1px solid #e2e8f0;">
+                        <div class="stat-label">Paiements</div>
+                        <div class="stat-value" style="font-size: 20px; color: #ef4444;">{{ agent_stats.today_cash_out|format_number }} HTG</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Actions rapides -->
+        <div class="table-container">
+            <div class="table-header">
+                <div class="title"><i class="fas fa-bolt"></i> Actions rapides</div>
+            </div>
+            <div style="padding: 20px;">
+                <div style="display: flex; flex-direction: column; gap: 12px;">
+                    <a href="{{ url_for('admin_agent_sessions', agent_id=agent.id) }}" class="btn btn-secondary w-full">
+                        <i class="fas fa-clock"></i> Voir les sessions
+                    </a>
+                    <button class="btn btn-warning w-full" onclick="resetPassword()">
+                        <i class="fas fa-key"></i> Réinitialiser le mot de passe
+                    </button>
+                    {% if agent.is_active %}
+                    <button class="btn btn-danger w-full" onclick="toggleAgentStatus()">
+                        <i class="fas fa-times"></i> Désactiver l'agent
+                    </button>
+                    {% else %}
+                    <button class="btn btn-success w-full" onclick="toggleAgentStatus()">
+                        <i class="fas fa-check"></i> Activer l'agent
+                    </button>
+                    {% endif %}
+                    <button class="btn btn-danger w-full" onclick="confirmDelete('{{ agent.id }}', '{{ agent.full_name or agent.phone }}')">
+                        <i class="fas fa-trash"></i> Supprimer définitivement
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MODAL SUPPRESSION ==================== -->
+<div class="modal-overlay" id="deleteModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Confirmer la suppression</h2>
+            <button class="modal-close" onclick="closeModal('deleteModal')">&times;</button>
+        </div>
+        <p id="deleteMessage">Êtes-vous sûr de vouloir supprimer cet agent ? Cette action est irréversible.</p>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('deleteModal')">Annuler</button>
+            <button class="btn btn-danger" id="confirmDeleteBtn">Supprimer</button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MODAL RÉINITIALISATION ==================== -->
+<div class="modal-overlay" id="resetModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Réinitialiser le mot de passe</h2>
+            <button class="modal-close" onclick="closeModal('resetModal')">&times;</button>
+        </div>
+        <p>Un nouveau mot de passe sera généré et envoyé par SMS à l'agent.</p>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('resetModal')">Annuler</button>
+            <button class="btn btn-primary" id="confirmResetBtn">Confirmer</button>
+        </div>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    // ==================== SOUMISSION FORMULAIRE ====================
+    function submitEdit(e) {
+        e.preventDefault();
+        const form = e.target;
+        const data = new FormData(form);
+        
+        const payload = {
+            first_name: data.get('first_name'),
+            last_name: data.get('last_name'),
+            email: data.get('email') || null,
+            national_id: data.get('national_id') || null,
+            bureau_id: data.get('bureau_id'),
+            is_active: data.get('is_active') === 'on'
+        };
+        
+        const password = data.get('password');
+        const passwordConfirm = data.get('password_confirm');
+        
+        if (password || passwordConfirm) {
+            if (password !== passwordConfirm) {
+                showToast('Les mots de passe ne correspondent pas', 'error');
+                return;
+            }
+            if (password.length < 8) {
+                showToast('Le mot de passe doit contenir au moins 8 caractères', 'error');
+                return;
+            }
+            if (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/\d/.test(password)) {
+                showToast('Le mot de passe doit contenir une majuscule, une minuscule et un chiffre', 'error');
+                return;
+            }
+            payload.password = password;
+        }
+        
+        fetch(`/admin/api/agents/${'{{ agent.id }}'}`, {
+            method: 'PUT',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Agent mis à jour avec succès', 'success');
+                setTimeout(() => window.location.href = '/admin/agents', 1000);
+            } else {
+                showToast(data.error || 'Erreur lors de la mise à jour', 'error');
+            }
+        })
+        .catch(() => {
+            showToast('Erreur réseau', 'error');
+        });
+    }
+    
+    // ==================== RÉINITIALISER MOT DE PASSE ====================
+    function resetPassword() {
+        openModal('resetModal');
+    }
+    
+    document.getElementById('confirmResetBtn').addEventListener('click', function() {
+        fetch(`/admin/api/agents/${'{{ agent.id }}'}/reset-password`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            closeModal('resetModal');
+            if (data.success) {
+                showToast(data.message || 'Mot de passe réinitialisé et envoyé par SMS', 'success');
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => {
+            closeModal('resetModal');
+            showToast('Erreur réseau', 'error');
+        });
+    });
+    
+    // ==================== CHANGER STATUT ====================
+    function toggleAgentStatus() {
+        const action = '{{ "deactivate" if agent.is_active else "activate" }}';
+        const label = '{{ "désactiver" if agent.is_active else "activer" }}';
+        if (!confirm(`Confirmer la ${label} de cet agent ?`)) return;
+        
+        fetch(`/admin/api/agents/${'{{ agent.id }}'}/toggle-status`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || `Agent ${label} avec succès`, 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        });
+    }
+    
+    // ==================== SUPPRESSION ====================
+    function confirmDelete(agentId, agentName) {
+        document.getElementById('deleteMessage').textContent = 
+            `Êtes-vous sûr de vouloir supprimer l'agent "${agentName || agentId}" ? Cette action est irréversible.`;
+        openModal('deleteModal');
+    }
+    
+    document.getElementById('confirmDeleteBtn').addEventListener('click', function() {
+        fetch(`/admin/api/agents/${'{{ agent.id }}'}`, {
+            method: 'DELETE',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            closeModal('deleteModal');
+            if (data.success) {
+                showToast('Agent supprimé avec succès', 'success');
+                setTimeout(() => window.location.href = '{{ url_for("admin_agents") }}', 1000);
+            } else {
+                showToast(data.error || 'Erreur lors de la suppression', 'error');
+            }
+        })
+        .catch(() => {
+            closeModal('deleteModal');
+            showToast('Erreur réseau', 'error');
+        });
+    });
+</script>
+{% endblock %}
+{% endblock %}
