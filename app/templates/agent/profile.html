@@ -1,0 +1,161 @@
+<!-- app/templates/agent/profile.html -->
+{% extends "agent/base.html" %}
+
+{% block title %}Profil - Agent{% endblock %}
+
+{% block page_title %}Mon profil{% endblock %}
+{% block page_subtitle %}Informations personnelles{% endblock %}
+
+{% block content %}
+<div class="grid-2">
+    <!-- ==================== INFORMATIONS ==================== -->
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-user"></i> Informations personnelles</div>
+        </div>
+        <div style="padding:16px 20px;">
+            <div style="text-align:center;margin-bottom:16px;">
+                <div style="width:72px;height:72px;border-radius:50%;background:#059669;display:inline-flex;align-items:center;justify-content:center;font-size:32px;font-weight:700;color:white;">
+                    {{ agent.full_name[:1]|upper }}
+                </div>
+                <h3 style="margin:8px 0 0;">{{ agent.full_name }}</h3>
+                <p class="text-muted" style="font-size:13px;">{{ agent.role }} - {{ agent.bureau_name }}</p>
+            </div>
+            <table style="width:100%;border-collapse:collapse;">
+                <tr><td style="padding:6px 0;color:#94a3b8;width:40%;">Nom complet</td><td style="padding:6px 0;font-weight:500;">{{ agent.full_name }}</td></tr>
+                <tr><td style="padding:6px 0;color:#94a3b8;">Téléphone</td><td style="padding:6px 0;font-family:monospace;">{{ agent.phone }}</td></tr>
+                <tr><td style="padding:6px 0;color:#94a3b8;">Email</td><td style="padding:6px 0;">{{ agent.email or 'Non renseigné' }}</td></tr>
+                <tr><td style="padding:6px 0;color:#94a3b8;">Bureau</td><td style="padding:6px 0;">{{ agent.bureau_name }}</td></tr>
+                <tr><td style="padding:6px 0;color:#94a3b8;">Code agent</td><td style="padding:6px 0;font-family:monospace;">{{ agent.code }}</td></tr>
+                <tr><td style="padding:6px 0;color:#94a3b8;">Inscrit le</td><td style="padding:6px 0;">{{ agent.created_at.strftime('%d/%m/%Y') }}</td></tr>
+                <tr><td style="padding:6px 0;color:#94a3b8;">Dernière connexion</td><td style="padding:6px 0;">{{ agent.last_login.strftime('%d/%m/%Y %H:%M') if agent.last_login else 'Jamais' }}</td></tr>
+            </table>
+        </div>
+    </div>
+    
+    <!-- ==================== STATISTIQUES ==================== -->
+    <div>
+        <div class="table-container mb-2">
+            <div class="table-header">
+                <div class="title"><i class="fas fa-chart-bar"></i> Mes statistiques</div>
+            </div>
+            <div style="padding:16px 20px;">
+                <div class="stats-grid" style="grid-template-columns:1fr 1fr;gap:8px;">
+                    <div class="stat-card" style="padding:10px;box-shadow:none;border:1px solid #e2e8f0;">
+                        <div class="stat-label">Total paris</div>
+                        <div class="stat-value" style="font-size:18px;">{{ stats.total_bets }}</div>
+                    </div>
+                    <div class="stat-card" style="padding:10px;box-shadow:none;border:1px solid #e2e8f0;">
+                        <div class="stat-label">Total tickets</div>
+                        <div class="stat-value" style="font-size:18px;">{{ stats.total_tickets }}</div>
+                    </div>
+                    <div class="stat-card" style="padding:10px;box-shadow:none;border:1px solid #e2e8f0;">
+                        <div class="stat-label">Encaissements</div>
+                        <div class="stat-value" style="font-size:18px;color:#059669;">{{ stats.total_deposits|format_number }} HTG</div>
+                    </div>
+                    <div class="stat-card" style="padding:10px;box-shadow:none;border:1px solid #e2e8f0;">
+                        <div class="stat-label">Paiements</div>
+                        <div class="stat-value" style="font-size:18px;color:#ef4444;">{{ stats.total_payouts|format_number }} HTG</div>
+                    </div>
+                    <div class="stat-card" style="padding:10px;box-shadow:none;border:1px solid #e2e8f0;">
+                        <div class="stat-label">Commission</div>
+                        <div class="stat-value" style="font-size:18px;color:#8b5cf6;">{{ stats.commission|format_number }} HTG</div>
+                    </div>
+                    <div class="stat-card" style="padding:10px;box-shadow:none;border:1px solid #e2e8f0;">
+                        <div class="stat-label">Jours actifs</div>
+                        <div class="stat-value" style="font-size:18px;">{{ stats.active_days }}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- ==================== ACTIONS ==================== -->
+        <div class="table-container">
+            <div class="table-header">
+                <div class="title"><i class="fas fa-cog"></i> Actions</div>
+            </div>
+            <div style="padding:16px 20px;">
+                <button class="btn btn-secondary btn-block mb-1" onclick="showToast('Fonctionnalité en cours de développement', 'info')">
+                    <i class="fas fa-edit"></i> Modifier le profil
+                </button>
+                <button class="btn btn-secondary btn-block mb-1" onclick="openModal('passwordModal')">
+                    <i class="fas fa-key"></i> Changer le mot de passe
+                </button>
+                <button class="btn btn-danger btn-block" onclick="confirmAction('Confirmer la déconnexion ?', function(){ document.getElementById('logout-form').submit(); })">
+                    <i class="fas fa-sign-out-alt"></i> Déconnexion
+                </button>
+                <form id="logout-form" action="{{ url_for('agent_logout') }}" method="POST" style="display:none;">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MODAL CHANGEMENT MOT DE PASSE ==================== -->
+<div class="modal-overlay" id="passwordModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Changer le mot de passe</h2>
+            <button class="modal-close" onclick="closeModal('passwordModal')">&times;</button>
+        </div>
+        <form id="passwordForm" onsubmit="return changePassword(event)">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            
+            <div class="form-group">
+                <label>Mot de passe actuel</label>
+                <input type="password" name="current_password" class="form-control" required>
+            </div>
+            <div class="form-group">
+                <label>Nouveau mot de passe</label>
+                <input type="password" name="new_password" class="form-control" minlength="6" required>
+                <div class="help-text">Minimum 6 caractères</div>
+            </div>
+            <div class="form-group">
+                <label>Confirmer le mot de passe</label>
+                <input type="password" name="confirm_password" class="form-control" required>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('passwordModal')">Annuler</button>
+                <button type="submit" class="btn btn-primary">Changer</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+    function changePassword(e) {
+        e.preventDefault();
+        const form = e.target;
+        const data = new FormData(form);
+        
+        if (data.get('new_password') !== data.get('confirm_password')) {
+            showToast('Les mots de passe ne correspondent pas', 'error');
+            return;
+        }
+        
+        fetch('{{ url_for("agent_change_password") }}', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                current_password: data.get('current_password'),
+                new_password: data.get('new_password')
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                closeModal('passwordModal');
+                showToast(data.message || 'Mot de passe modifié avec succès', 'success');
+                form.reset();
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => showToast('Erreur réseau', 'error'));
+    }
+</script>
+{% endblock %}

@@ -41,10 +41,6 @@ from app.services.notification_service import NotificationService
 from app.services.rng_service import RNGService
 from app.services.draw_scheduler import DrawScheduler
 
-# ========== Services optionnels (à implémenter) ==========
-# from app.services.responsible_service import ResponsibleService
-# from app.services.promotion_service import PromotionService
-
 
 __all__ = [
     # Base
@@ -77,9 +73,6 @@ __all__ = [
     "RNGService",
     "DrawScheduler",
 
-    # Transactions
-    "TransactionService",
-    
     # Jeu responsable
     "ResponsibleService",
     
@@ -192,20 +185,6 @@ class ServiceFactory:
             self._services["draw_scheduler"] = DrawScheduler(self.db, self.redis)
         return self._services["draw_scheduler"]
     
-    def clear_cache(self):
-        """Vide le cache des services"""
-        self._services.clear()
-    
-    def __repr__(self) -> str:
-        return f"<ServiceFactory services={list(self._services.keys())}>"
-
-    @property
-    def transaction(self) -> TransactionService:
-        """Service transactions"""
-        if "transaction" not in self._services:
-            self._services["transaction"] = TransactionService(self.db, self.redis)
-        return self._services["transaction"]
-    
     @property
     def responsible(self) -> ResponsibleService:
         """Service jeu responsable"""
@@ -219,6 +198,15 @@ class ServiceFactory:
         if "promotion" not in self._services:
             self._services["promotion"] = PromotionService(self.db, self.redis)
         return self._services["promotion"]
+    
+    def clear_cache(self):
+        """Vide le cache des services"""
+        self._services.clear()
+    
+    def __repr__(self) -> str:
+        return f"<ServiceFactory services={list(self._services.keys())}>"
+
+
 # ========== Helper pour obtenir les services dans les dépendances FastAPI ==========
 
 async def get_service_factory(db_session, redis_client) -> ServiceFactory:
@@ -227,5 +215,3 @@ async def get_service_factory(db_session, redis_client) -> ServiceFactory:
     À utiliser comme dépendance FastAPI.
     """
     return ServiceFactory(db_session, redis_client)
-
-    

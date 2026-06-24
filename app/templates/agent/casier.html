@@ -1,0 +1,305 @@
+<!-- app/templates/agent/cashier.html -->
+{% extends "agent/base.html" %}
+
+{% block title %}Caisse - Agent{% endblock %}
+
+{% block page_title %}Gestion de caisse{% endblock %}
+{% block page_subtitle %}Encaissements et paiements{% endblock %}
+
+{% block content %}
+<!-- ==================== STATUT ==================== -->
+<div class="table-container">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-cash-register"></i> Session de caisse</div>
+        <div>
+            {% if session %}
+            <span class="badge success"><i class="fas fa-check-circle"></i> Ouverte</span>
+            {% else %}
+            <span class="badge danger"><i class="fas fa-times-circle"></i> Fermée</span>
+            {% endif %}
+        </div>
+    </div>
+    <div style="padding:16px 20px;">
+        {% if session %}
+        <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));">
+            <div>
+                <div class="stat-label">Solde initial</div>
+                <div class="stat-value" style="font-size:18px;">{{ session.starting_balance|format_number }} HTG</div>
+            </div>
+            <div>
+                <div class="stat-label">Encaissements</div>
+                <div class="stat-value" style="font-size:18px;color:#059669;">{{ session.cash_in_amount|format_number }} HTG</div>
+            </div>
+            <div>
+                <div class="stat-label">Paiements</div>
+                <div class="stat-value" style="font-size:18px;color:#ef4444;">{{ session.cash_out_amount|format_number }} HTG</div>
+            </div>
+            <div>
+                <div class="stat-label">Solde actuel</div>
+                <div class="stat-value" style="font-size:18px;color:#059669;">{{ session.current_balance|format_number }} HTG</div>
+            </div>
+        </div>
+        {% else %}
+        <div class="text-center" style="padding:16px;">
+            <p class="text-muted">Aucune session de caisse ouverte</p>
+            <button class="btn btn-success mt-2" onclick="openSession()">
+                <i class="fas fa-play"></i> Ouvrir une session
+            </button>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{% if session %}
+<!-- ==================== ENCAISSEMENT ==================== -->
+<div class="grid-2">
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-arrow-down text-success"></i> Encaissement</div>
+        </div>
+        <div style="padding:16px 20px;">
+            <form id="depositForm" onsubmit="return submitDeposit(event)">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                
+                <div class="form-group">
+                    <label>Type de joueur</label>
+                    <select name="player_type" class="form-control" id="playerType">
+                        <option value="ticket">Ticket (sans compte)</option>
+                        <option value="account">Compte en ligne</option>
+                    </select>
+                </div>
+                
+                <div class="form-group" id="playerPhoneGroup">
+                    <label>Téléphone du joueur</label>
+                    <input type="tel" name="phone" class="form-control" placeholder="Ex: 34XX-XXXX">
+                    <div class="help-text">Pour créditer un compte existant</div>
+                </div>
+                
+                <div class="form-group">
+                    <label>Montant (HTG) <span class="text-danger">*</span></label>
+                    <input type="number" name="amount" class="form-control" min="10" step="10" required>
+                </div>
+                
+                <div class="form-group">
+                    <label>Nom du joueur (optionnel)</label>
+                    <input type="text" name="player_name" class="form-control" placeholder="Nom du joueur">
+                </div>
+                
+                <button type="submit" class="btn btn-success btn-block">
+                    <i class="fas fa-plus"></i> Encaisser
+                </button>
+            </form>
+        </div>
+    </div>
+    
+    <!-- ==================== PAIEMENT ==================== -->
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-arrow-up text-danger"></i> Paiement</div>
+        </div>
+        <div style="padding:16px 20px;">
+            <form id="payoutForm" onsubmit="return submitPayout(event)">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                
+                <div class="form-group">
+                    <label>Type de paiement</label>
+                    <select name="payout_type" class="form-control" id="payoutType">
+                        <option value="ticket">Ticket</option>
+                        <option value="account">Compte en ligne</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label>Numéro de ticket / Téléphone <span class="text-danger">*</span></label>
+                    <input type="text" name="identifier" class="form-control" placeholder="Ex: KNO-ABCD-1234 ou 34XX-XXXX" required>
+                </div>
+                
+                <div class="form-group" id="amountGroup">
+                    <label>Montant (HTG)</label>
+                    <input type="number" name="amount" class="form-control" placeholder="Laisser vide pour payer le solde total">
+                    <div class="help-text">Laisser vide pour payer le solde total</div>
+                </div>
+                
+                <button type="submit" class="btn btn-danger btn-block">
+                    <i class="fas fa-hand-holding-usd"></i> Payer
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== DERNIÈRES OPÉRATIONS ==================== -->
+<div class="table-container">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-list"></i> Dernières opérations</div>
+        <button class="btn btn-sm btn-secondary" onclick="refreshOperations()">
+            <i class="fas fa-sync"></i>
+        </button>
+    </div>
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>Type</th>
+                    <th>Montant</th>
+                    <th>Joueur</th>
+                    <th>Méthode</th>
+                    <th>Heure</th>
+                </tr>
+            </thead>
+            <tbody id="operationsBody">
+                {% for op in operations %}
+                <tr>
+                    <td>
+                        <span class="badge {% if op.type == 'deposit' %}success{% elif op.type == 'payout' %}danger{% else %}gray{% endif %}">
+                            {{ op.type }}
+                        </span>
+                    </td>
+                    <td class="{% if op.type == 'deposit' %}text-success{% else %}text-danger{% endif %}">
+                        {{ op.amount|format_number }} HTG
+                    </td>
+                    <td>{{ op.player or 'Anonyme' }}</td>
+                    <td>{{ op.method }}</td>
+                    <td class="text-muted" style="font-size:11px;">{{ op.time|timeago }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="5" class="text-center text-muted" style="padding:20px;">
+                        Aucune opération
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<script>
+    // ==================== TYPE DE JOUEUR ====================
+    document.getElementById('playerType').addEventListener('change', function() {
+        const group = document.getElementById('playerPhoneGroup');
+        if (this.value === 'account') {
+            group.style.display = 'block';
+            group.querySelector('input').required = true;
+        } else {
+            group.style.display = 'none';
+            group.querySelector('input').required = false;
+        }
+    });
+    document.getElementById('playerType').dispatchEvent(new Event('change'));
+    
+    // ==================== TYPE DE PAIEMENT ====================
+    document.getElementById('payoutType').addEventListener('change', function() {
+        const input = document.querySelector('input[name="identifier"]');
+        if (this.value === 'ticket') {
+            input.placeholder = 'Ex: KNO-ABCD-1234';
+        } else {
+            input.placeholder = 'Ex: 34XX-XXXX';
+        }
+    });
+    
+    // ==================== ENCAISSEMENT ====================
+    function submitDeposit(e) {
+        e.preventDefault();
+        const form = e.target;
+        const data = new FormData(form);
+        
+        const payload = {
+            player_type: data.get('player_type'),
+            phone: data.get('phone') || null,
+            amount: parseFloat(data.get('amount')),
+            player_name: data.get('player_name') || null
+        };
+        
+        fetch('{{ url_for("agent_deposit") }}', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Encaissement effectué', 'success');
+                form.reset();
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => showToast('Erreur réseau', 'error'));
+    }
+    
+    // ==================== PAIEMENT ====================
+    function submitPayout(e) {
+        e.preventDefault();
+        const form = e.target;
+        const data = new FormData(form);
+        
+        const payload = {
+            payout_type: data.get('payout_type'),
+            identifier: data.get('identifier'),
+            amount: data.get('amount') ? parseFloat(data.get('amount')) : null
+        };
+        
+        fetch('{{ url_for("agent_payout") }}', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Paiement effectué', 'success');
+                form.reset();
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => showToast('Erreur réseau', 'error'));
+    }
+    
+    // ==================== OUVRIR SESSION ====================
+    function openSession() {
+        const amount = prompt('Solde initial de la caisse (HTG) :');
+        if (amount === null) return;
+        
+        const initial = parseFloat(amount);
+        if (isNaN(initial) || initial < 0) {
+            showToast('Montant invalide', 'error');
+            return;
+        }
+        
+        fetch('{{ url_for("agent_open_session") }}', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ starting_balance: initial })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast('Session ouverte avec succès', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => showToast('Erreur réseau', 'error'));
+    }
+    
+    // ==================== RAFRAÎCHIR ====================
+    function refreshOperations() {
+        location.reload();
+    }
+</script>
+{% endblock %}

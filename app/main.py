@@ -228,7 +228,7 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 # ==================== ROUTES API ====================
 
-# Importer les routers
+# Importer les routers (sans health)
 from app.api.v1 import (
     auth,
     users,
@@ -238,9 +238,7 @@ from app.api.v1 import (
     tickets,
     agent,
     admin,
-    reports,
-    webhooks,
-    health
+    reports
 )
 
 # Version 1 de l'API
@@ -255,8 +253,6 @@ app.include_router(tickets.router, prefix=api_v1_prefix)
 app.include_router(agent.router, prefix=api_v1_prefix)
 app.include_router(admin.router, prefix=api_v1_prefix)
 app.include_router(reports.router, prefix=api_v1_prefix)
-app.include_router(webhooks.router, prefix=api_v1_prefix)
-app.include_router(health.router, prefix=api_v1_prefix)
 
 
 # ==================== WEBSOCKETS ====================

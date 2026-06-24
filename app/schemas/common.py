@@ -37,6 +37,16 @@ class PaginatedResponse(BaseModel, Generic[T]):
         )
 
 
+# ========== RÉPONSES STANDARD ==========
+
+class SuccessResponse(BaseModel):
+    """Réponse de succès standardisée"""
+    success: bool = Field(default=True)
+    message: str = Field(..., description="Message de confirmation")
+    data: Optional[Any] = Field(default=None, description="Données optionnelles")
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+
 class MessageResponse(BaseModel):
     """Réponse simple avec message"""
     message: str = Field(..., description="Message de confirmation")
@@ -52,6 +62,8 @@ class ErrorResponse(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 
+# ========== HEALTH CHECK ==========
+
 class HealthResponse(BaseModel):
     """Réponse de health check"""
     status: str = Field(..., description="Statut (ok, degraded, down)")
@@ -60,6 +72,8 @@ class HealthResponse(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     checks: Optional[dict] = Field(default=None, description="Résultats des vérifications")
 
+
+# ========== FILTRES ==========
 
 class DateRangeFilter(BaseModel):
     """Filtre par plage de dates"""
@@ -71,3 +85,18 @@ class SortParams(BaseModel):
     """Paramètres de tri"""
     sort_by: str = Field(default="created_at", description="Champ de tri")
     sort_desc: bool = Field(default=True, description="Tri décroissant")
+
+
+# ========== AUTRES ==========
+
+class IDResponse(BaseModel):
+    """Réponse avec ID"""
+    id: str
+    success: bool = True
+    message: Optional[str] = None
+
+
+class EmptyResponse(BaseModel):
+    """Réponse vide"""
+    success: bool = True
+    message: Optional[str] = None

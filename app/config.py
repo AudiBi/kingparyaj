@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     
     # Base de données
     DATABASE_URL: str = Field(
-        default="postgresql+asyncpg://postgres:Pass%%4025%%23@127.0.0.1:5432/parier_keno"
+        default="postgresql+asyncpg://postgres:Pass%%4025%%23@127.0.0.1:5433/parier_keno"
     )
     DATABASE_POOL_SIZE: int = Field(default=20)
     DATABASE_MAX_OVERFLOW: int = Field(default=10)

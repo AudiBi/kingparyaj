@@ -34,7 +34,6 @@ class UserBase(BaseModel):
     @classmethod
     def validate_phone(cls, v: str) -> str:
         """Valide le format du téléphone haïtien"""
-        # Nettoyer le numéro
         v = v.replace(" ", "").replace("-", "")
         if not v.isdigit():
             raise ValueError("Le numéro de téléphone doit contenir uniquement des chiffres")
@@ -92,6 +91,30 @@ class TokenRefresh(BaseModel):
     refresh_token: str
 
 
+# ========== VÉRIFICATION EMAIL ==========
+class VerifyEmailRequest(BaseModel):
+    """Vérification d'email"""
+    code: str = Field(..., min_length=6, max_length=6, description="Code de vérification")
+
+
+class ResendVerificationRequest(BaseModel):
+    """Demande de renvoi de vérification"""
+    email: EmailStr
+
+
+# ========== RÉINITIALISATION MOT DE PASSE ==========
+class ForgotPasswordRequest(BaseModel):
+    """Demande de réinitialisation de mot de passe"""
+    phone: str = Field(..., description="Numéro de téléphone")
+
+
+class ResetPasswordRequest(BaseModel):
+    """Réinitialisation du mot de passe avec code"""
+    phone: str = Field(..., description="Numéro de téléphone")
+    code: str = Field(..., min_length=6, max_length=6, description="Code de réinitialisation")
+    new_password: str = Field(..., min_length=6, description="Nouveau mot de passe")
+
+
 # ========== Réponses ==========
 class UserResponse(UserBase):
     """Réponse utilisateur complète"""
@@ -130,6 +153,22 @@ class KYCSubmission(BaseModel):
     selfie_url: Optional[str] = Field(None, description="URL selfie")
 
 
+class KYCUpdate(BaseModel):
+    """Mise à jour du statut KYC (admin)"""
+    status: KYCStatus = Field(..., description="Nouveau statut KYC")
+    national_id: Optional[str] = Field(None, description="Carte d'identité")
+    documents: Optional[List[str]] = Field(None, description="URLs des documents")
+    rejection_reason: Optional[str] = Field(None, description="Raison du rejet")
+
+
+class KYCStatusUpdate(BaseModel):
+    """Mise à jour du statut KYC (admin) - alias de KYCUpdate"""
+    status: KYCStatus
+    national_id: Optional[str] = None
+    documents: Optional[List[str]] = None
+    rejection_reason: Optional[str] = None
+
+
 class KYCResponse(BaseModel):
     """Réponse KYC"""
     status: KYCStatus
@@ -143,6 +182,7 @@ class ChangePasswordRequest(BaseModel):
     """Changement de mot de passe"""
     current_password: str
     new_password: str = Field(..., min_length=6)
+    confirm_password: str = Field(..., min_length=6)
     
     @field_validator("new_password")
     @classmethod
@@ -150,17 +190,6 @@ class ChangePasswordRequest(BaseModel):
         if len(v) < 6:
             raise ValueError("Le mot de passe doit contenir au moins 6 caractères")
         return v
-
-
-class ForgotPasswordRequest(BaseModel):
-    """Demande de réinitialisation"""
-    phone: str
-
-
-class ResetPasswordRequest(BaseModel):
-    """Réinitialisation du mot de passe"""
-    token: str
-    new_password: str = Field(..., min_length=6)
 
 
 # ========== Admin ==========
@@ -180,3 +209,6 @@ class UserListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+    pages: int
+    has_next: bool
+    has_prev: bool

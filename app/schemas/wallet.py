@@ -18,6 +18,8 @@ class PaymentMethod(str, Enum):
     MONCASH = "moncash"
     NATCASH = "natcash"
     CASH = "cash"
+    BANK_TRANSFER = "bank_transfer"
+    CRYPTO = "crypto"
 
 
 # ========== Wallet ==========
@@ -104,8 +106,27 @@ class WithdrawResponse(BaseModel):
 
 
 # ========== Transactions ==========
+class TransactionResponse(BaseModel):
+    """Réponse transaction standard"""
+    id: str
+    reference: str
+    transaction_type: str
+    amount: float
+    fee: float
+    balance_before: float
+    balance_after: float
+    status: str
+    payment_method: Optional[str] = None
+    external_reference: Optional[str] = None
+    created_at: datetime
+    completed_at: Optional[datetime] = None
+    
+    class Config:
+        from_attributes = True
+
+
 class WalletTransactionResponse(BaseModel):
-    """Transaction pour le portefeuille"""
+    """Transaction pour le portefeuille (alias de TransactionResponse)"""
     id: str
     reference: str
     transaction_type: str
@@ -124,6 +145,12 @@ class WalletTransactionResponse(BaseModel):
 
 
 # ========== Limites ==========
+class SetLimitRequest(BaseModel):
+    """Définition d'une limite de jeu"""
+    limit_type: str = Field(..., description="Type de limite (daily_deposit, daily_loss, weekly_deposit, monthly_deposit, single_bet)")
+    limit_amount: Optional[float] = Field(None, gt=0, description="Montant de la limite (null pour supprimer)")
+
+
 class LimitUpdateRequest(BaseModel):
     """Mise à jour des limites"""
     daily_deposit_limit: Optional[float] = Field(None, gt=0, le=1000000)
@@ -144,3 +171,40 @@ class LimitResponse(BaseModel):
     today_losses: float
     remaining_daily_deposit: Optional[float] = None
     remaining_daily_loss: Optional[float] = None
+
+
+# ========== Transfert ==========
+class TransferRequest(BaseModel):
+    """Demande de transfert entre utilisateurs"""
+    recipient_phone: str = Field(..., description="Téléphone du destinataire")
+    amount: float = Field(..., gt=0, le=10000, description="Montant à transférer")
+    description: Optional[str] = Field(None, max_length=200, description="Description du transfert")
+
+
+class TransferResponse(BaseModel):
+    """Réponse transfert"""
+    success: bool
+    transaction_id: str
+    reference: str
+    amount: float
+    sender_balance: float
+    recipient_phone: str
+    message: str
+
+
+# ========== Dépôt Mobile Money ==========
+class MobileMoneyDepositRequest(BaseModel):
+    """Dépôt via Mobile Money"""
+    amount: float = Field(..., gt=0, le=500000)
+    phone: str = Field(..., description="Numéro mobile money")
+    provider: str = Field(..., description="moncash ou natcash")
+
+
+class MobileMoneyDepositResponse(BaseModel):
+    """Réponse dépôt Mobile Money"""
+    success: bool
+    transaction_id: str
+    reference: str
+    amount: float
+    payment_url: Optional[str] = None
+    message: str

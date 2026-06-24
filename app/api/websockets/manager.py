@@ -1,4 +1,6 @@
 # app/api/websockets/manager.py
+import datetime
+
 from fastapi import WebSocket
 from typing import Dict, List
 import json
@@ -46,3 +48,21 @@ async def broadcast_draw_result(draw_result: dict):
         "type": "draw_completed",
         "data": draw_result
     }, draw_id=draw_result.get("draw_id", "all"))
+
+
+async def broadcast_lucky_result(result_data: dict):
+    """Diffuse un résultat Lucky à tous les clients"""
+    await manager.broadcast({
+        "type": "lucky_result",
+        "data": result_data,
+        "timestamp": datetime.utcnow().isoformat()
+    }, draw_id="all")
+
+
+async def broadcast_lucky_history(history_data: list):
+    """Diffuse l'historique Lucky"""
+    await manager.broadcast({
+        "type": "lucky_history",
+        "data": history_data,
+        "timestamp": datetime.utcnow().isoformat()
+    }, draw_id="all")

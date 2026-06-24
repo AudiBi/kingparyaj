@@ -1,0 +1,166 @@
+<!-- app/templates/agent/reports.html -->
+{% extends "agent/base.html" %}
+
+{% block title %}Rapports - Agent{% endblock %}
+
+{% block page_title %}Rapports{% endblock %}
+{% block page_subtitle %}Résumé de votre activité{% endblock %}
+
+{% block content %}
+<!-- ==================== PÉRIODE ==================== -->
+<div class="table-container">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-calendar-alt"></i> Période</div>
+    </div>
+    <div style="padding:12px 16px;">
+        <form method="GET" action="{{ url_for('agent_reports') }}" class="grid-3">
+            <div class="form-group" style="margin-bottom:0;">
+                <label>Du</label>
+                <input type="date" name="start_date" class="form-control" value="{{ start_date }}">
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>Au</label>
+                <input type="date" name="end_date" class="form-control" value="{{ end_date }}">
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>&nbsp;</label>
+                <button type="submit" class="btn btn-primary"><i class="fas fa-search"></i> Générer</button>
+            </div>
+        </form>
+        <div class="flex gap-1 mt-2">
+            <button class="btn btn-sm btn-secondary" onclick="setDateRange(1)">Aujourd'hui</button>
+            <button class="btn btn-sm btn-secondary" onclick="setDateRange(7)">7 jours</button>
+            <button class="btn btn-sm btn-secondary" onclick="setDateRange(30)">30 jours</button>
+            <button class="btn btn-sm btn-secondary" onclick="setDateRange(90)">90 jours</button>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== RÉSUMÉ ==================== -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-icon">💰</div>
+        <div class="stat-label">Encaissements</div>
+        <div class="stat-value" style="color:#059669;">{{ summary.total_deposits|format_number }} HTG</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">💸</div>
+        <div class="stat-label">Paiements</div>
+        <div class="stat-value" style="color:#ef4444;">{{ summary.total_payouts|format_number }} HTG</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">🎲</div>
+        <div class="stat-label">Paris</div>
+        <div class="stat-value">{{ summary.total_bets }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">🎫</div>
+        <div class="stat-label">Tickets créés</div>
+        <div class="stat-value">{{ summary.total_tickets }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">⭐</div>
+        <div class="stat-label">Commission</div>
+        <div class="stat-value" style="color:#8b5cf6;">{{ summary.commission|format_number }} HTG</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">📈</div>
+        <div class="stat-label">Bilan</div>
+        <div class="stat-value" style="color:{% if summary.net >= 0 %}#059669{% else %}#ef4444{% endif %};">
+            {{ summary.net|format_number }} HTG
+        </div>
+    </div>
+</div>
+
+<!-- ==================== GRAPHIQUE ==================== -->
+<div class="table-container">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-chart-line"></i> Évolution journalière</div>
+    </div>
+    <div style="padding:16px 20px;">
+        <canvas id="reportChart" height="200"></canvas>
+    </div>
+</div>
+
+<!-- ==================== DETAIL ==================== -->
+<div class="table-container">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-list"></i> Détail journalier</div>
+        <button class="btn btn-sm btn-secondary" onclick="exportReport()">
+            <i class="fas fa-file-export"></i> Exporter
+        </button>
+    </div>
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Encaissements</th>
+                    <th>Paiements</th>
+                    <th>Paris</th>
+                    <th>Tickets</th>
+                    <th>Bilan</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for day in daily %}
+                <tr>
+                    <td>{{ day.date }}</td>
+                    <td class="text-success">{{ day.deposits|format_number }} HTG</td>
+                    <td class="text-danger">{{ day.payouts|format_number }} HTG</td>
+                    <td>{{ day.bets }}</td>
+                    <td>{{ day.tickets }}</td>
+                    <td class="{% if day.net >= 0 %}text-success{% else %}text-danger{% endif %}">
+                        {{ day.net|format_number }} HTG
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="6" class="text-center text-muted" style="padding:20px;">
+                        Aucune donnée disponible
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    function setDateRange(days) {
+        const end = new Date();
+        const start = new Date();
+        start.setDate(end.getDate() - days);
+        document.querySelector('input[name="start_date"]').value = start.toISOString().split('T')[0];
+        document.querySelector('input[name="end_date"]').value = end.toISOString().split('T')[0];
+        document.querySelector('form').submit();
+    }
+    
+    function exportReport() {
+        const params = new URLSearchParams(window.location.search);
+        window.location.href = '/agent/api/reports/export?' + params.toString();
+    }
+    
+    // ==================== GRAPHIQUE ====================
+    document.addEventListener('DOMContentLoaded', function() {
+        const data = {{ chart_data|tojson }};
+        const ctx = document.getElementById('reportChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: data.labels,
+                datasets: [
+                    { label: 'Encaissements', data: data.deposits, backgroundColor: 'rgba(5,150,105,0.6)', borderColor: '#059669', borderWidth: 1 },
+                    { label: 'Paiements', data: data.payouts, backgroundColor: 'rgba(239,68,68,0.6)', borderColor: '#ef4444', borderWidth: 1 }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { position: 'bottom', labels: { usePointStyle: true, padding: 15 } } },
+                scales: { y: { beginAtZero: true, ticks: { callback: v => v.toLocaleString() + ' HTG' } } }
+            }
+        });
+    });
+</script>
+{% endblock %}

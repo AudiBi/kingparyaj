@@ -1,0 +1,637 @@
+<!-- app/templates/agent/lucky.html -->
+{% extends "agent/base.html" %}
+
+{% block title %}Lucky Wheel - Agent{% endblock %}
+
+{% block page_title %}Lucky Wheel en direct{% endblock %}
+{% block page_subtitle %}Roue de la chance - résultats en temps réel{% endblock %}
+
+{% block content %}
+<!-- ==================== STATUT CONNEXION ==================== -->
+<div class="table-container">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-wifi"></i> Connexion en direct</div>
+        <div>
+            <span id="liveStatus" class="badge gray">
+                <span id="liveDot" class="inline-block w-2 h-2 rounded-full bg-gray-400 mr-1"></span>
+                Connexion...
+            </span>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== STATISTIQUES LUCKY ==================== -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-icon">🎡</div>
+        <div class="stat-label">Parties aujourd'hui</div>
+        <div class="stat-value">{{ stats.today_plays }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">💰</div>
+        <div class="stat-label">Volume aujourd'hui</div>
+        <div class="stat-value" style="color:#059669;">{{ stats.today_volume|format_number }} HTG</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">🏆</div>
+        <div class="stat-label">Gains aujourd'hui</div>
+        <div class="stat-value" style="color:#8b5cf6;">{{ stats.today_wins|format_number }} HTG</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">⭐</div>
+        <div class="stat-label">Meilleur multiplicateur</div>
+        <div class="stat-value" style="color:#f59e0b;">x{{ stats.best_multiplier }}</div>
+    </div>
+</div>
+
+<!-- ==================== DERNIER RÉSULTAT LUCKY ==================== -->
+<div class="table-container">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-history"></i> Dernier résultat</div>
+        <button class="btn btn-sm btn-secondary" onclick="printLuckyResult()">
+            <i class="fas fa-print"></i> Imprimer
+        </button>
+    </div>
+    <div id="lastLuckyResult" style="padding:16px 20px;text-align:center;">
+        <div id="lastLuckyDisplay" class="bg-gray-50 rounded-lg p-6">
+            <span class="text-gray-400">En attente du prochain tour...</span>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== ROUE + CONTRÔLES ==================== -->
+<div class="grid-2">
+    <!-- ==================== ROUE ==================== -->
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-gift"></i> Roue de la chance</div>
+        </div>
+        <div style="padding:16px 20px;text-align:center;">
+            <div style="position:relative;display:inline-block;">
+                <canvas id="wheelCanvas" width="380" height="380"></canvas>
+                <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);">
+                    <div style="width:28px;height:28px;background:#f59e0b;border-radius:50%;border:3px solid white;box-shadow:0 4px 12px rgba(0,0,0,0.2);"></div>
+                </div>
+                <div style="position:absolute;top:-2px;left:50%;transform:translateX(-50%);">
+                    <div style="width:0;height:0;border-left:12px solid transparent;border-right:12px solid transparent;border-bottom:20px solid #ef4444;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- ==================== CONTRÔLES ==================== -->
+    <div>
+        <div class="table-container">
+            <div class="table-header">
+                <div class="title"><i class="fas fa-sliders-h"></i> Jouer</div>
+            </div>
+            <div style="padding:16px 20px;">
+                <form id="spinForm" onsubmit="return spinWheel(event)">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    
+                    <div class="form-group">
+                        <label>Type de joueur</label>
+                        <select name="player_type" class="form-control" id="playerType">
+                            <option value="ticket">Ticket</option>
+                            <option value="account">Compte en ligne</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Identifiant</label>
+                        <input type="text" name="identifier" class="form-control" placeholder="Numéro de ticket ou téléphone" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Mise (HTG)</label>
+                        <input type="number" name="stake" class="form-control" min="10" step="10" value="100" required>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary btn-block" id="spinBtn">
+                        <i class="fas fa-play"></i> Tourner
+                    </button>
+                </form>
+                
+                <div id="resultContainer" style="display:none;margin-top:12px;padding:12px;border-radius:8px;text-align:center;">
+                    <p style="margin:0;font-size:18px;font-weight:700;" id="resultSegment"></p>
+                    <p style="margin:0;font-size:14px;" id="resultWin"></p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- ==================== MULTIPLICATEURS ==================== -->
+        <div class="table-container">
+            <div class="table-header">
+                <div class="title"><i class="fas fa-chart-bar"></i> Multiplicateurs</div>
+            </div>
+            <div style="padding:12px 16px;">
+                <div class="flex" style="gap:4px;flex-wrap:wrap;">
+                    {% for segment in segments %}
+                    <div style="text-align:center;padding:4px 8px;background:{{ segment.color }};border-radius:4px;color:white;font-size:11px;flex:1;min-width:40px;">
+                        {{ segment.label }}<br><small>x{{ segment.multiplier }}</small>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== HISTORIQUE DES RÉSULTATS LUCKY ==================== -->
+<div class="table-container">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-history"></i> Historique des résultats</div>
+        <button class="btn btn-sm btn-secondary" onclick="refreshLuckyHistory()">
+            <i class="fas fa-sync"></i> Rafraîchir
+        </button>
+    </div>
+    <div id="luckyHistoryContainer" class="max-h-80 overflow-y-auto">
+        <div class="text-center text-gray-400 py-8">Chargement...</div>
+    </div>
+</div>
+
+<style>
+    .number-ball {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        font-size: 16px;
+        font-weight: 700;
+        color: white;
+        transition: all 0.3s ease;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        animation: ballAppear 0.4s ease;
+    }
+    @keyframes ballAppear {
+        0% { transform: scale(0) rotate(-180deg); opacity: 0; }
+        60% { transform: scale(1.2) rotate(10deg); }
+        100% { transform: scale(1) rotate(0deg); opacity: 1; }
+    }
+    
+    .lucky-history-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 16px;
+        border-bottom: 1px solid #f1f5f9;
+        transition: background 0.2s;
+    }
+    .lucky-history-item:hover {
+        background: #f8fafc;
+    }
+    .lucky-history-item .segment-badge {
+        display: inline-block;
+        padding: 4px 12px;
+        border-radius: 12px;
+        font-weight: 600;
+        font-size: 13px;
+        color: white;
+    }
+    .lucky-history-item .win-amount {
+        font-weight: 700;
+        font-size: 16px;
+    }
+    
+    .animate-pulse {
+        animation: pulse 1s ease-in-out infinite;
+    }
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+    
+    .result-card {
+        transition: all 0.3s ease;
+    }
+    .result-card.big-win {
+        animation: winPulse 0.8s ease-in-out 3;
+    }
+    @keyframes winPulse {
+        0%, 100% { transform: scale(1); }
+        50% { transform: scale(1.05); }
+    }
+</style>
+
+<script>
+    // ==================== WEBSOCKET ====================
+    let ws = null;
+    let reconnectAttempts = 0;
+    
+    function connectWebSocket() {
+        const wsUrl = `ws://${window.location.host}/ws/draws/all`;
+        try {
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = function() {
+                document.getElementById('liveStatus').innerHTML = '<span id="liveDot" class="inline-block w-2 h-2 rounded-full bg-green-500 animate-pulse mr-1"></span> Connecté';
+                document.getElementById('liveStatus').className = 'badge success';
+                reconnectAttempts = 0;
+                // Demander l'historique
+                setTimeout(() => { if (ws && ws.readyState === WebSocket.OPEN) ws.send('lucky_history'); }, 500);
+            };
+            
+            ws.onmessage = function(event) {
+                const msg = JSON.parse(event.data);
+                handleWebSocketMessage(msg);
+            };
+            
+            ws.onclose = function() {
+                document.getElementById('liveStatus').innerHTML = '<span id="liveDot" class="inline-block w-2 h-2 rounded-full bg-red-500 mr-1"></span> Déconnecté';
+                document.getElementById('liveStatus').className = 'badge danger';
+                reconnect();
+            };
+            
+            ws.onerror = function() {
+                document.getElementById('liveStatus').innerHTML = '<span id="liveDot" class="inline-block w-2 h-2 rounded-full bg-red-500 mr-1"></span> Erreur';
+                document.getElementById('liveStatus').className = 'badge danger';
+            };
+        } catch(e) {
+            reconnect();
+        }
+    }
+    
+    function reconnect() {
+        if (reconnectAttempts > 10) return;
+        reconnectAttempts++;
+        setTimeout(connectWebSocket, Math.min(1000 * reconnectAttempts, 30000));
+    }
+    
+    // ==================== TRAITEMENT DES MESSAGES ====================
+    function handleWebSocketMessage(msg) {
+        switch(msg.type) {
+            case 'lucky_result':
+                displayLuckyResult(msg.data);
+                break;
+            case 'lucky_history':
+                displayLuckyHistory(msg.data);
+                break;
+            case 'jackpot_alert':
+                showJackpotAlert(msg.data);
+                break;
+        }
+    }
+    
+    // ==================== AFFICHAGE RÉSULTAT LUCKY ====================
+    function displayLuckyResult(data) {
+        const container = document.getElementById('lastLuckyDisplay');
+        
+        // Couleur selon le multiplicateur
+        let bgColor = '#f1f5f9';
+        let textColor = '#1e293b';
+        let borderColor = '#e2e8f0';
+        let icon = '🎡';
+        
+        if (data.multiplier >= 50) {
+            bgColor = '#fef3c7';
+            textColor = '#92400e';
+            borderColor = '#f59e0b';
+            icon = '🏆';
+        } else if (data.multiplier >= 20) {
+            bgColor = '#dbeafe';
+            textColor = '#1e40af';
+            borderColor = '#3b82f6';
+            icon = '🌟';
+        } else if (data.multiplier >= 10) {
+            bgColor = '#d1fae5';
+            textColor = '#065f46';
+            borderColor = '#059669';
+            icon = '⭐';
+        } else if (data.multiplier > 0) {
+            bgColor = '#f0fdf4';
+            textColor = '#065f46';
+            borderColor = '#22c55e';
+            icon = '✅';
+        } else {
+            bgColor = '#fee2e2';
+            textColor = '#991b1b';
+            borderColor = '#ef4444';
+            icon = '❌';
+        }
+        
+        container.innerHTML = `
+            <div class="result-card ${data.winnings > 5000 ? 'big-win' : ''}" style="
+                background: ${bgColor};
+                border: 2px solid ${borderColor};
+                border-radius: 12px;
+                padding: 20px;
+                text-align: center;
+            ">
+                <div style="font-size: 48px; margin-bottom: 8px;">${icon}</div>
+                <div style="font-size: 20px; font-weight: 700; color: ${textColor};">
+                    ${data.segment}
+                </div>
+                <div style="font-size: 14px; color: ${textColor}; opacity: 0.8; margin-top: 4px;">
+                    Multiplicateur: <strong>x${data.multiplier}</strong>
+                </div>
+                <div style="font-size: 28px; font-weight: 700; margin-top: 8px; color: ${data.winnings > 0 ? '#059669' : '#ef4444'};">
+                    ${data.winnings > 0 ? '+' : ''}${data.winnings} HTG
+                </div>
+                <div style="font-size: 12px; color: #94a3b8; margin-top: 8px;">
+                    ${data.player || 'Anonyme'} - ${new Date(data.played_at).toLocaleTimeString()}
+                </div>
+                ${data.winnings > 10000 ? `
+                    <div style="margin-top: 8px; background: #f59e0b; color: white; padding: 4px 16px; border-radius: 20px; display: inline-block; font-weight: 700; font-size: 14px;">
+                        🎉 GROS GAIN !
+                    </div>
+                ` : ''}
+            </div>
+        `;
+        
+        // Effet sonore pour les gros gains
+        if (data.winnings > 5000) {
+            playSound('win');
+        }
+    }
+    
+    // ==================== HISTORIQUE LUCKY ====================
+    function displayLuckyHistory(data) {
+        const container = document.getElementById('luckyHistoryContainer');
+        if (!data || data.length === 0) {
+            container.innerHTML = '<div class="text-center text-gray-400 py-8">Aucun historique</div>';
+            return;
+        }
+        
+        let html = '';
+        data.slice(0, 20).forEach(item => {
+            const winClass = item.winnings > 0 ? 'text-success' : 'text-danger';
+            const icon = item.winnings > 0 ? '✅' : '❌';
+            html += `
+                <div class="lucky-history-item">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <span style="font-size: 20px;">${icon}</span>
+                        <div>
+                            <span class="segment-badge" style="background: ${item.color};">${item.segment}</span>
+                            <span style="font-size: 12px; color: #94a3b8; margin-left: 8px;">x${item.multiplier}</span>
+                        </div>
+                    </div>
+                    <div>
+                        <span class="win-amount ${winClass}">${item.winnings > 0 ? '+' : ''}${item.winnings} HTG</span>
+                        <span style="font-size: 12px; color: #94a3b8; margin-left: 12px;">${new Date(item.played_at).toLocaleTimeString()}</span>
+                    </div>
+                    <div style="font-size: 12px; color: #94a3b8;">
+                        ${item.player || 'Anonyme'}
+                        <span style="margin-left: 8px; font-weight: 500;">${item.stake} HTG</span>
+                    </div>
+                </div>
+            `;
+        });
+        container.innerHTML = html;
+    }
+    
+    // ==================== JACKPOT ALERT ====================
+    function showJackpotAlert(data) {
+        const alertDiv = document.createElement('div');
+        alertDiv.style.cssText = `
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: linear-gradient(135deg, #f59e0b, #ef4444);
+            color: white;
+            padding: 40px 60px;
+            border-radius: 20px;
+            text-align: center;
+            z-index: 2000;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            animation: bounce 1s ease-in-out infinite;
+            max-width: 90%;
+        `;
+        alertDiv.innerHTML = `
+            <div style="font-size: 64px;">🏆</div>
+            <h2 style="font-size: 32px; font-weight: 700;">JACKPOT LUCKY !</h2>
+            <p style="font-size: 24px; margin: 8px 0;">${data.amount.toLocaleString()} HTG</p>
+            <p style="font-size: 14px; opacity: 0.8;">Segment: ${data.segment} - Multiplicateur: x${data.multiplier}</p>
+            <button onclick="this.parentElement.remove()" style="
+                margin-top: 16px;
+                padding: 10px 30px;
+                background: white;
+                color: #f59e0b;
+                border: none;
+                border-radius: 10px;
+                font-weight: 700;
+                cursor: pointer;
+                font-size: 16px;
+            ">🎉 Félicitations !</button>
+        `;
+        document.body.appendChild(alertDiv);
+        playSound('jackpot');
+        setTimeout(() => { if(alertDiv.parentElement) alertDiv.remove(); }, 15000);
+    }
+    
+    // ==================== EFFETS SONORES ====================
+    function playSound(type) {
+        try {
+            const audio = new Audio();
+            if (type === 'win') {
+                audio.src = 'https://www.soundjay.com/misc/sounds/bell-ringing-05.mp3';
+            } else if (type === 'jackpot') {
+                audio.src = 'https://www.soundjay.com/misc/sounds/applause-03.mp3';
+            }
+            audio.volume = 0.3;
+            audio.play().catch(() => {});
+        } catch(e) {}
+    }
+    
+    // ==================== DESSINER LA ROUE ====================
+    const segments = {{ segments|tojson }};
+    const totalWeight = segments.reduce((s, seg) => s + seg.weight, 0);
+    let currentRotation = 0;
+    
+    function drawWheel(rotation = 0) {
+        const canvas = document.getElementById('wheelCanvas');
+        const ctx = canvas.getContext('2d');
+        const centerX = canvas.width / 2;
+        const centerY = canvas.height / 2;
+        const radius = 175;
+        
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        let startAngle = rotation;
+        
+        segments.forEach(segment => {
+            const sliceAngle = (segment.weight / totalWeight) * 2 * Math.PI;
+            const endAngle = startAngle + sliceAngle;
+            
+            ctx.beginPath();
+            ctx.moveTo(centerX, centerY);
+            ctx.arc(centerX, centerY, radius, startAngle, endAngle);
+            ctx.closePath();
+            ctx.fillStyle = segment.color;
+            ctx.fill();
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            const midAngle = startAngle + sliceAngle / 2;
+            const textRadius = radius * 0.7;
+            const x = centerX + Math.cos(midAngle) * textRadius;
+            const y = centerY + Math.sin(midAngle) * textRadius;
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(midAngle + Math.PI / 2);
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 12px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(segment.label, 0, 0);
+            ctx.restore();
+            
+            startAngle = endAngle;
+        });
+        currentRotation = rotation;
+    }
+    drawWheel();
+    
+    // ==================== TOURNER ====================
+    let isSpinning = false;
+    
+    function spinWheel(e) {
+        e.preventDefault();
+        if (isSpinning) return;
+        
+        const form = e.target;
+        const data = new FormData(form);
+        const payload = {
+            player_type: data.get('player_type'),
+            identifier: data.get('identifier'),
+            stake: parseFloat(data.get('stake'))
+        };
+        
+        isSpinning = true;
+        document.getElementById('spinBtn').disabled = true;
+        document.getElementById('spinBtn').innerHTML = '<i class="fas fa-spinner fa-spin"></i> Tourne...';
+        document.getElementById('resultContainer').style.display = 'none';
+        
+        fetch('{{ url_for("agent_lucky_spin") }}', {
+            method: 'POST',
+            headers: {'X-CSRFToken': '{{ csrf_token() }}','Content-Type':'application/json'},
+            body: JSON.stringify(payload)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const rotations = 5 + Math.random() * 5;
+                const duration = 3000;
+                const startTime = Date.now();
+                
+                function animate() {
+                    const elapsed = Date.now() - startTime;
+                    const progress = Math.min(elapsed / duration, 1);
+                    const eased = 1 - Math.pow(1 - progress, 3);
+                    drawWheel(rotations * 2 * Math.PI * eased);
+                    if (progress < 1) {
+                        requestAnimationFrame(animate);
+                    } else {
+                        // Afficher le résultat dans les contrôles
+                        const result = document.getElementById('resultContainer');
+                        result.style.display = 'block';
+                        result.style.background = data.winnings > 0 ? '#d1fae5' : '#fee2e2';
+                        document.getElementById('resultSegment').textContent = '🎯 ' + data.segment;
+                        document.getElementById('resultWin').textContent = data.winnings > 0 ? `+${data.winnings} HTG` : 'Perdu';
+                        document.getElementById('resultWin').style.color = data.winnings > 0 ? '#059669' : '#ef4444';
+                        
+                        // Diffuser le résultat via WebSocket pour les autres agents
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({
+                                type: 'lucky_result',
+                                data: {
+                                    segment: data.segment,
+                                    multiplier: data.multiplier,
+                                    winnings: data.winnings,
+                                    player: data.player || 'Anonyme',
+                                    played_at: new Date().toISOString()
+                                }
+                            }));
+                        }
+                        
+                        isSpinning = false;
+                        document.getElementById('spinBtn').disabled = false;
+                        document.getElementById('spinBtn').innerHTML = '<i class="fas fa-play"></i> Tourner';
+                        showToast(data.message || 'Tour terminé !', data.winnings > 0 ? 'success' : 'info');
+                    }
+                }
+                animate();
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+                isSpinning = false;
+                document.getElementById('spinBtn').disabled = false;
+                document.getElementById('spinBtn').innerHTML = '<i class="fas fa-play"></i> Tourner';
+            }
+        })
+        .catch(() => {
+            showToast('Erreur réseau', 'error');
+            isSpinning = false;
+            document.getElementById('spinBtn').disabled = false;
+            document.getElementById('spinBtn').innerHTML = '<i class="fas fa-play"></i> Tourner';
+        });
+    }
+    
+    // ==================== IMPRESSION RÉSULTAT ====================
+    function printLuckyResult() {
+        const container = document.getElementById('lastLuckyDisplay');
+        const content = container.innerHTML;
+        if (content.includes('En attente')) {
+            showToast('Aucun résultat à imprimer', 'warning');
+            return;
+        }
+        
+        const printWindow = window.open('', '', 'width=500,height=400');
+        printWindow.document.write(`
+            <html>
+                <head>
+                    <title>Résultat Lucky Wheel</title>
+                    <style>
+                        body { font-family: Arial, sans-serif; text-align: center; padding: 30px; }
+                        .title { font-size: 28px; font-weight: 700; color: #059669; margin-bottom: 8px; }
+                        .subtitle { font-size: 14px; color: #666; margin-bottom: 20px; }
+                        .result { padding: 30px; border-radius: 16px; margin: 20px 0; }
+                        .segment { font-size: 32px; font-weight: 700; }
+                        .multiplier { font-size: 20px; margin: 8px 0; }
+                        .amount { font-size: 36px; font-weight: 700; }
+                        .footer { margin-top: 20px; font-size: 12px; color: #999; border-top: 1px solid #ddd; padding-top: 16px; }
+                    </style>
+                </head>
+                <body>
+                    <div class="title">🎡 Lucky Wheel</div>
+                    <div class="subtitle">Résultat - ${new Date().toLocaleString()}</div>
+                    <div class="result" style="background: ${content.includes('GROS GAIN') ? '#fef3c7' : '#f1f5f9'};">
+                        ${content}
+                    </div>
+                    <div class="footer">
+                        Parier Keno Haïti - Résultat officiel du tour
+                    </div>
+                </body>
+            </html>
+        `);
+        printWindow.document.close();
+        printWindow.focus();
+        printWindow.print();
+    }
+    
+    // ==================== RAFRAÎCHIR HISTORIQUE ====================
+    function refreshLuckyHistory() {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send('lucky_history');
+        } else {
+            showToast('Reconnexion en cours...', 'warning');
+        }
+    }
+    
+    // ==================== INITIALISATION ====================
+    document.addEventListener('DOMContentLoaded', function() {
+        connectWebSocket();
+        
+        // Ajouter les styles d'animation
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes bounce {
+                0%, 100% { transform: translate(-50%, -50%) scale(1); }
+                50% { transform: translate(-50%, -50%) scale(1.05); }
+            }
+        `;
+        document.head.appendChild(style);
+    });
+</script>
+{% endblock %}

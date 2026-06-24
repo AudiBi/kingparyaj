@@ -87,6 +87,32 @@ class LuckyPlayHistoryResponse(BaseModel):
         from_attributes = True
 
 
+# ========== Statistiques ==========
+class LuckyStatsResponse(BaseModel):
+    """Statistiques Lucky (admin/global)"""
+    total_plays: int
+    total_stake: float
+    total_winnings: float
+    win_rate: float
+    best_win: float
+    best_multiplier: float
+    segment_distribution: Dict[str, int]
+    theoretical_rtp: float
+    actual_rtp: float
+
+
+class LuckyStatisticsResponse(BaseModel):
+    """Statistiques Lucky (joueur)"""
+    total_plays: int
+    total_stake: float
+    total_winnings: float
+    win_rate: float
+    best_win: float
+    segment_distribution: Dict[str, int]  # {"x10": 50, "x2": 100}
+    theoretical_rtp: float
+    actual_rtp: float
+
+
 # ========== Vérification ==========
 class LuckyVerifyResponse(BaseModel):
     """Vérification d'équité"""
@@ -98,14 +124,13 @@ class LuckyVerifyResponse(BaseModel):
     verified_at: datetime
 
 
-# ========== Statistiques ==========
-class LuckyStatisticsResponse(BaseModel):
-    """Statistiques Lucky"""
+# ========== Admin ==========
+class LuckyGlobalStatsResponse(BaseModel):
+    """Statistiques globales Lucky (admin)"""
     total_plays: int
-    total_stake: float
-    total_winnings: float
-    win_rate: float
-    best_win: float
-    segment_distribution: Dict[str, int]  # {"x10": 50, "x2": 100}
-    theoretical_rtp: float
-    actual_rtp: float
+    total_volume: float
+    total_payout: float
+    house_edge: float
+    rtp: float
+    popular_segments: List[Dict[str, Any]]
+    segment_distribution: Dict[str, int]

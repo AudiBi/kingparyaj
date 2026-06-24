@@ -1,0 +1,251 @@
+<!-- app/templates/agent/dashboard.html -->
+{% extends "agent/base.html" %}
+
+{% block title %}Tableau de bord - Agent{% endblock %}
+
+{% block page_title %}Tableau de bord{% endblock %}
+{% block page_subtitle %}Vue d'ensemble de votre activité{% endblock %}
+
+{% block content %}
+<!-- ==================== STATISTIQUES ==================== -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-icon">📊</div>
+        <div class="stat-label">Paris aujourd'hui</div>
+        <div class="stat-value">{{ stats.today_bets }}</div>
+        <div class="stat-change up">+{{ stats.today_bets_delta }}%</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">💰</div>
+        <div class="stat-label">Encaissements</div>
+        <div class="stat-value">{{ stats.today_cash_in|format_number }} HTG</div>
+        <div class="stat-change up">+{{ stats.today_cash_in_delta }}%</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">💸</div>
+        <div class="stat-label">Paiements</div>
+        <div class="stat-value">{{ stats.today_cash_out|format_number }} HTG</div>
+        <div class="stat-change down">-{{ stats.today_cash_out_delta }}%</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">🎫</div>
+        <div class="stat-label">Tickets créés</div>
+        <div class="stat-value">{{ stats.today_tickets }}</div>
+        <div class="stat-change up">+{{ stats.today_tickets_delta }}%</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">🏦</div>
+        <div class="stat-label">Caisse</div>
+        <div class="stat-value">{{ stats.cash_balance|format_number }} HTG</div>
+        <div class="stat-change up">Disponible</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">⭐</div>
+        <div class="stat-label">Commission</div>
+        <div class="stat-value">{{ stats.commission|format_number }} HTG</div>
+        <div class="stat-change up">Ce mois</div>
+    </div>
+</div>
+
+<!-- ==================== ACTIVITÉ RÉCENTE ==================== -->
+<div class="grid-2">
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-clock"></i> Dernières transactions</div>
+            <a href="{{ url_for('agent_history') }}" class="btn btn-sm btn-secondary">Voir tout</a>
+        </div>
+        <div class="table-responsive">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Type</th>
+                        <th>Montant</th>
+                        <th>Joueur</th>
+                        <th>Heure</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for tx in recent_transactions %}
+                    <tr>
+                        <td>
+                            <span class="badge {% if tx.type == 'deposit' %}success{% elif tx.type == 'payout' %}danger{% elif tx.type == 'bet' %}gray{% else %}info{% endif %}">
+                                {{ tx.type }}
+                            </span>
+                        </td>
+                        <td class="{% if tx.type in ['deposit', 'win'] %}text-success{% else %}text-danger{% endif %}">
+                            {{ tx.amount|format_number }} HTG
+                        </td>
+                        <td>{{ tx.player or 'Anonyme' }}</td>
+                        <td class="text-muted" style="font-size:11px;">{{ tx.time|timeago }}</td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="4" class="text-center text-muted" style="padding:20px;">
+                            Aucune transaction récente
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-ticket-alt"></i> Tickets actifs</div>
+            <a href="{{ url_for('agent_tickets') }}" class="btn btn-sm btn-secondary">Voir tout</a>
+        </div>
+        <div class="table-responsive">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Ticket</th>
+                        <th>Solde</th>
+                        <th>Expire</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for ticket in active_tickets %}
+                    <tr>
+                        <td style="font-family:monospace;font-size:12px;">{{ ticket.number }}</td>
+                        <td>{{ ticket.balance|format_number }} HTG</td>
+                        <td class="text-muted" style="font-size:11px;">{{ ticket.expires_at|timeago }}</td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="3" class="text-center text-muted" style="padding:20px;">
+                            Aucun ticket actif
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== SESSION DE CAISSE ==================== -->
+<div class="table-container">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-cash-register"></i> Session de caisse</div>
+        <div>
+            {% if session_open %}
+            <span class="badge success"><i class="fas fa-check-circle"></i> Ouverte</span>
+            {% else %}
+            <span class="badge danger"><i class="fas fa-times-circle"></i> Fermée</span>
+            {% endif %}
+        </div>
+    </div>
+    <div style="padding:16px 20px;">
+        {% if session_open %}
+        <div class="grid-2">
+            <div>
+                <p style="margin:4px 0;font-size:13px;">
+                    <strong>Ouverture:</strong> {{ session_open.opened_at.strftime('%d/%m/%Y %H:%M') }}
+                </p>
+                <p style="margin:4px 0;font-size:13px;">
+                    <strong>Solde initial:</strong> {{ session_open.starting_balance|format_number }} HTG
+                </p>
+                <p style="margin:4px 0;font-size:13px;">
+                    <strong>Encaissements:</strong> {{ session_open.cash_in_amount|format_number }} HTG
+                </p>
+                <p style="margin:4px 0;font-size:13px;">
+                    <strong>Paiements:</strong> {{ session_open.cash_out_amount|format_number }} HTG
+                </p>
+                <p style="margin:4px 0;font-size:13px;font-weight:600;color:#059669;">
+                    <strong>Solde actuel:</strong> {{ session_open.current_balance|format_number }} HTG
+                </p>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px;justify-content:center;">
+                <a href="{{ url_for('agent_cashier') }}" class="btn btn-primary btn-block">
+                    <i class="fas fa-cash-register"></i> Gérer la caisse
+                </a>
+                <button class="btn btn-danger btn-block" onclick="confirmAction('Fermer la session de caisse ?', closeSession)">
+                    <i class="fas fa-times"></i> Fermer la caisse
+                </button>
+            </div>
+        </div>
+        {% else %}
+        <div class="text-center" style="padding:20px;">
+            <p class="text-muted">Aucune session de caisse ouverte</p>
+            <a href="{{ url_for('agent_cashier') }}" class="btn btn-success mt-2">
+                <i class="fas fa-play"></i> Ouvrir une session
+            </a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- ==================== PROCHAIN TIRAGE ==================== -->
+<div class="table-container">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-clock"></i> Prochain tirage Keno</div>
+    </div>
+    <div style="padding:12px 16px;text-align:center;">
+        {% if next_draw %}
+        <div id="countdownContainer" class="bg-gradient-to-r from-green-500 to-green-700 text-white rounded-lg p-4">
+            <p class="text-sm opacity-80">PROCHAIN TIRAGE</p>
+            <p id="countdownDisplay" class="text-4xl font-bold font-mono">--:--:--</p>
+            <p class="text-sm opacity-80 mt-1">Tirage #{{ next_draw.draw_number }}</p>
+        </div>
+        {% else %}
+        <p class="text-muted">Aucun tirage programmé</p>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+    function closeSession() {
+        fetch('{{ url_for("agent_close_session") }}', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast('Session fermée avec succès', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => showToast('Erreur réseau', 'error'));
+    }
+    
+    // ==================== COMPTE À REBOURS ====================
+    {% if next_draw %}
+    const targetTime = '{{ next_draw.draw_time.isoformat() }}';
+    
+    function updateCountdown() {
+        const now = new Date();
+        const target = new Date(targetTime);
+        const diff = target - now;
+        
+        if (diff <= 0) {
+            document.getElementById('countdownDisplay').textContent = '00:00:00';
+            return;
+        }
+        
+        const hours = Math.floor(diff / 3600000);
+        const minutes = Math.floor((diff % 3600000) / 60000);
+        const seconds = Math.floor((diff % 60000) / 1000);
+        
+        document.getElementById('countdownDisplay').textContent = 
+            `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+        
+        const container = document.getElementById('countdownContainer');
+        if (diff < 30000) {
+            container.className = 'bg-gradient-to-r from-red-500 to-red-700 text-white rounded-lg p-4 animate-pulse';
+        } else if (diff < 60000) {
+            container.className = 'bg-gradient-to-r from-yellow-500 to-yellow-600 text-white rounded-lg p-4';
+        }
+    }
+    
+    updateCountdown();
+    setInterval(updateCountdown, 1000);
+    {% endif %}
+</script>
+{% endblock %}

@@ -1,0 +1,133 @@
+<!-- app/templates/agent/history.html -->
+{% extends "agent/base.html" %}
+
+{% block title %}Historique - Agent{% endblock %}
+
+{% block page_title %}Historique des opérations{% endblock %}
+{% block page_subtitle %}Toutes vos transactions et paris{% endblock %}
+
+{% block content %}
+<!-- ==================== FILTRES ==================== -->
+<div class="table-container">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-filter"></i> Filtres</div>
+    </div>
+    <div style="padding:12px 16px;">
+        <form method="GET" action="{{ url_for('agent_history') }}" class="grid-3">
+            <div class="form-group" style="margin-bottom:0;">
+                <label>Type</label>
+                <select name="type" class="form-control">
+                    <option value="">Tous</option>
+                    <option value="deposit" {% if request.args.get('type') == 'deposit' %}selected{% endif %}>Encaissements</option>
+                    <option value="payout" {% if request.args.get('type') == 'payout' %}selected{% endif %}>Paiements</option>
+                    <option value="bet" {% if request.args.get('type') == 'bet' %}selected{% endif %}>Paris</option>
+                    <option value="win" {% if request.args.get('type') == 'win' %}selected{% endif %}>Gains</option>
+                </select>
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>Date</label>
+                <input type="date" name="date" class="form-control" value="{{ request.args.get('date', '') }}">
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>Recherche</label>
+                <input type="text" name="search" class="form-control" placeholder="Joueur, référence..." value="{{ request.args.get('search', '') }}">
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label>&nbsp;</label>
+                <button type="submit" class="btn btn-primary"><i class="fas fa-search"></i> Filtrer</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- ==================== STATISTIQUES ==================== -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-icon">📊</div>
+        <div class="stat-label">Total opérations</div>
+        <div class="stat-value">{{ stats.total }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">💰</div>
+        <div class="stat-label">Total encaissements</div>
+        <div class="stat-value" style="color:#059669;">{{ stats.total_deposits|format_number }} HTG</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">💸</div>
+        <div class="stat-label">Total paiements</div>
+        <div class="stat-value" style="color:#ef4444;">{{ stats.total_payouts|format_number }} HTG</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">📈</div>
+        <div class="stat-label">Bilan</div>
+        <div class="stat-value" style="color:{% if stats.net >= 0 %}#059669{% else %}#ef4444{% endif %};">{{ stats.net|format_number }} HTG</div>
+    </div>
+</div>
+
+<!-- ==================== HISTORIQUE ==================== -->
+<div class="table-container">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-list"></i> Historique</div>
+        <div class="text-muted" style="font-size:12px;">{{ pagination.total }} opérations</div>
+    </div>
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Type</th>
+                    <th>Joueur</th>
+                    <th>Montant</th>
+                    <th>Méthode</th>
+                    <th>Référence</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in items %}
+                <tr>
+                    <td class="text-muted" style="font-size:12px;">{{ item.date.strftime('%d/%m/%Y %H:%M') }}</td>
+                    <td>
+                        <span class="badge {% if item.type == 'deposit' %}success{% elif item.type == 'payout' %}danger{% elif item.type == 'bet' %}gray{% elif item.type == 'win' %}success{% else %}info{% endif %}">
+                            {{ item.type }}
+                        </span>
+                    </td>
+                    <td>{{ item.player or 'Anonyme' }}</td>
+                    <td class="{% if item.type in ['deposit', 'win'] %}text-success{% else %}text-danger{% endif %}">
+                        {{ item.amount|format_number }} HTG
+                    </td>
+                    <td>{{ item.method }}</td>
+                    <td style="font-family:monospace;font-size:11px;">{{ item.reference }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="6" class="text-center text-muted" style="padding:20px;">
+                        Aucune opération trouvée
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    
+    <!-- ==================== PAGINATION ==================== -->
+    {% if pagination.pages > 1 %}
+    <div style="padding:8px 16px;border-top:1px solid #e2e8f0;display:flex;justify-content:center;gap:4px;flex-wrap:wrap;">
+        <a href="{{ url_for('agent_history', page=1, **request.args) }}" class="btn btn-sm btn-secondary">«</a>
+        {% if pagination.has_prev %}
+        <a href="{{ url_for('agent_history', page=pagination.page-1, **request.args) }}" class="btn btn-sm btn-secondary">‹</a>
+        {% endif %}
+        {% for p in range(1, pagination.pages + 1) %}
+            {% if p == pagination.page %}
+            <span class="btn btn-sm btn-primary">{{ p }}</span>
+            {% elif p <= 3 or p > pagination.pages - 3 or (p >= pagination.page - 2 and p <= pagination.page + 2) %}
+            <a href="{{ url_for('agent_history', page=p, **request.args) }}" class="btn btn-sm btn-secondary">{{ p }}</a>
+            {% endif %}
+        {% endfor %}
+        {% if pagination.has_next %}
+        <a href="{{ url_for('agent_history', page=pagination.page+1, **request.args) }}" class="btn btn-sm btn-secondary">›</a>
+        {% endif %}
+        <a href="{{ url_for('agent_history', page=pagination.pages, **request.args) }}" class="btn btn-sm btn-secondary">»</a>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

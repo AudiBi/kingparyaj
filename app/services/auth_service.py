@@ -1,25 +1,25 @@
 # app/services/auth_service.py
-"""Service d'authentification et gestion des tokens"""
+"""Service d'authentification - Gestion des utilisateurs, sessions et tokens JWT"""
 
-import secrets
 from datetime import datetime, timedelta
 from typing import Optional, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 import redis.asyncio as redis
+import secrets
 
-from app.core.security import (
-    hash_password, verify_password, create_access_token, create_refresh_token, decode_token
-)
 from app.core.exceptions import AppException, UnauthorizedException
 from app.core.logger import get_logger
+from app.core.security import hash_password, verify_password, create_access_token, create_refresh_token, decode_token
 from app.models.user import User
+from app.models.audit import AuditLog, AuditAction
 from app.services.user_service import UserService
-from app.services.audit_service import AuditService, AuditAction
+from app.services.audit_service import AuditService
 from app.schemas.user import UserLogin, UserCreate, TokenResponse
+from app.config import settings
 
 
 class AuthService:
-    """Service d'authentification"""
+    """Service d'authentification complet"""
     
     def __init__(self, db: AsyncSession, redis_client: redis.Redis):
         self.db = db
@@ -43,7 +43,7 @@ class AuthService:
         # Créer l'utilisateur
         user = await self.user_service.create(data)
         
-        # Log audit
+        # Audit log
         await self.audit_service.log(
             user_id=user.id,
             action=AuditAction.USER_CREATED,
@@ -64,7 +64,6 @@ class AuthService:
         user = await self.user_service.get_by_phone(credentials.phone)
         
         if not user:
-            # Log tentative échouée
             await self.audit_service.log(
                 action=AuditAction.LOGIN_FAILED,
                 ip_address=ip_address,
@@ -80,9 +79,7 @@ class AuthService:
             raise UnauthorizedException("Compte bloqué. Contactez le support")
         
         if not verify_password(credentials.password, user.password_hash):
-            # Incrémenter compteur de tentatives
             await self.user_service.increment_failed_attempts(user.id)
-            
             await self.audit_service.log(
                 user_id=user.id,
                 action=AuditAction.LOGIN_FAILED,
@@ -101,7 +98,7 @@ class AuthService:
         # Générer tokens
         tokens = await self._create_tokens(user.id, user.role)
         
-        # Log audit
+        # Audit log
         await self.audit_service.log(
             user_id=user.id,
             action=AuditAction.LOGIN,
@@ -120,6 +117,9 @@ class AuthService:
             ttl = payload["exp"] - datetime.utcnow().timestamp()
             if ttl > 0:
                 await self.redis.setex(f"blacklist:{token}", int(ttl), "1")
+        
+        # Supprimer le refresh token
+        await self.redis.delete(f"refresh:{user_id}")
         
         await self.audit_service.log(
             user_id=user_id,
@@ -157,14 +157,12 @@ class AuthService:
         refresh_token = create_refresh_token({"sub": user_id})
         
         # Stocker refresh token
-        from app.config import settings
         await self.redis.setex(
             f"refresh:{user_id}",
             settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
             refresh_token
         )
         
-        from app.config import settings
         return TokenResponse(
             access_token=access_token,
             refresh_token=refresh_token,

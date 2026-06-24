@@ -1,7 +1,7 @@
 # app/api/v1/keno.py
 """API complète du jeu Keno (80 numéros, 20 tirés)"""
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from typing import List, Optional
@@ -26,6 +26,14 @@ from app.api.websockets.manager import broadcast_draw_result
 import redis.asyncio as redis
 
 router = APIRouter(prefix="/keno", tags=["Keno"])
+
+
+# ==================== FONCTIONS UTILITAIRES ====================
+
+async def notify_bet_placed(user_id: str, bet_id: str, stake: float):
+    """Notification en arrière-plan pour un pari placé"""
+    # Implémentation simplifiée
+    pass
 
 
 # ==================== TIRAGES ====================
@@ -102,14 +110,14 @@ async def get_draw_by_id(
 )
 async def get_draws(
     limit: int = Query(20, ge=1, le=100),
-    status: Optional[KenoDrawStatus] = None,
+    status_filter: Optional[KenoDrawStatus] = None,
     db: AsyncSession = Depends(get_db)
 ):
     """Liste les tirages."""
     query = select(KenoDraw)
     
-    if status:
-        query = query.where(KenoDraw.status == status)
+    if status_filter:
+        query = query.where(KenoDraw.status == status_filter)
     
     query = query.order_by(KenoDraw.draw_time.desc()).limit(limit)
     
@@ -245,7 +253,7 @@ async def quick_pick(
         stake=request.stake
     )
     
-    return await place_keno_bet(bet_data, current_user, db, redis_client)
+    return await place_keno_bet(bet_data, BackgroundTasks(), current_user, db, redis_client)
 
 
 @router.get(
@@ -284,13 +292,19 @@ async def get_bet_history(
     )
     stats = stats_result.one()
     
+    total_bets = stats.total_bets or 0
+    total_stake = float(stats.total_stake or 0)
+    total_wins = float(stats.total_wins or 0)
+    win_rate = round((stats.total_wins or 0) / (stats.total_stake or 1) * 100, 2) if stats.total_stake > 0 else 0
+    
     return {
-        "total_bets": stats.total_bets or 0,
-        "total_stake": float(stats.total_stake),
-        "total_wins": float(stats.total_wins),
+        "total_bets": total_bets,
+        "total_stake": total_stake,
+        "total_wins": total_wins,
         "best_win": float(stats.best_win or 0),
         "best_multiplier": float(stats.best_multiplier or 0),
-        "recent_bets": bets
+        "recent_bets": bets,
+        "win_rate": win_rate
     }
 
 
@@ -442,14 +456,14 @@ async def get_global_statistics(
     )
     global_stats = global_result.one()
     
-    # Numéros les plus joués
-    # À implémenter avec une requête plus complexe
+    # Numéros les plus joués (exemple simplifié)
     popular_numbers = []
     least_popular_numbers = []
     
     total_volume = float(global_stats.total_volume or 0)
     total_payout = float(global_stats.total_payout or 0)
     house_edge = ((total_volume - total_payout) / total_volume * 100) if total_volume > 0 else 0
+    rtp = 100 - house_edge
     
     return {
         "total_draws": global_stats.total_draws or 0,
@@ -458,7 +472,8 @@ async def get_global_statistics(
         "total_payout": total_payout,
         "house_edge": round(house_edge, 2),
         "popular_numbers": popular_numbers,
-        "least_popular_numbers": least_popular_numbers
+        "least_popular_numbers": least_popular_numbers,
+        "rtp": round(rtp, 2)
     }
 
 

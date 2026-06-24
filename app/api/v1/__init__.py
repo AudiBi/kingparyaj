@@ -13,9 +13,7 @@ from app.api.v1 import (
     tickets,
     agent,
     admin,
-    reports,
-    webhooks,
-    health
+    reports
 )
 
 # Router principal
@@ -31,8 +29,6 @@ router.include_router(tickets.router, prefix="/tickets", tags=["Tickets"])
 router.include_router(agent.router, prefix="/agent", tags=["Agent"])
 router.include_router(admin.router, prefix="/admin", tags=["Admin"])
 router.include_router(reports.router, prefix="/reports", tags=["Reports"])
-router.include_router(webhooks.router, prefix="/webhooks", tags=["Webhooks"])
-router.include_router(health.router, prefix="/health", tags=["Health"])
 
 # Exportation explicite pour l'auto-complétion
 __all__ = [
@@ -46,6 +42,5 @@ __all__ = [
     "agent",
     "admin",
     "reports",
-    "webhooks",
-    "health"
+    "webhooks"
 ]

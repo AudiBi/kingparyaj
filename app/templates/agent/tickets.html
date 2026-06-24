@@ -1,0 +1,307 @@
+<!-- app/templates/agent/tickets.html -->
+{% extends "agent/base.html" %}
+
+{% block title %}Tickets - Agent{% endblock %}
+
+{% block page_title %}Gestion des tickets{% endblock %}
+{% block page_subtitle %}Créer et gérer les tickets des joueurs{% endblock %}
+
+{% block content %}
+<!-- ==================== STATISTIQUES ==================== -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-icon">🎫</div>
+        <div class="stat-label">Tickets actifs</div>
+        <div class="stat-value">{{ stats.active }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">💰</div>
+        <div class="stat-label">Solde total</div>
+        <div class="stat-value">{{ stats.total_balance|format_number }} HTG</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">📊</div>
+        <div class="stat-label">Créés aujourd'hui</div>
+        <div class="stat-value">{{ stats.today_created }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">💸</div>
+        <div class="stat-label">Payés aujourd'hui</div>
+        <div class="stat-value">{{ stats.today_paid }}</div>
+    </div>
+</div>
+
+<!-- ==================== CRÉER UN TICKET ==================== -->
+<div class="table-container">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-plus-circle"></i> Créer un ticket</div>
+    </div>
+    <div style="padding:16px 20px;">
+        <form id="createTicketForm" onsubmit="return createTicket(event)">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            
+            <div class="grid-2">
+                <div class="form-group">
+                    <label>Montant (HTG) <span class="text-danger">*</span></label>
+                    <input type="number" name="amount" class="form-control" min="10" step="10" required>
+                </div>
+                <div class="form-group">
+                    <label>Nom du joueur</label>
+                    <input type="text" name="player_name" class="form-control" placeholder="Nom du joueur">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Téléphone du joueur</label>
+                <input type="tel" name="player_phone" class="form-control" placeholder="Ex: 34XX-XXXX">
+                <div class="help-text">Pour les notifications SMS</div>
+            </div>
+            
+            <button type="submit" class="btn btn-success btn-block">
+                <i class="fas fa-plus"></i> Créer le ticket
+            </button>
+        </form>
+    </div>
+</div>
+
+<!-- ==================== TICKETS ACTIFS ==================== -->
+<div class="table-container">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-ticket-alt"></i> Tickets actifs</div>
+        <div class="actions">
+            <input type="text" id="searchTicket" class="form-control" style="width:200px;padding:4px 10px;" placeholder="Rechercher...">
+        </div>
+    </div>
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>Ticket</th>
+                    <th>Joueur</th>
+                    <th>Montant</th>
+                    <th>Solde</th>
+                    <th>Expire</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="ticketsList">
+                {% for ticket in tickets %}
+                <tr>
+                    <td style="font-family:monospace;font-size:13px;font-weight:600;">{{ ticket.number }}</td>
+                    <td>{{ ticket.player_name or 'Anonyme' }}</td>
+                    <td>{{ ticket.initial_amount|format_number }} HTG</td>
+                    <td class="{% if ticket.balance > 0 %}text-success{% else %}text-muted{% endif %}">
+                        {{ ticket.balance|format_number }} HTG
+                    </td>
+                    <td class="text-muted" style="font-size:12px;">
+                        {{ ticket.expires_at.strftime('%d/%m/%Y') }}
+                        {% if ticket.expires_at < now %}
+                        <span class="badge danger">Expiré</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="flex" style="gap:4px;">
+                            <button class="btn btn-sm btn-secondary" onclick="viewTicket('{{ ticket.id }}')" title="Voir">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                            {% if ticket.status == 'active' %}
+                            <button class="btn btn-sm btn-success" onclick="payoutTicket('{{ ticket.id }}')" title="Payer">
+                                <i class="fas fa-hand-holding-usd"></i>
+                            </button>
+                            {% endif %}
+                            <button class="btn btn-sm btn-primary" onclick="showQR('{{ ticket.number }}')" title="QR Code">
+                                <i class="fas fa-qrcode"></i>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="6" class="text-center text-muted" style="padding:20px;">
+                        Aucun ticket actif
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ==================== MODAL DÉTAILS ==================== -->
+<div class="modal-overlay" id="ticketModal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2 id="ticketModalTitle">Détails du ticket</h2>
+            <button class="modal-close" onclick="closeModal('ticketModal')">&times;</button>
+        </div>
+        <div id="ticketModalContent">
+            <p class="text-muted text-center">Chargement...</p>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== MODAL QR ==================== -->
+<div class="modal-overlay" id="qrModal">
+    <div class="modal" style="max-width:400px;text-align:center;">
+        <div class="modal-header">
+            <h2>QR Code du ticket</h2>
+            <button class="modal-close" onclick="closeModal('qrModal')">&times;</button>
+        </div>
+        <div id="qrContent" style="padding:16px;">
+            <div id="qrCodeContainer" style="width:180px;height:180px;margin:0 auto;display:flex;align-items:center;justify-content:center;background:white;border:2px dashed #e2e8f0;border-radius:8px;">
+                <span class="text-muted">Chargement...</span>
+            </div>
+            <p id="qrTicketNumber" style="font-weight:600;font-family:monospace;font-size:16px;margin-top:12px;">---</p>
+            <button class="btn btn-primary" onclick="printQR()">
+                <i class="fas fa-print"></i> Imprimer
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+    // ==================== RECHERCHE ====================
+    document.getElementById('searchTicket').addEventListener('input', function() {
+        const query = this.value.toLowerCase();
+        document.querySelectorAll('#ticketsList tr').forEach(row => {
+            const text = row.textContent.toLowerCase();
+            row.style.display = text.includes(query) ? '' : 'none';
+        });
+    });
+    
+    // ==================== CRÉER TICKET ====================
+    function createTicket(e) {
+        e.preventDefault();
+        const form = e.target;
+        const data = new FormData(form);
+        
+        const payload = {
+            amount: parseFloat(data.get('amount')),
+            player_name: data.get('player_name') || null,
+            player_phone: data.get('player_phone') || null
+        };
+        
+        fetch('{{ url_for("agent_create_ticket") }}', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Ticket créé avec succès', 'success');
+                form.reset();
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => showToast('Erreur réseau', 'error'));
+    }
+    
+    // ==================== VOIR TICKET ====================
+    function viewTicket(ticketId) {
+        openModal('ticketModal');
+        document.getElementById('ticketModalTitle').textContent = 'Chargement...';
+        document.getElementById('ticketModalContent').innerHTML = '<p class="text-muted text-center">Chargement...</p>';
+        
+        fetch('/agent/api/tickets/' + ticketId)
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('ticketModalTitle').textContent = 'Ticket ' + data.number;
+                document.getElementById('ticketModalContent').innerHTML = `
+                    <div style="margin-bottom:12px;">
+                        <p><strong>Numéro:</strong> <code>${data.number}</code></p>
+                        <p><strong>Joueur:</strong> ${data.player_name || 'Anonyme'}</p>
+                        <p><strong>Montant initial:</strong> ${data.initial_amount} HTG</p>
+                        <p><strong>Solde:</strong> ${data.balance} HTG</p>
+                        <p><strong>Statut:</strong> <span class="badge ${data.status === 'active' ? 'success' : 'danger'}">${data.status}</span></p>
+                        <p><strong>Expire:</strong> ${new Date(data.expires_at).toLocaleString()}</p>
+                        ${data.bets && data.bets.length > 0 ? `
+                            <p><strong>Paris:</strong> ${data.bets.length}</p>
+                            <div style="max-height:150px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:4px;">
+                                <table style="width:100%;font-size:12px;border-collapse:collapse;">
+                                    <thead style="background:#f8fafc;">
+                                        <tr><th style="padding:4px 8px;text-align:left;">Jeu</th><th style="padding:4px 8px;text-align:right;">Mise</th><th style="padding:4px 8px;text-align:right;">Gain</th><th style="padding:4px 8px;text-align:center;">Statut</th></tr>
+                                    </thead>
+                                    <tbody>${data.bets.map(b => `
+                                        <tr><td style="padding:4px 8px;">${b.game}</td><td style="padding:4px 8px;text-align:right;">${b.stake} HTG</td><td style="padding:4px 8px;text-align:right;">${b.winnings} HTG</td><td style="padding:4px 8px;text-align:center;"><span class="badge ${b.status === 'won' ? 'success' : 'danger'}">${b.status}</span></td></tr>
+                                    `).join('')}</tbody>
+                                </table>
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            })
+            .catch(() => {
+                document.getElementById('ticketModalContent').innerHTML = '<p class="text-danger text-center">Erreur de chargement</p>';
+            });
+    }
+    
+    // ==================== PAYER TICKET ====================
+    function payoutTicket(ticketId) {
+        if (!confirm('Confirmer le paiement de ce ticket ?')) return;
+        
+        fetch('/agent/api/tickets/' + ticketId + '/payout', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token() }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showToast(data.message || 'Ticket payé avec succès', 'success');
+                setTimeout(() => location.reload(), 1000);
+            } else {
+                showToast(data.error || 'Erreur', 'error');
+            }
+        })
+        .catch(() => showToast('Erreur réseau', 'error'));
+    }
+    
+    // ==================== QR CODE ====================
+    let currentTicketNumber = '';
+    
+    function showQR(ticketNumber) {
+        currentTicketNumber = ticketNumber;
+        openModal('qrModal');
+        document.getElementById('qrTicketNumber').textContent = ticketNumber;
+        document.getElementById('qrCodeContainer').innerHTML = '<span class="text-muted">Génération...</span>';
+        
+        fetch('/agent/api/tickets/' + ticketNumber + '/qr')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('qrCodeContainer').innerHTML = `<img src="${data.qr_code}" style="width:180px;height:180px;object-fit:contain;">`;
+                } else {
+                    document.getElementById('qrCodeContainer').innerHTML = '<span class="text-danger">Erreur</span>';
+                }
+            })
+            .catch(() => {
+                document.getElementById('qrCodeContainer').innerHTML = '<span class="text-danger">Erreur réseau</span>';
+            });
+    }
+    
+    function printQR() {
+        const content = document.getElementById('qrContent').innerHTML;
+        const win = window.open('', '', 'width=400,height=500');
+        win.document.write(`
+            <html><head><title>QR Code</title>
+            <style>body{text-align:center;font-family:Arial;padding:20px;}.container{display:inline-block;padding:20px;border:1px solid #e2e8f0;border-radius:8px;}.ticket-number{font-family:monospace;font-size:18px;font-weight:bold;margin-top:12px;}</style>
+            </head>
+            <body><div class="container"><h2>Ticket ${currentTicketNumber}</h2>
+            <div>${document.getElementById('qrCodeContainer').innerHTML}</div>
+            <div class="ticket-number">${currentTicketNumber}</div>
+            <p style="color:#94a3b8;font-size:12px;margin-top:12px;">Présentez ce QR code en bureau</p>
+            </div></body></html>
+        `);
+        win.document.close();
+        win.focus();
+        win.print();
+    }
+</script>
+{% endblock %}
