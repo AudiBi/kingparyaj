@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     
     # Base de données
     DATABASE_URL: str = Field(
-        default="postgresql+asyncpg://postgres:Pass%%4025%%23@127.0.0.1:5433/parier_keno"
+        default="postgresql+asyncpg://postgres:Pass%%4025%%23@127.0.0.1:5432/parier_keno"
     )
     DATABASE_POOL_SIZE: int = Field(default=20)
     DATABASE_MAX_OVERFLOW: int = Field(default=10)
@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     
     # Sécurité
     SECRET_KEY: str = Field(default="change-me-in-production")
+    CSRF_SECRET_KEY: str = Field(default="change-me-in-production") 
     ALGORITHM: str = Field(default="HS256")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=60)
     REFRESH_TOKEN_EXPIRE_DAYS: int = Field(default=7)

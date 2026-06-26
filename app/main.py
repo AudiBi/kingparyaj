@@ -8,16 +8,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi_csrf_protect.exceptions import CsrfProtectError
 from contextlib import asynccontextmanager
 from datetime import datetime
-import logging
 import sys
 import os
+
+# ✅ IMPORT SQLALCHEMY TEXT
+from sqlalchemy import text
 
 from app.config import settings
 from app.core.database import engine
 from app.core.redis_client import redis_client
-from app.core.logger import logger, setup_logging
+from app.core.logger import logger
 from app.core.exceptions import AppException
 
 # Ajouter le chemin du projet pour les imports
@@ -50,7 +53,7 @@ async def lifespan(app: FastAPI):
     # 2. Vérifier la base de données
     try:
         async with engine.begin() as conn:
-            await conn.execute("SELECT 1")
+            await conn.execute(text("SELECT 1"))
         logger.info("✅ Database connected successfully")
     except Exception as e:
         logger.error(f"❌ Database connection failed: {e}")
@@ -60,11 +63,9 @@ async def lifespan(app: FastAPI):
     if settings.ENVIRONMENT == "production":
         try:
             from app.workers.celery import celery_app
-            # Vérifier que Celery est accessible
             logger.info("✅ Celery workers ready")
         except Exception as e:
             logger.error(f"❌ Celery initialization failed: {e}")
-            # Ne pas bloquer le démarrage en développement
     
     # 4. Démarrer le scheduler de tirages (production)
     if settings.ENVIRONMENT == "production":
@@ -74,7 +75,6 @@ async def lifespan(app: FastAPI):
             logger.info("✅ Draw scheduler started")
         except Exception as e:
             logger.error(f"❌ Draw scheduler failed: {e}")
-            # Ne pas bloquer le démarrage si le scheduler échoue
     
     # 5. Nettoyer les sessions expirées au démarrage
     try:
@@ -130,11 +130,11 @@ app = FastAPI(
     redoc_url="/api/redoc" if settings.DEBUG else None,
     openapi_url="/api/openapi.json" if settings.DEBUG else None,
     lifespan=lifespan,
-    terms_of_service="https://parierkeno.ht/terms",
+    terms_of_service="https://kingparyaj.com/terms",
     contact={
-        "name": "Parier Keno Haïti",
-        "email": "contact@parierkeno.ht",
-        "url": "https://parierkeno.ht",
+        "name": "King Paryaj",
+        "email": "contact@kingparyaj.com",
+        "url": "https://kingparyaj.com",
     },
     license_info={
         "name": "LEH License",
@@ -162,23 +162,14 @@ async def log_requests(request: Request, call_next):
     """Log toutes les requêtes HTTP avec timing"""
     start_time = datetime.utcnow()
     
-    # Log de la requête
     logger.info(f"📥 {request.method} {request.url.path}")
     
     try:
         response = await call_next(request)
-        
-        # Calcul du temps d'exécution
         process_time = (datetime.utcnow() - start_time).total_seconds()
-        
-        # Ajouter le temps dans les headers
         response.headers["X-Process-Time"] = str(process_time)
-        
-        # Log de la réponse
         logger.info(f"📤 {request.method} {request.url.path} - {response.status_code} ({process_time:.3f}s)")
-        
         return response
-        
     except Exception as e:
         logger.error(f"❌ Error processing {request.method} {request.url.path}: {e}")
         raise
@@ -219,16 +210,12 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # ==================== TEMPLATES ET STATIC ====================
 
-# Templates Jinja2
 templates = Jinja2Templates(directory="app/templates")
-
-# Fichiers statiques
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 
 # ==================== ROUTES API ====================
 
-# Importer les routers (sans health)
 from app.api.v1 import (
     auth,
     users,
@@ -241,7 +228,6 @@ from app.api.v1 import (
     reports
 )
 
-# Version 1 de l'API
 api_v1_prefix = "/api/v1"
 
 app.include_router(auth.router, prefix=api_v1_prefix)
@@ -263,45 +249,48 @@ app.include_router(draws.router)
 
 # ==================== ROUTES HTML ====================
 
-# Routes pour l'interface agent
+# ✅ Routes pour l'interface agent
 try:
-    from app.routes.agent_views import router as agent_views_router
+    from app.routes.agent import router as agent_views_router
     app.include_router(agent_views_router)
     logger.info("✅ Agent views loaded")
 except ImportError as e:
     logger.warning(f"⚠️ Agent views not available: {e}")
 
-# Routes pour l'interface publique
+# ✅ Routes pour l'interface admin
 try:
-    from app.routes.public_views import router as public_views_router
-    app.include_router(public_views_router)
-    logger.info("✅ Public views loaded")
+    from app.routes.admin import router as admin_views_router
+    app.include_router(admin_views_router)
+    logger.info("✅ Admin views loaded")
 except ImportError as e:
-    logger.warning(f"⚠️ Public views not available: {e}")
+    logger.warning(f"⚠️ Admin views not available: {e}")
+
+# ✅ Routes pour l'interface publique
+# try:
+#     from app.routes.public import router as public_views_router
+#     app.include_router(public_views_router)
+#     logger.info("✅ Public views loaded")
+# except ImportError as e:
+#     logger.warning(f"⚠️ Public views not available: {e}")
 
 
 # ==================== ENDPOINTS DE BASE ====================
 
 @app.get("/", include_in_schema=False)
 async def root():
-    """Redirige vers l'interface publique"""
     return RedirectResponse(url="/public")
 
 
 @app.get("/api", include_in_schema=False)
 async def api_root():
-    """Redirige vers la documentation API"""
     if settings.DEBUG:
         return RedirectResponse(url="/api/docs")
-    return {"message": "API Parier Keno Haïti", "version": settings.APP_VERSION}
+    return {"message": "API King Paryaj", "version": settings.APP_VERSION}
 
 
 @app.get("/health", tags=["Health"])
 async def health_check():
-    """
-    Health check pour monitoring.
-    Vérifie la santé de l'application et des services.
-    """
+    """Health check pour monitoring"""
     services = {
         "api": {"status": "healthy"},
         "database": {"status": "unknown"},
@@ -313,7 +302,7 @@ async def health_check():
     # Vérifier la base de données
     try:
         async with engine.begin() as conn:
-            await conn.execute("SELECT 1")
+            await conn.execute(text("SELECT 1"))
         services["database"]["status"] = "healthy"
     except Exception as e:
         services["database"]["status"] = "unhealthy"
@@ -353,20 +342,15 @@ async def health_check():
 
 @app.get("/health/ready", tags=["Health"])
 async def readiness_check():
-    """
-    Readiness probe pour Kubernetes.
-    Vérifie que l'application est prête à recevoir du trafic.
-    """
+    """Readiness probe pour Kubernetes"""
     services_healthy = True
     
-    # Vérifier la base de données
     try:
         async with engine.begin() as conn:
-            await conn.execute("SELECT 1")
+            await conn.execute(text("SELECT 1"))
     except Exception:
         services_healthy = False
     
-    # Vérifier Redis
     try:
         await redis_client.ping()
     except Exception:
@@ -389,25 +373,16 @@ async def readiness_check():
 
 @app.get("/health/live", tags=["Health"])
 async def liveness_check():
-    """
-    Liveness probe pour Kubernetes.
-    Vérifie que l'application est encore en vie.
-    """
+    """Liveness probe pour Kubernetes"""
     return {
         "status": "alive",
         "timestamp": datetime.utcnow().isoformat()
     }
 
 
-# ==================== MÉTRIQUES ====================
-
 @app.get("/metrics", tags=["Monitoring"], include_in_schema=False)
 async def metrics():
-    """
-    Métriques Prometheus pour monitoring.
-    À implémenter avec prometheus_client si nécessaire.
-    """
-    # À implémenter avec prometheus_client
+    """Métriques Prometheus pour monitoring"""
     return {
         "message": "Metrics endpoint - À configurer avec Prometheus",
         "endpoints": {
@@ -417,8 +392,6 @@ async def metrics():
         }
     }
 
-
-# ==================== VERSION ====================
 
 @app.get("/version", tags=["Info"])
 async def get_version():
@@ -434,7 +407,6 @@ async def get_version():
 
 @app.exception_handler(404)
 async def not_found_handler(request: Request, exc: Exception):
-    """Gestion des erreurs 404"""
     return JSONResponse(
         status_code=404,
         content={
@@ -449,7 +421,6 @@ async def not_found_handler(request: Request, exc: Exception):
 
 @app.exception_handler(405)
 async def method_not_allowed_handler(request: Request, exc: Exception):
-    """Gestion des erreurs 405"""
     return JSONResponse(
         status_code=405,
         content={
@@ -467,7 +438,6 @@ async def method_not_allowed_handler(request: Request, exc: Exception):
 if __name__ == "__main__":
     import uvicorn
     
-    # Configuration du serveur
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",

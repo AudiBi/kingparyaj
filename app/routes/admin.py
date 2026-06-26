@@ -1,7 +1,5 @@
 # app/routes/admin.py
-"""Routes d'administration complètes - Parier Keno & Lucky Haïti
-Gestion des utilisateurs, agents, bureaux, jeux, transactions, rapports et conformité LEH
-"""
+"""Routes d'administration complètes - Parier Keno & Lucky Haïti"""
 
 from fastapi import APIRouter, Body, Depends, Request, Form, HTTPException, Query, BackgroundTasks, Response
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse
@@ -49,15 +47,21 @@ from app.services.notification_service import NotificationService
 
 import redis.asyncio as redis
 
-from app.workers.draw_worker import generate_draw_numbers
+# ✅ AJOUTER LA FONCTION ICI
+def generate_draw_numbers() -> List[int]:
+    """Génère 20 numéros uniques entre 1 et 80 pour le tirage Keno"""
+    import secrets
+    numbers = list(range(1, 81))
+    for i in range(len(numbers) - 1, 0, -1):
+        j = secrets.randbelow(i + 1)
+        numbers[i], numbers[j] = numbers[j], numbers[i]
+    return sorted(numbers[:20])
 
 # Router et templates
 router = APIRouter(prefix="/admin", tags=["Admin"])
 templates = Jinja2Templates(directory="app/templates/admin")
 
 # ==================== FILTRES TEMPLATES ====================
-
-@templates.env.filters
 def format_number(value):
     """Formate un nombre avec séparateurs de milliers"""
     if value is None:
@@ -67,7 +71,7 @@ def format_number(value):
     except (ValueError, TypeError):
         return str(value)
 
-@templates.env.filters
+
 def timeago(value):
     """Convertit une date en format 'il y a X'"""
     if not value:
@@ -84,22 +88,26 @@ def timeago(value):
         return f"il y a {diff.seconds // 60}min"
     return "à l'instant"
 
-@templates.env.filters
+
 def tojson(value):
     """Convertit en JSON"""
     return json.dumps(value)
 
 
-# ==================== AUTHENTIFICATION ADMIN ====================
+# ✅ Ajouter les filtres à l'environnement Jinja2
+templates.env.filters["format_number"] = format_number
+templates.env.filters["timeago"] = timeago
+templates.env.filters["tojson"] = tojson
 
+
+# ==================== AUTHENTIFICATION ADMIN ====================
 @router.get("/login", response_class=HTMLResponse)
 async def admin_login_page(
     request: Request,
     error: Optional[str] = None
 ):
     """Page de connexion administrateur"""
-    return templates.TemplateResponse("login.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "login.html", {
         "error": error,
         "is_authenticated": False
     })
@@ -243,8 +251,7 @@ async def admin_dashboard(
     # Utilisateurs en attente KYC
     pending_kyc = await _get_pending_kyc_count(db)
     
-    return templates.TemplateResponse("dashboard.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "dashboard.html", {
         "active": "dashboard",
         "admin_name": admin.full_name or admin.email,
         "admin_role": admin.role,
@@ -254,28 +261,8 @@ async def admin_dashboard(
         "recent_users": recent_users,
         "alerts": alerts,
         "pending_kyc": pending_kyc,
-        "csrf_token": "{{ csrf_token() }}"  # À implémenter avec un middleware
+        "csrf_token": "{{ csrf_token() }}"
     })
-
-
-@router.get("/api/dashboard/stats")
-async def api_dashboard_stats(
-    admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db)
-):
-    """API pour les statistiques du dashboard (AJAX)"""
-    stats = await _get_dashboard_stats(db)
-    return stats
-
-
-@router.get("/api/dashboard/charts")
-async def api_dashboard_charts(
-    period: int = Query(30, ge=7, le=365),
-    admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db)
-):
-    """API pour les données des graphiques (AJAX)"""
-    return await _get_chart_data(db, period)
 
 
 # ==================== UTILISATEURS ====================
@@ -356,8 +343,7 @@ async def admin_users(
         }
         users_with_balance.append(user_dict)
     
-    return templates.TemplateResponse("users/index.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "users/index.html", {
         "active": "users",
         "users": users_with_balance,
         "pagination": {
@@ -388,8 +374,7 @@ async def admin_user_create_page(
     db: AsyncSession = Depends(get_db)
 ):
     """Page de création d'utilisateur"""
-    return templates.TemplateResponse("users/create.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "users/create.html", {
         "active": "users",
         "admin_name": admin.full_name or admin.email,
         "admin_role": admin.role,
@@ -525,8 +510,7 @@ async def admin_user_detail(
     )
     bets = bets_result.scalars().all()
     
-    return templates.TemplateResponse("users/detail.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "users/detail.html", {
         "active": "users",
         "user": user,
         "wallet": wallet,
@@ -561,8 +545,7 @@ async def admin_user_edit_page(
     if not user:
         raise HTTPException(404, "Utilisateur non trouvé")
     
-    return templates.TemplateResponse("users/edit.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "users/edit.html", {
         "active": "users",
         "user": user,
         "roles": [r.value for r in UserRole],

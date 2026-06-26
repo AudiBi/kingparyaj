@@ -21,16 +21,20 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Importer Base depuis database
+# ✅ IMPORTER Base DEPUIS app.models (où il est exporté)
 try:
-    from app.core.database import Base
-    from app.models import BaseModel  # Pour forcer l'import des modèles
+    from app.models import Base  # <- Importation correcte !
+    # Les modèles sont automatiquement importés via app.models.__init__.py
 except ImportError as e:
     print(f"Erreur d'import: {e}")
     print(f"PYTHONPATH: {sys.path}")
     raise
 
 target_metadata = Base.metadata
+
+# ✅ Debug : Afficher les tables détectées
+print(f"📊 Tables détectées: {list(target_metadata.tables.keys())}")
+print(f"📊 Nombre de tables: {len(target_metadata.tables.keys())}")
 
 
 def run_migrations_offline() -> None:
