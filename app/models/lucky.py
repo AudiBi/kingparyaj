@@ -133,6 +133,11 @@ class LuckyPlay(BaseModel):
     
     # ========== Relations ==========
     user = relationship("User", back_populates="lucky_plays", foreign_keys=[user_id])
+    agent = relationship(
+        "User",
+        back_populates="agent_lucky_plays",
+        foreign_keys=[agent_id],
+    )
     ticket = relationship("Ticket", back_populates="lucky_plays")
     wheel_config = relationship("LuckyWheelConfig", back_populates="plays")
     

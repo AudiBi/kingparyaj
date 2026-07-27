@@ -73,7 +73,8 @@ class User(BaseModel):
     
     # Paris
     keno_bets = relationship("KenoBet", back_populates="user", foreign_keys="KenoBet.user_id")
-    lucky_plays = relationship("LuckyPlay", back_populates="user")
+    lucky_plays = relationship("LuckyPlay", back_populates="user", foreign_keys="LuckyPlay.user_id")
+    agent_lucky_plays = relationship("LuckyPlay", back_populates="agent", foreign_keys="LuckyPlay.agent_id")
     
     # Tickets créés (en tant qu'agent)
     tickets_created = relationship("Ticket", back_populates="agent", foreign_keys="Ticket.agent_id")
