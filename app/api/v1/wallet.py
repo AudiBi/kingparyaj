@@ -7,16 +7,23 @@ from app.core.database import get_db
 from app.core.redis_client import get_redis
 from app.core.security import get_current_user
 from app.schemas.wallet import (
-    WalletResponse, BalanceResponse, DepositRequest, WithdrawRequest,
-    TransactionResponse, SetLimitRequest
+    WalletResponse, BalanceResponse, DepositRequest, DepositResponse,
+    WithdrawRequest, WithdrawResponse, TransactionResponse, SetLimitRequest
 )
 from app.schemas.common import SuccessResponse
 from app.services.wallet_service import WalletService
 from app.models.user import User
-from app.models.enums import PaymentMethod
 import redis.asyncio as redis
 
 router = APIRouter()
+
+_LIMIT_TYPE_TO_KWARG = {
+    "daily_deposit": "daily_deposit_limit",
+    "daily_loss": "daily_loss_limit",
+    "weekly_deposit": "weekly_deposit_limit",
+    "monthly_deposit": "monthly_deposit_limit",
+    "single_bet": "single_bet_limit",
+}
 
 
 @router.get("/balance", response_model=BalanceResponse)
@@ -27,8 +34,12 @@ async def get_balance(
 ):
     """Récupère le solde du portefeuille"""
     wallet_service = WalletService(db, redis_client)
-    balance = await wallet_service.get_balance(current_user.id)
-    return balance
+    wallet = await wallet_service.get_or_create(current_user.id)
+    return BalanceResponse(
+        balance=float(wallet.balance),
+        bonus_balance=float(wallet.bonus_balance),
+        total_balance=float(wallet.balance + wallet.bonus_balance),
+    )
 
 
 @router.get("/", response_model=WalletResponse)
@@ -39,10 +50,11 @@ async def get_wallet(
 ):
     """Récupère les informations du portefeuille"""
     wallet_service = WalletService(db, redis_client)
-    wallet = await wallet_service.get_wallet(current_user.id)
-    
+    wallet = await wallet_service.get_or_create(current_user.id)
+
     return {
         "id": wallet.id,
+        "user_id": wallet.user_id,
         "balance": float(wallet.balance),
         "bonus_balance": float(wallet.bonus_balance),
         "total_balance": float(wallet.balance + wallet.bonus_balance),
@@ -50,11 +62,14 @@ async def get_wallet(
         "total_deposited": float(wallet.total_deposited),
         "total_withdrawn": float(wallet.total_withdrawn),
         "total_won": float(wallet.total_won),
-        "status": wallet.status
+        "status": wallet.status,
+        "daily_deposit_limit": float(wallet.daily_deposit_limit) if wallet.daily_deposit_limit else None,
+        "daily_loss_limit": float(wallet.daily_loss_limit) if wallet.daily_loss_limit else None,
+        "single_bet_limit": float(wallet.single_bet_limit) if wallet.single_bet_limit else None,
     }
 
 
-@router.post("/deposit", response_model=TransactionResponse)
+@router.post("/deposit", response_model=DepositResponse)
 async def deposit(
     request: Request,
     deposit_data: DepositRequest,
@@ -62,26 +77,23 @@ async def deposit(
     db: AsyncSession = Depends(get_db),
     redis_client: redis.Redis = Depends(get_redis)
 ):
-    """Dépôt d'argent"""
+    """Dépôt d'argent. Espèces/virement : crédité immédiatement. MonCash/
+    NatCash : reste en attente jusqu'à confirmation du fournisseur (webhook
+    /api/v1/payments/{provider}/webhook, ou /simulate hors production)."""
     wallet_service = WalletService(db, redis_client)
-    
-    payment_method = PaymentMethod(deposit_data.payment_method)
     ip_address = request.client.host if request.client else None
-    user_agent = request.headers.get("user-agent")
-    
-    transaction = await wallet_service.deposit(
+
+    result = await wallet_service.deposit(
         user_id=current_user.id,
-        amount=deposit_data.amount,
-        payment_method=payment_method,
-        external_reference=None,  # Sera mis à jour après paiement
+        request=deposit_data,
         ip_address=ip_address,
-        user_agent=user_agent
     )
-    
-    return transaction
+    await db.commit()
+
+    return result
 
 
-@router.post("/withdraw", response_model=TransactionResponse)
+@router.post("/withdraw", response_model=WithdrawResponse)
 async def withdraw(
     request: Request,
     withdraw_data: WithdrawRequest,
@@ -89,23 +101,20 @@ async def withdraw(
     db: AsyncSession = Depends(get_db),
     redis_client: redis.Redis = Depends(get_redis)
 ):
-    """Retrait d'argent"""
+    """Retrait d'argent. Espèces/virement : réglé immédiatement. MonCash/
+    NatCash : fonds réservés tout de suite, retrait confirmé (ou remboursé
+    en cas d'échec) via webhook/simulate, comme pour le dépôt."""
     wallet_service = WalletService(db, redis_client)
-    
-    payment_method = PaymentMethod(withdraw_data.payment_method)
     ip_address = request.client.host if request.client else None
-    user_agent = request.headers.get("user-agent")
-    
-    transaction = await wallet_service.withdraw(
+
+    result = await wallet_service.withdraw(
         user_id=current_user.id,
-        amount=withdraw_data.amount,
-        payment_method=payment_method,
-        destination=withdraw_data.phone,
+        request=withdraw_data,
         ip_address=ip_address,
-        user_agent=user_agent
     )
-    
-    return transaction
+    await db.commit()
+
+    return result
 
 
 @router.get("/transactions", response_model=list[TransactionResponse])
@@ -117,19 +126,8 @@ async def get_transactions(
     offset: int = 0
 ):
     """Récupère l'historique des transactions"""
-    from sqlalchemy import select
-    from app.models.transaction import Transaction
-    
-    result = await db.execute(
-        select(Transaction)
-        .where(Transaction.user_id == current_user.id)
-        .order_by(Transaction.created_at.desc())
-        .offset(offset)
-        .limit(limit)
-    )
-    transactions = result.scalars().all()
-    
-    return transactions
+    wallet_service = WalletService(db, redis_client)
+    return await wallet_service.get_transactions(current_user.id, skip=offset, limit=limit)
 
 
 @router.post("/limits", response_model=SuccessResponse)
@@ -140,15 +138,19 @@ async def set_limit(
     redis_client: redis.Redis = Depends(get_redis)
 ):
     """Définit une limite de jeu"""
-    wallet_service = WalletService(db, redis_client)
-    
+    kwarg = _LIMIT_TYPE_TO_KWARG.get(limit_data.limit_type)
+    if not kwarg:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Type de limite inconnu: {limit_data.limit_type}. "
+                   f"Attendu: {', '.join(_LIMIT_TYPE_TO_KWARG)}",
+        )
+
     from decimal import Decimal
-    limit_amount = Decimal(str(limit_data.limit_amount)) if limit_data.limit_amount else None
-    
-    await wallet_service.set_limit(
-        user_id=current_user.id,
-        limit_type=limit_data.limit_type,
-        limit_amount=limit_amount
-    )
-    
+    limit_amount = Decimal(str(limit_data.limit_amount)) if limit_data.limit_amount is not None else None
+
+    wallet_service = WalletService(db, redis_client)
+    await wallet_service.update_limits(user_id=current_user.id, **{kwarg: limit_amount})
+    await db.commit()
+
     return SuccessResponse(message="Limite mise à jour")

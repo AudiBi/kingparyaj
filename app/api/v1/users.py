@@ -126,6 +126,7 @@ async def update_user(
         action=AuditAction.USER_UPDATED,
         resource_type="user",
         resource_id=user_id,
+        ip_address="0.0.0.0",
         new_values=user_update.dict(exclude_unset=True)
     )
     db.add(audit)
@@ -157,6 +158,7 @@ async def block_user(
         action=AuditAction.USER_BLOCKED,
         resource_type="user",
         resource_id=user_id,
+        ip_address="0.0.0.0",
         reason=reason
     )
     db.add(audit)
@@ -187,6 +189,7 @@ async def unblock_user(
         action=AuditAction.USER_UPDATED,
         resource_type="user",
         resource_id=user_id,
+        ip_address="0.0.0.0",
         new_values={"is_locked": False, "is_active": True}
     )
     db.add(audit)
@@ -224,6 +227,7 @@ async def update_kyc_status(
         action=AuditAction.KYC_VERIFIED if kyc_data.status == KYCStatus.VERIFIED else AuditAction.KYC_SUBMITTED,
         resource_type="user",
         resource_id=user_id,
+        ip_address="0.0.0.0",
         new_values={"kyc_status": kyc_data.status}
     )
     db.add(audit)
@@ -248,38 +252,26 @@ async def manual_credit(
 ):
     """Crédite manuellement un utilisateur."""
     from decimal import Decimal
-    from app.models.transaction import Transaction, TransactionType, PaymentMethod, TransactionStatus
-    
+
     wallet_service = WalletService(db, redis_client)
-    wallet = await wallet_service.get_wallet(user_id)
-    
-    old_balance = wallet.balance
-    wallet.balance += Decimal(str(amount))
-    
-    # Créer la transaction
-    transaction = Transaction(
-        reference=f"ADJ-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
+    transaction = await wallet_service.credit(
         user_id=user_id,
-        wallet_id=wallet.id,
-        transaction_type=TransactionType.ADJUSTMENT,
-        payment_method=PaymentMethod.CASH,
         amount=Decimal(str(amount)),
-        balance_before=old_balance,
-        balance_after=wallet.balance,
-        status=TransactionStatus.COMPLETED,
-        completed_at=datetime.utcnow(),
-        metadata={"admin_id": admin.id, "reason": reason}
+        transaction_type="ADJUSTMENT",
+        payment_method="cash",
+        reference=f"ADJ-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
     )
-    
-    db.add(transaction)
-    await db.commit()
-    
+    transaction.created_by = admin.id
+
+    wallet = await wallet_service.get_by_user_id(user_id)
+
     # Audit log
     audit = AuditLog(
         user_id=admin.id,
         action=AuditAction.DEPOSIT,
         resource_type="wallet",
         resource_id=wallet.id,
+        ip_address="0.0.0.0",
         new_values={"balance": float(wallet.balance)},
         reason=reason
     )
@@ -311,7 +303,7 @@ async def get_user_by_phone(
         raise HTTPException(status_code=403, detail="Accès non autorisé")
     
     user_service = UserService(db, None)
-    user = await user_service.get_user_by_phone(phone)
+    user = await user_service.get_by_phone(phone)
     
     if not user:
         raise HTTPException(status_code=404, detail="Utilisateur non trouvé")

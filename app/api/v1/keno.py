@@ -21,7 +21,7 @@ from app.services.keno_service import KenoService
 from app.services.wallet_service import WalletService
 from app.models.user import User
 from app.models.keno import KenoDraw, KenoBet, KenoDrawStatus, KenoBetStatus
-from app.models.ticket import Ticket
+from app.models.ticket import Ticket, TicketStatus
 from app.api.websockets.manager import broadcast_draw_result
 import redis.asyncio as redis
 
@@ -505,40 +505,42 @@ async def place_ticket_keno_bet(
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket invalide")
     
-    if ticket.status != "ACTIVE":
+    if ticket.status != TicketStatus.ACTIVE:
         raise HTTPException(status_code=400, detail="Ticket expiré ou déjà payé")
-    
-    if ticket.balance < bet_data.stake:
+
+    stake = Decimal(str(bet_data.stake))
+
+    if ticket.balance < stake:
         raise HTTPException(status_code=400, detail="Solde ticket insuffisant")
-    
+
     # Vérifier le tirage
     draw_result = await db.execute(
         select(KenoDraw).where(KenoDraw.id == bet_data.draw_id)
     )
     draw = draw_result.scalar_one_or_none()
-    
+
     if not draw or draw.status != KenoDrawStatus.PENDING:
         raise HTTPException(status_code=400, detail="Tirage non disponible")
-    
+
     # Débiter le ticket
-    ticket.balance -= bet_data.stake
-    
+    ticket.balance -= stake
+
     # Créer le pari
     bet = KenoBet(
         ticket_id=ticket.id,
         draw_id=bet_data.draw_id,
         picks=bet_data.picks,
-        stake=bet_data.stake,
+        stake=stake,
         agent_id=current_agent.id,
         status=KenoBetStatus.PENDING,
         placed_at=datetime.utcnow()
     )
-    
+
     db.add(bet)
-    
+
     # Mettre à jour les stats du tirage
     draw.total_bets += 1
-    draw.total_amount += bet_data.stake
+    draw.total_amount += stake
     
     await db.commit()
     

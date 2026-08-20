@@ -6,7 +6,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, File
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_, desc, asc, text, update
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 from decimal import Decimal
 import json
@@ -14,12 +14,15 @@ import csv
 import io
 import secrets
 from pathlib import Path
+from urllib.parse import urlencode
 
 from app.core.database import get_db
 from app.core.redis_client import get_redis
 from app.core.security import get_current_admin, hash_password, verify_password
 from app.core.logger import logger
 from app.core.exceptions import NotFoundException, ValidationException
+from app.config import settings
+from app.core.csrf import register_csrf_globals  # enregistre aussi la config CsrfProtect à l'import
 from app.models.user import User, UserRole, KYCStatus
 from app.models.wallet import Wallet
 from app.models.bureau import Bureau, CashierSession
@@ -29,10 +32,10 @@ from app.models.ticket import Ticket, TicketStatus
 from app.models.transaction import Transaction, TransactionType, TransactionStatus
 from app.models.audit import AuditLog, AuditAction
 from app.models.notification import Notification
-from app.models.promotion import Promotion, PromotionStatus
+from app.models.promotion import Promotion, PromotionStatus, UserPromotion
 from app.models.responsible import SelfExclusion, PlayerLimit
 from app.schemas.admin import (
-    AdminUserCreate, AdminUserUpdate, AdminAgentCreate,
+    AdminUserCreate, AdminUserUpdate, AdminAgentCreate, AdminAgentUpdate,
     AdminBureauCreate, AdminBureauUpdate,
     AdminKenoConfig, AdminLuckyConfig,
     AdminPromotionCreate, AdminPromotionUpdate,
@@ -47,6 +50,23 @@ from app.services.notification_service import NotificationService
 
 import redis.asyncio as redis
 
+# Table de paiement Keno par défaut (utilisée tant qu'aucune valeur n'a été
+# poussée dans Redis via /api/keno/paytable) : {nombre de picks: {nombre de
+# hits: multiplicateur}}.
+DEFAULT_KENO_PAYTABLE = {
+    "1": {"1": 2.5},
+    "2": {"2": 6},
+    "3": {"3": 12, "2": 1.5},
+    "4": {"4": 30, "3": 3, "2": 1},
+    "5": {"5": 60, "4": 6, "3": 2, "2": 0.5},
+    "6": {"6": 120, "5": 15, "4": 4, "3": 1.5, "2": 0.5},
+    "7": {"7": 300, "6": 30, "5": 8, "4": 2, "3": 1, "2": 0.5},
+    "8": {"8": 600, "7": 60, "6": 15, "5": 4, "4": 1.5, "3": 0.5},
+    "9": {"9": 1200, "8": 120, "7": 30, "6": 8, "5": 3, "4": 1},
+    "10": {"10": 5000, "9": 500, "8": 60, "7": 15, "6": 5, "5": 2, "4": 0.5}
+}
+
+
 # ✅ AJOUTER LA FONCTION ICI
 def generate_draw_numbers() -> List[int]:
     """Génère 20 numéros uniques entre 1 et 80 pour le tirage Keno"""
@@ -59,7 +79,17 @@ def generate_draw_numbers() -> List[int]:
 
 # Router et templates
 router = APIRouter(prefix="/admin", tags=["Admin"])
-templates = Jinja2Templates(directory="app/templates/admin")
+# Racine = app/templates (pas app/templates/admin) : tous les templates admin
+# utilisent {% extends "admin/base.html" %} (préfixe "admin/" inclus), donc le
+# loader Jinja doit chercher depuis le parent commun pour que ce chemin
+# résolve. Avec l'ancienne racine "app/templates/admin", Jinja cherchait
+# "app/templates/admin/admin/base.html" (inexistant) : TemplateNotFound sur
+# CHAQUE page admin sauf login.html (qui n'extends rien) - jamais détecté car
+# aucun test ne rendait de page HTML au-delà du login.
+templates = Jinja2Templates(directory="app/templates")
+# Rend `{{ csrf_token() }}` utilisable dans les templates, déjà appelé ainsi
+# partout (formulaires cachés et headers X-CSRFToken des appels fetch()).
+register_csrf_globals(templates)
 
 # ==================== FILTRES TEMPLATES ====================
 def format_number(value):
@@ -89,27 +119,60 @@ def timeago(value):
     return "à l'instant"
 
 
-def tojson(value):
-    """Convertit en JSON"""
-    return json.dumps(value)
+def tojson(value, indent=None):
+    """Convertit en JSON (accepte `indent`, comme le filtre `tojson`
+    intégré de Jinja, utilisé par plusieurs templates pour un affichage
+    formaté dans un <pre>)."""
+    return json.dumps(value, indent=indent, default=str)
+
+
+def qs(request: Request, **overrides) -> str:
+    """
+    Construit une query string à partir des paramètres actuels de la requête,
+    en écrasant les clés fournies dans `overrides` (ex: changement de page en
+    conservant les filtres actifs). À utiliser dans les templates comme
+    `{{ url_for('admin_x') }}{{ qs(request, page=2) }}` : `request.args`
+    n'existe pas sur l'objet Request de Starlette (c'est l'API Flask), et
+    passer `**request.query_params` directement à `url_for` lève une
+    TypeError dès que la query string contient déjà la clé qu'on surcharge
+    (ex: `page`) - d'où ce helper qui fusionne proprement les deux.
+    """
+    params = dict(request.query_params)
+    for key, value in overrides.items():
+        if value is None:
+            params.pop(key, None)
+        else:
+            params[key] = value
+    if not params:
+        return ""
+    return "?" + urlencode(params, doseq=True)
 
 
 # ✅ Ajouter les filtres à l'environnement Jinja2
 templates.env.filters["format_number"] = format_number
 templates.env.filters["timeago"] = timeago
 templates.env.filters["tojson"] = tojson
+templates.env.globals["qs"] = qs
 
 
 # ==================== AUTHENTIFICATION ADMIN ====================
+# Le jeton CSRF (génération pour ce GET, validation sur le POST plus bas) est
+# géré pour tout /admin par AdminCsrfMiddleware (app/core/csrf.py) : les
+# templates y accèdent via le global Jinja `{{ csrf_token() }}` (cf.
+# register_csrf_globals ci-dessus), pas besoin de le passer explicitement.
 @router.get("/login", response_class=HTMLResponse)
 async def admin_login_page(
     request: Request,
-    error: Optional[str] = None
+    error: Optional[str] = None,
+    csrf_error: Optional[str] = None,
 ):
     """Page de connexion administrateur"""
-    return templates.TemplateResponse(request, "login.html", {
+    if not error and csrf_error:
+        error = "Session expirée, veuillez réessayer"
+
+    return templates.TemplateResponse(request, "admin/login.html", {
         "error": error,
-        "is_authenticated": False
+        "is_authenticated": False,
     })
 
 
@@ -123,29 +186,31 @@ async def admin_login(
     redis_client: redis.Redis = Depends(get_redis)
 ):
     """
-    Traitement de la connexion administrateur
+    Traitement de la connexion administrateur.
+    Le jeton CSRF a déjà été validé par AdminCsrfMiddleware avant que cette
+    route ne soit atteinte (sinon la requête est redirigée en amont).
     """
     # Rechercher l'utilisateur par email
     result = await db.execute(
         select(User).where(User.email == email, User.is_deleted == False)
     )
     user = result.scalar_one_or_none()
-    
+
     if not user:
         return await admin_login_page(request, error="Email ou mot de passe incorrect")
-    
+
     # Vérifier le mot de passe
     if not verify_password(password, user.password_hash):
         return await admin_login_page(request, error="Email ou mot de passe incorrect")
-    
+
     # Vérifier que c'est un admin
     if user.role not in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
         return await admin_login_page(request, error="Accès non autorisé")
-    
+
     # Vérifier que le compte est actif
     if not user.is_active:
         return await admin_login_page(request, error="Compte désactivé")
-    
+
     # Générer les tokens
     from app.core.security import create_access_token, create_refresh_token
     access_token = create_access_token({"sub": user.id, "role": user.role})
@@ -182,7 +247,7 @@ async def admin_login(
         key="admin_token",
         value=access_token,
         httponly=True,
-        secure=True,
+        secure=not settings.DEBUG,
         samesite="lax",
         max_age=expire
     )
@@ -190,11 +255,11 @@ async def admin_login(
         key="admin_refresh",
         value=refresh_token,
         httponly=True,
-        secure=True,
+        secure=not settings.DEBUG,
         samesite="lax",
         max_age=expire
     )
-    
+
     return response
 
 
@@ -205,16 +270,24 @@ async def admin_logout(
     redis_client: redis.Redis = Depends(get_redis)
 ):
     """Déconnexion administrateur"""
-    # Récupérer le token
+    # Récupérer le token et blacklister sous la même clé que get_current_user
+    # (auparavant "admin:blacklist:*", jamais relue par la dépendance d'auth :
+    # le logout ne révoquait donc jamais réellement le token).
     token = request.cookies.get("admin_token")
     if token:
-        # Blacklister le token
-        await redis_client.setex(f"admin:blacklist:{token}", 3600, "1")
-    
-    # Supprimer le refresh token
-    user_id = request.cookies.get("admin_user_id")
-    if user_id:
-        await redis_client.delete(f"admin:refresh:{user_id}")
+        from app.core.security import decode_token
+
+        payload = decode_token(token)
+        if payload and payload.get("exp"):
+            ttl = payload["exp"] - datetime.now(timezone.utc).timestamp()
+            if ttl > 0:
+                await redis_client.setex(f"blacklist:{token}", int(ttl), "1")
+
+        # Supprimer le refresh token (admin_user_id n'était jamais posé en cookie,
+        # donc jamais lu ici : on récupère l'id depuis le token lui-même)
+        user_id = payload.get("sub") if payload else None
+        if user_id:
+            await redis_client.delete(f"admin:refresh:{user_id}")
     
     response = RedirectResponse(url="/admin/login", status_code=303)
     response.delete_cookie("admin_token")
@@ -251,7 +324,7 @@ async def admin_dashboard(
     # Utilisateurs en attente KYC
     pending_kyc = await _get_pending_kyc_count(db)
     
-    return templates.TemplateResponse(request, "dashboard.html", {
+    return templates.TemplateResponse(request, "admin/dashboard.html", {
         "active": "dashboard",
         "admin_name": admin.full_name or admin.email,
         "admin_role": admin.role,
@@ -261,8 +334,99 @@ async def admin_dashboard(
         "recent_users": recent_users,
         "alerts": alerts,
         "pending_kyc": pending_kyc,
-        "csrf_token": "{{ csrf_token() }}"
     })
+
+
+@router.get("/api/dashboard/stats")
+async def admin_dashboard_stats_api(
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Statistiques pour l'auto-refresh du tableau de bord (appelée par
+    dashboard.html toutes les 30s). Réponse à plat avec des clés à points
+    ("users.total") : c'est le format que lit le JS (`data['users.total']`),
+    pas des objets imbriqués.
+    """
+    stats = await _get_dashboard_stats(db)
+    return {
+        "users.total": stats["users"]["total"],
+        "transactions.total_volume": stats["transactions"]["total_volume"],
+        "transactions.total_wins": stats["transactions"]["total_wins"],
+        "games.today_bets": stats["games"]["today_bets"],
+    }
+
+
+@router.get("/api/dashboard/charts")
+async def admin_dashboard_charts_api(
+    period: int = Query(30, ge=1, le=365, description="Nombre de jours"),
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Données pour les graphiques du tableau de bord : volume de transactions
+    par jour sur la période choisie, et répartition Keno / Lucky Wheel sur
+    la même période.
+    """
+    today = datetime.utcnow().date()
+    start_date = today - timedelta(days=period - 1)
+    start_datetime = datetime.combine(start_date, datetime.min.time())
+
+    tx_result = await db.execute(
+        select(
+            func.date(Transaction.created_at).label("day"),
+            Transaction.transaction_type,
+            func.coalesce(func.sum(Transaction.amount), 0).label("total")
+        )
+        .where(
+            and_(
+                Transaction.created_at >= start_datetime,
+                Transaction.status == TransactionStatus.COMPLETED,
+                Transaction.transaction_type.in_(
+                    [TransactionType.DEPOSIT, TransactionType.WITHDRAWAL, TransactionType.WIN]
+                )
+            )
+        )
+        .group_by(func.date(Transaction.created_at), Transaction.transaction_type)
+    )
+
+    by_day = {}
+    for i in range(period):
+        day_key = (start_date + timedelta(days=i)).isoformat()
+        by_day[day_key] = {"deposits": 0.0, "withdrawals": 0.0, "wins": 0.0}
+
+    for row in tx_result.all():
+        day_key = row.day if isinstance(row.day, str) else row.day.isoformat()
+        if day_key not in by_day:
+            continue
+        if row.transaction_type == TransactionType.DEPOSIT:
+            by_day[day_key]["deposits"] = float(row.total)
+        elif row.transaction_type == TransactionType.WITHDRAWAL:
+            by_day[day_key]["withdrawals"] = float(row.total)
+        elif row.transaction_type == TransactionType.WIN:
+            by_day[day_key]["wins"] = float(row.total)
+
+    labels = list(by_day.keys())
+
+    keno_result = await db.execute(
+        select(func.count(KenoBet.id)).where(KenoBet.placed_at >= start_datetime)
+    )
+    lucky_result = await db.execute(
+        select(func.count(LuckyPlay.id)).where(LuckyPlay.played_at >= start_datetime)
+    )
+
+    return {
+        "transactions": {
+            "labels": labels,
+            "deposits": [by_day[d]["deposits"] for d in labels],
+            "withdrawals": [by_day[d]["withdrawals"] for d in labels],
+            "wins": [by_day[d]["wins"] for d in labels],
+        },
+        "games": {
+            "keno": keno_result.scalar() or 0,
+            "lucky": lucky_result.scalar() or 0,
+        },
+    }
 
 
 # ==================== UTILISATEURS ====================
@@ -318,7 +482,18 @@ async def admin_users(
     
     result = await db.execute(query)
     users = result.scalars().all()
-    
+
+    # Statistiques rapides (affichées dans les cartes en haut de la page,
+    # indépendantes de la pagination/des filtres ci-dessus)
+    stats_result = await db.execute(
+        select(
+            func.count(User.id).filter(User.is_active == True).label("active"),
+            func.count(User.id).filter(User.role == UserRole.AGENT).label("agents"),
+        ).where(User.is_deleted == False)
+    )
+    stats_row = stats_result.one()
+    pending_kyc = await _get_pending_kyc_count(db)
+
     # Récupérer les soldes des wallets
     users_with_balance = []
     for user in users:
@@ -343,7 +518,7 @@ async def admin_users(
         }
         users_with_balance.append(user_dict)
     
-    return templates.TemplateResponse(request, "users/index.html", {
+    return templates.TemplateResponse(request, "admin/users/index.html", {
         "active": "users",
         "users": users_with_balance,
         "pagination": {
@@ -363,7 +538,12 @@ async def admin_users(
         "admin_name": admin.full_name or admin.email,
         "admin_role": admin.role,
         "version": "1.0.0",
-        "pending_kyc": await _get_pending_kyc_count(db)
+        "pending_kyc": pending_kyc,
+        "stats": {
+            "active": stats_row.active or 0,
+            "agents": stats_row.agents or 0,
+            "pending_kyc": pending_kyc,
+        }
     })
 
 
@@ -374,7 +554,7 @@ async def admin_user_create_page(
     db: AsyncSession = Depends(get_db)
 ):
     """Page de création d'utilisateur"""
-    return templates.TemplateResponse(request, "users/create.html", {
+    return templates.TemplateResponse(request, "admin/users/create.html", {
         "active": "users",
         "admin_name": admin.full_name or admin.email,
         "admin_role": admin.role,
@@ -434,6 +614,7 @@ async def admin_user_create(
         action=AuditAction.USER_CREATED,
         resource_type="user",
         resource_id=user.id,
+        ip_address=request.client.host if request.client else "0.0.0.0",
         new_values={"phone": user.phone, "role": user.role}
     )
     db.add(audit)
@@ -510,7 +691,7 @@ async def admin_user_detail(
     )
     bets = bets_result.scalars().all()
     
-    return templates.TemplateResponse(request, "users/detail.html", {
+    return templates.TemplateResponse(request, "admin/users/detail.html", {
         "active": "users",
         "user": user,
         "wallet": wallet,
@@ -545,7 +726,7 @@ async def admin_user_edit_page(
     if not user:
         raise HTTPException(404, "Utilisateur non trouvé")
     
-    return templates.TemplateResponse(request, "users/edit.html", {
+    return templates.TemplateResponse(request, "admin/users/edit.html", {
         "active": "users",
         "user": user,
         "roles": [r.value for r in UserRole],
@@ -599,6 +780,7 @@ async def admin_user_update(
         action=AuditAction.USER_UPDATED,
         resource_type="user",
         resource_id=user_id,
+        ip_address="0.0.0.0",
         new_values=user_data.dict(exclude_unset=True)
     )
     db.add(audit)
@@ -634,6 +816,7 @@ async def admin_user_delete(
         action=AuditAction.USER_BLOCKED,
         resource_type="user",
         resource_id=user_id,
+        ip_address="0.0.0.0",
         reason="Suppression par admin"
     )
     db.add(audit)
@@ -672,6 +855,7 @@ async def admin_user_block(
         action=AuditAction.USER_BLOCKED,
         resource_type="user",
         resource_id=user_id,
+        ip_address="0.0.0.0",
         reason=reason
     )
     db.add(audit)
@@ -715,6 +899,7 @@ async def admin_agents(
     per_page: int = Query(20, ge=1, le=100),
     search: Optional[str] = None,
     bureau_id: Optional[str] = None,
+    status: Optional[str] = None,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
@@ -724,7 +909,7 @@ async def admin_agents(
         User.role.in_([UserRole.AGENT, UserRole.MANAGER]),
         User.is_deleted == False
     )
-    
+
     if search:
         query = query.where(
             or_(
@@ -734,29 +919,57 @@ async def admin_agents(
                 User.last_name.contains(search)
             )
         )
-    
+
     if bureau_id:
         query = query.where(User.bureau_id == bureau_id)
-    
+
+    if status == "active":
+        query = query.where(User.is_active == True)
+    elif status == "inactive":
+        query = query.where(User.is_active == False)
+
     # Pagination
     total_result = await db.execute(select(func.count()).select_from(query.subquery()))
     total = total_result.scalar() or 0
-    
+
     query = query.order_by(User.created_at.desc())
     query = query.offset((page - 1) * per_page).limit(per_page)
-    
+
     result = await db.execute(query)
     agents = result.scalars().all()
-    
+
     # Bureaux pour le filtre
     bureaus_result = await db.execute(
         select(Bureau).where(Bureau.is_deleted == False)
     )
     bureaus = bureaus_result.scalars().all()
-    
-    return templates.TemplateResponse("agents/index.html", {
-        "request": request,
+
+    # Statistiques rapides (cartes en haut de la page)
+    stats_result = await db.execute(
+        select(
+            func.count(User.id).label("total"),
+            func.count(User.id).filter(User.is_active == True).label("active"),
+            func.count(User.id).filter(User.is_active == False).label("pending"),
+        ).where(
+            User.role.in_([UserRole.AGENT, UserRole.MANAGER]),
+            User.is_deleted == False
+        )
+    )
+    stats_row = stats_result.one()
+
+    return templates.TemplateResponse(request, "admin/agents/index.html", {
         "active": "agents",
+        "stats": {
+            "total": stats_row.total or 0,
+            "active": stats_row.active or 0,
+            "pending": stats_row.pending or 0,
+            "bureaus": len(bureaus),
+        },
+        "filters": {
+            "search": search,
+            "bureau_id": bureau_id,
+            "status": status,
+        },
         "agents": agents,
         "bureaus": bureaus,
         "pagination": {
@@ -822,7 +1035,8 @@ async def admin_agent_create(
         user_id=admin.id,
         action=AuditAction.USER_CREATED,
         resource_type="agent",
-        resource_id=user.id
+        resource_id=user.id,
+        ip_address="0.0.0.0"
     )
     db.add(audit)
     
@@ -834,20 +1048,20 @@ async def admin_agent_create(
 @router.put("/api/agents/{agent_id}")
 async def admin_agent_update(
     agent_id: str,
-    agent_data: AdminAgentCreate,
+    agent_data: AdminAgentUpdate,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Mise à jour d'un agent"""
-    
+
     result = await db.execute(
         select(User).where(User.id == agent_id, User.is_deleted == False)
     )
     user = result.scalar_one_or_none()
-    
+
     if not user:
         raise HTTPException(404, "Agent non trouvé")
-    
+
     if agent_data.password:
         user.password_hash = hash_password(agent_data.password)
     if agent_data.first_name:
@@ -856,11 +1070,15 @@ async def admin_agent_update(
         user.last_name = agent_data.last_name
     if agent_data.email:
         user.email = agent_data.email
+    if agent_data.national_id:
+        user.national_id = agent_data.national_id
     if agent_data.bureau_id:
         user.bureau_id = agent_data.bureau_id
-    
+    if agent_data.is_active is not None:
+        user.is_active = agent_data.is_active
+
     await db.commit()
-    
+
     return {"success": True, "message": "Agent mis à jour avec succès"}
 
 
@@ -882,10 +1100,266 @@ async def admin_agent_delete(
     
     user.soft_delete(admin.id)
     user.is_active = False
-    
+
     await db.commit()
-    
+
     return {"success": True, "message": "Agent supprimé avec succès"}
+
+
+@router.post("/api/agents/{agent_id}/toggle-status")
+async def admin_agent_toggle_status(
+    agent_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Active/désactive un agent"""
+    result = await db.execute(
+        select(User).where(User.id == agent_id, User.is_deleted == False)
+    )
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(404, "Agent non trouvé")
+
+    user.is_active = not user.is_active
+    await db.commit()
+
+    status = "activé" if user.is_active else "désactivé"
+    return {"success": True, "message": f"Agent {status} avec succès"}
+
+
+@router.post("/api/agents/{agent_id}/reset-password")
+async def admin_agent_reset_password(
+    agent_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Réinitialise le mot de passe d'un agent et lui envoie par SMS"""
+    result = await db.execute(
+        select(User).where(User.id == agent_id, User.is_deleted == False)
+    )
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(404, "Agent non trouvé")
+
+    new_password = secrets.token_urlsafe(9)
+    user.password_hash = hash_password(new_password)
+
+    audit = AuditLog(
+        user_id=admin.id,
+        action=AuditAction.PASSWORD_CHANGE,
+        resource_type="agent",
+        resource_id=agent_id,
+        ip_address="0.0.0.0",
+        reason="Réinitialisation par un administrateur"
+    )
+    db.add(audit)
+    await db.commit()
+
+    # À implémenter avec un vrai fournisseur SMS (Twilio, etc.)
+    logger.info(f"SMS nouveau mot de passe à {user.phone}: {new_password}")
+
+    return {"success": True, "message": "Mot de passe réinitialisé et envoyé par SMS"}
+
+
+@router.get("/agents/create", response_class=HTMLResponse)
+async def admin_agent_create_page(
+    request: Request,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Page de création d'un agent"""
+    bureaus_result = await db.execute(
+        select(Bureau).where(Bureau.is_deleted == False).order_by(Bureau.name)
+    )
+    bureaus = bureaus_result.scalars().all()
+
+    return templates.TemplateResponse(request, "admin/agents/create.html", {
+        "active": "agents",
+        "bureaus": bureaus,
+        "admin_name": admin.full_name or admin.email,
+        "admin_role": admin.role,
+        "version": "1.0.0"
+    })
+
+
+async def _get_agent_today_stats(db: AsyncSession, agent_id: str) -> dict:
+    """Statistiques du jour pour un agent (paris facilités, tickets créés,
+    encaissements/paiements via ses sessions de caisse ouvertes aujourd'hui)."""
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+
+    bets_result = await db.execute(
+        select(func.count(KenoBet.id)).where(
+            KenoBet.agent_id == agent_id, KenoBet.placed_at >= today_start
+        )
+    )
+    tickets_result = await db.execute(
+        select(func.count(Ticket.id)).where(
+            Ticket.agent_id == agent_id, Ticket.created_at >= today_start
+        )
+    )
+    sessions_result = await db.execute(
+        select(
+            func.coalesce(func.sum(CashierSession.cash_in_amount), 0),
+            func.coalesce(func.sum(CashierSession.cash_out_amount), 0),
+        ).where(
+            CashierSession.agent_id == agent_id, CashierSession.opened_at >= today_start
+        )
+    )
+    cash_in, cash_out = sessions_result.one()
+
+    return {
+        "today_bets": bets_result.scalar() or 0,
+        "today_tickets": tickets_result.scalar() or 0,
+        "today_cash_in": float(cash_in or 0),
+        "today_cash_out": float(cash_out or 0),
+    }
+
+
+_AUDIT_ACTIVITY_ICONS = {
+    AuditAction.LOGIN: ("sign-in-alt", "3b82f6"),
+    AuditAction.LOGOUT: ("sign-out-alt", "94a3b8"),
+    AuditAction.USER_CREATED: ("user-plus", "22c55e"),
+    AuditAction.USER_UPDATED: ("user-edit", "3b82f6"),
+    AuditAction.USER_BLOCKED: ("user-lock", "ef4444"),
+    AuditAction.DEPOSIT: ("arrow-down", "22c55e"),
+    AuditAction.WITHDRAWAL: ("arrow-up", "ef4444"),
+    AuditAction.BET_PLACED: ("dice", "8b5cf6"),
+    AuditAction.PASSWORD_CHANGE: ("key", "f59e0b"),
+}
+
+
+async def _get_recent_activities(db: AsyncSession, user_id: str, limit: int = 10) -> list:
+    """Dernière activité d'audit pour un utilisateur (agent/bureau), adaptée
+    au format attendu par les templates (icon/color/description/type)."""
+    result = await db.execute(
+        select(AuditLog)
+        .where(or_(AuditLog.user_id == user_id, AuditLog.resource_id == user_id))
+        .order_by(AuditLog.created_at.desc())
+        .limit(limit)
+    )
+    logs = result.scalars().all()
+
+    activities = []
+    for log in logs:
+        icon, color = _AUDIT_ACTIVITY_ICONS.get(log.action, ("circle", "94a3b8"))
+        activities.append({
+            "icon": icon,
+            "color": color,
+            "description": (log.action.value if hasattr(log.action, "value") else log.action).replace("_", " ").capitalize(),
+            "created_at": log.created_at,
+            "type": log.resource_type or "système",
+        })
+    return activities
+
+
+@router.get("/agents/{agent_id}", response_class=HTMLResponse)
+async def admin_agent_detail(
+    request: Request,
+    agent_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Détails d'un agent"""
+    result = await db.execute(
+        select(User).where(User.id == agent_id, User.is_deleted == False)
+    )
+    agent = result.scalar_one_or_none()
+
+    if not agent:
+        raise HTTPException(404, "Agent non trouvé")
+
+    stats = await _get_agent_today_stats(db, agent_id)
+
+    sessions_result = await db.execute(
+        select(CashierSession)
+        .where(CashierSession.agent_id == agent_id)
+        .order_by(CashierSession.opened_at.desc())
+        .limit(10)
+    )
+    sessions = sessions_result.scalars().all()
+
+    activities = await _get_recent_activities(db, agent_id)
+
+    return templates.TemplateResponse(request, "admin/agents/detail.html", {
+        "active": "agents",
+        "agent": agent,
+        "stats": stats,
+        "sessions": sessions,
+        "activities": activities,
+        "admin_name": admin.full_name or admin.email,
+        "admin_role": admin.role,
+        "version": "1.0.0"
+    })
+
+
+@router.get("/agents/{agent_id}/edit", response_class=HTMLResponse)
+async def admin_agent_edit_page(
+    request: Request,
+    agent_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Page d'édition d'un agent"""
+    result = await db.execute(
+        select(User).where(User.id == agent_id, User.is_deleted == False)
+    )
+    agent = result.scalar_one_or_none()
+
+    if not agent:
+        raise HTTPException(404, "Agent non trouvé")
+
+    bureaus_result = await db.execute(
+        select(Bureau).where(Bureau.is_deleted == False).order_by(Bureau.name)
+    )
+    bureaus = bureaus_result.scalars().all()
+
+    agent_stats = await _get_agent_today_stats(db, agent_id)
+
+    return templates.TemplateResponse(request, "admin/agents/edit.html", {
+        "active": "agents",
+        "agent": agent,
+        "bureaus": bureaus,
+        "agent_stats": agent_stats,
+        "admin_name": admin.full_name or admin.email,
+        "admin_role": admin.role,
+        "version": "1.0.0"
+    })
+
+
+@router.get("/agents/{agent_id}/sessions", response_class=HTMLResponse)
+async def admin_agent_sessions(
+    request: Request,
+    agent_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Historique des sessions de caisse d'un agent"""
+    result = await db.execute(
+        select(User).where(User.id == agent_id, User.is_deleted == False)
+    )
+    agent = result.scalar_one_or_none()
+
+    if not agent:
+        raise HTTPException(404, "Agent non trouvé")
+
+    sessions_result = await db.execute(
+        select(CashierSession)
+        .where(CashierSession.agent_id == agent_id)
+        .order_by(CashierSession.opened_at.desc())
+        .limit(100)
+    )
+    sessions = sessions_result.scalars().all()
+
+    return templates.TemplateResponse(request, "admin/agents/sessions.html", {
+        "active": "agents",
+        "agent": agent,
+        "sessions": sessions,
+        "admin_name": admin.full_name or admin.email,
+        "admin_role": admin.role,
+        "version": "1.0.0"
+    })
 
 
 # ==================== BUREAUX ====================
@@ -893,20 +1367,99 @@ async def admin_agent_delete(
 @router.get("/bureaus", response_class=HTMLResponse)
 async def admin_bureaus(
     request: Request,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    search: Optional[str] = None,
+    city: Optional[str] = None,
+    status: Optional[str] = None,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Liste des bureaux"""
-    
-    result = await db.execute(
-        select(Bureau).where(Bureau.is_deleted == False)
-    )
+
+    query = select(Bureau).where(Bureau.is_deleted == False)
+
+    if search:
+        query = query.where(
+            or_(
+                Bureau.name.contains(search),
+                Bureau.code.contains(search),
+                Bureau.city.contains(search)
+            )
+        )
+    if city:
+        query = query.where(Bureau.city == city)
+    if status == "active":
+        query = query.where(Bureau.is_active == True)
+    elif status == "inactive":
+        query = query.where(Bureau.is_active == False)
+
+    total_result = await db.execute(select(func.count()).select_from(query.subquery()))
+    total = total_result.scalar() or 0
+
+    query = query.order_by(Bureau.created_at.desc())
+    query = query.offset((page - 1) * per_page).limit(per_page)
+
+    result = await db.execute(query)
     bureaus = result.scalars().all()
-    
-    return templates.TemplateResponse("bureaus/index.html", {
-        "request": request,
+
+    # Nombre d'agents par bureau affiché (attribut ad-hoc, pas une colonne)
+    for bureau in bureaus:
+        agents_count_result = await db.execute(
+            select(func.count(User.id)).where(
+                User.bureau_id == bureau.id,
+                User.role == UserRole.AGENT,
+                User.is_deleted == False
+            )
+        )
+        bureau.agents_count = agents_count_result.scalar() or 0
+
+    # Villes disponibles pour le filtre
+    cities_result = await db.execute(
+        select(Bureau.city).where(Bureau.is_deleted == False, Bureau.city.isnot(None)).distinct()
+    )
+    cities = sorted({c for c in cities_result.scalars().all() if c})
+
+    # Statistiques rapides (cartes en haut de la page)
+    stats_result = await db.execute(
+        select(
+            func.count(Bureau.id).label("total"),
+            func.count(Bureau.id).filter(Bureau.is_active == True).label("active"),
+            func.coalesce(func.sum(Bureau.cash_balance), 0).label("total_cash"),
+        ).where(Bureau.is_deleted == False)
+    )
+    stats_row = stats_result.one()
+    total_agents_result = await db.execute(
+        select(func.count(User.id)).where(
+            User.role == UserRole.AGENT,
+            User.is_deleted == False,
+            User.bureau_id.isnot(None)
+        )
+    )
+
+    return templates.TemplateResponse(request, "admin/bureaus/index.html", {
         "active": "bureaus",
         "bureaus": bureaus,
+        "cities": cities,
+        "filters": {
+            "search": search,
+            "city": city,
+            "status": status,
+        },
+        "stats": {
+            "total": stats_row.total or 0,
+            "active": stats_row.active or 0,
+            "total_agents": total_agents_result.scalar() or 0,
+            "total_cash": float(stats_row.total_cash or 0),
+        },
+        "pagination": {
+            "page": page,
+            "per_page": per_page,
+            "total": total,
+            "pages": (total + per_page - 1) // per_page,
+            "has_prev": page > 1,
+            "has_next": page * per_page < total
+        },
         "admin_name": admin.full_name or admin.email,
         "admin_role": admin.role,
         "version": "1.0.0"
@@ -982,10 +1535,128 @@ async def admin_bureau_delete(
         raise HTTPException(404, "Bureau non trouvé")
     
     bureau.soft_delete(admin.id)
-    
+
     await db.commit()
-    
+
     return {"success": True, "message": "Bureau supprimé avec succès"}
+
+
+@router.get("/bureaus/create", response_class=HTMLResponse)
+async def admin_bureau_create_page(
+    request: Request,
+    admin: User = Depends(get_current_admin)
+):
+    """Page de création d'un bureau"""
+    return templates.TemplateResponse(request, "admin/bureaus/create.html", {
+        "active": "bureaus",
+        "admin_name": admin.full_name or admin.email,
+        "admin_role": admin.role,
+        "version": "1.0.0"
+    })
+
+
+async def _get_bureau_stats(db: AsyncSession, bureau_id: str) -> dict:
+    """Statistiques d'un bureau : agents rattachés, tickets actifs, paris du jour."""
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+
+    agents_result = await db.execute(
+        select(func.count(User.id)).where(
+            User.bureau_id == bureau_id, User.role == UserRole.AGENT, User.is_deleted == False
+        )
+    )
+    active_tickets_result = await db.execute(
+        select(func.count(Ticket.id)).where(
+            Ticket.bureau_id == bureau_id, Ticket.status == TicketStatus.ACTIVE
+        )
+    )
+    today_bets_result = await db.execute(
+        select(func.count(KenoBet.id))
+        .join(Ticket, KenoBet.ticket_id == Ticket.id)
+        .where(Ticket.bureau_id == bureau_id, KenoBet.placed_at >= today_start)
+    )
+
+    return {
+        "agents": agents_result.scalar() or 0,
+        "active_tickets": active_tickets_result.scalar() or 0,
+        "today_bets": today_bets_result.scalar() or 0,
+    }
+
+
+@router.get("/bureaus/{bureau_id}", response_class=HTMLResponse)
+async def admin_bureau_detail(
+    request: Request,
+    bureau_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Détails d'un bureau"""
+    result = await db.execute(
+        select(Bureau).where(Bureau.id == bureau_id, Bureau.is_deleted == False)
+    )
+    bureau = result.scalar_one_or_none()
+
+    if not bureau:
+        raise HTTPException(404, "Bureau non trouvé")
+
+    stats = await _get_bureau_stats(db, bureau_id)
+
+    agents_result = await db.execute(
+        select(User)
+        .where(User.bureau_id == bureau_id, User.role == UserRole.AGENT, User.is_deleted == False)
+        .order_by(User.created_at.desc())
+        .limit(10)
+    )
+    agents = agents_result.scalars().all()
+
+    activities = await _get_recent_activities(db, bureau_id)
+
+    return templates.TemplateResponse(request, "admin/bureaus/detail.html", {
+        "active": "bureaus",
+        "bureau": bureau,
+        "stats": stats,
+        "opening_hours": bureau.opening_hours or {},
+        "agents": agents,
+        "activities": activities,
+        "admin_name": admin.full_name or admin.email,
+        "admin_role": admin.role,
+        "version": "1.0.0"
+    })
+
+
+@router.get("/bureaus/{bureau_id}/edit", response_class=HTMLResponse)
+async def admin_bureau_edit_page(
+    request: Request,
+    bureau_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Page d'édition d'un bureau"""
+    result = await db.execute(
+        select(Bureau).where(Bureau.id == bureau_id, Bureau.is_deleted == False)
+    )
+    bureau = result.scalar_one_or_none()
+
+    if not bureau:
+        raise HTTPException(404, "Bureau non trouvé")
+
+    managers_result = await db.execute(
+        select(User).where(
+            User.role.in_([UserRole.MANAGER, UserRole.ADMIN]), User.is_deleted == False
+        ).order_by(User.first_name)
+    )
+    managers = managers_result.scalars().all()
+
+    bureau_stats = await _get_bureau_stats(db, bureau_id)
+
+    return templates.TemplateResponse(request, "admin/bureaus/edit.html", {
+        "active": "bureaus",
+        "bureau": bureau,
+        "managers": managers,
+        "bureau_stats": bureau_stats,
+        "admin_name": admin.full_name or admin.email,
+        "admin_role": admin.role,
+        "version": "1.0.0"
+    })
 
 
 # ==================== CONFIGURATION KENO ====================
@@ -1011,20 +1682,24 @@ async def admin_keno_config(
     
     # Statistiques Keno
     stats = await _get_keno_stats(db)
-    
+
     # Jackpot
     jackpot = {
         "current": await redis_client.get("config:keno:jackpot") or 0,
         "threshold": await redis_client.get("config:keno:jackpot_threshold") or 50000,
         "updated_at": datetime.utcnow()
     }
-    
-    return templates.TemplateResponse("games/keno/config.html", {
-        "request": request,
+
+    # Table de paiement
+    raw_paytable = await redis_client.get("config:keno:paytable")
+    paytable = json.loads(raw_paytable) if raw_paytable else DEFAULT_KENO_PAYTABLE
+
+    return templates.TemplateResponse(request, "admin/games/keno/config.html", {
         "active": "keno",
         "config": config,
         "stats": stats,
         "jackpot": jackpot,
+        "paytable": paytable,
         "admin_name": admin.full_name or admin.email,
         "admin_role": admin.role,
         "version": "1.0.0"
@@ -1056,8 +1731,200 @@ async def admin_keno_jackpot_reset(
     """Réinitialisation du jackpot Keno"""
     
     await redis_client.setex("config:keno:jackpot", 86400, 0)
-    
+
     return {"success": True, "message": "Jackpot réinitialisé"}
+
+
+@router.get("/games/keno/draws", response_class=HTMLResponse)
+async def admin_keno_draws_page(
+    request: Request,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    status: Optional[str] = None,
+    period: Optional[str] = None,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Liste des tirages Keno"""
+    query = select(KenoDraw)
+
+    if status:
+        query = query.where(KenoDraw.status == status)
+    if period:
+        now = datetime.utcnow()
+        if period == "today":
+            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        elif period == "week":
+            start = now - timedelta(days=7)
+        elif period == "month":
+            start = now - timedelta(days=30)
+        else:
+            start = None
+        if start:
+            query = query.where(KenoDraw.draw_time >= start)
+
+    total_result = await db.execute(select(func.count()).select_from(query.subquery()))
+    total = total_result.scalar() or 0
+
+    query = query.order_by(KenoDraw.draw_time.desc()).offset((page - 1) * per_page).limit(per_page)
+    result = await db.execute(query)
+    draws = result.scalars().all()
+
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    stats_result = await db.execute(
+        select(
+            func.count(KenoDraw.id).filter(KenoDraw.status == KenoDrawStatus.PENDING).label("pending"),
+            func.count(KenoDraw.id).filter(KenoDraw.status == KenoDrawStatus.COMPLETED).label("completed"),
+            func.count(KenoDraw.id).filter(KenoDraw.draw_time >= today_start).label("today"),
+        )
+    )
+    stats_row = stats_result.one()
+
+    next_draw_result = await db.execute(
+        select(KenoDraw.draw_time)
+        .where(KenoDraw.status == KenoDrawStatus.PENDING, KenoDraw.draw_time >= datetime.utcnow())
+        .order_by(KenoDraw.draw_time.asc())
+        .limit(1)
+    )
+    next_draw_time = next_draw_result.scalar_one_or_none()
+
+    return templates.TemplateResponse(request, "admin/games/keno/draws.html", {
+        "active": "keno",
+        "draws": draws,
+        "filters": {"status": status, "period": period},
+        "stats": {
+            "pending": stats_row.pending or 0,
+            "completed": stats_row.completed or 0,
+            "today": stats_row.today or 0,
+            "next_draw": next_draw_time.strftime("%d/%m %H:%M") if next_draw_time else None,
+        },
+        "pagination": {
+            "page": page,
+            "per_page": per_page,
+            "total": total,
+            "pages": (total + per_page - 1) // per_page,
+            "has_prev": page > 1,
+            "has_next": page * per_page < total
+        },
+        "admin_name": admin.full_name or admin.email,
+        "admin_role": admin.role,
+        "version": "1.0.0"
+    })
+
+
+@router.get("/games/keno/statistics", response_class=HTMLResponse)
+async def admin_keno_statistics_page(
+    request: Request,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Statistiques détaillées du jeu Keno"""
+    if not end_date:
+        end_date = datetime.utcnow().date().isoformat()
+    if not start_date:
+        start_date = (datetime.utcnow() - timedelta(days=30)).date().isoformat()
+
+    start = datetime.strptime(start_date, "%Y-%m-%d")
+    end = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+
+    stats_result = await db.execute(
+        select(
+            func.count(func.distinct(KenoDraw.id)).label("total_draws"),
+        )
+        .select_from(KenoDraw)
+        .where(KenoDraw.draw_time >= start, KenoDraw.draw_time < end, KenoDraw.status == KenoDrawStatus.COMPLETED)
+    )
+    total_draws = stats_result.scalar() or 0
+
+    bets_result = await db.execute(
+        select(
+            func.count(KenoBet.id).label("total_bets"),
+            func.coalesce(func.sum(KenoBet.stake), 0).label("total_volume"),
+            func.coalesce(func.sum(KenoBet.winnings), 0).label("total_payout"),
+        ).where(KenoBet.placed_at >= start, KenoBet.placed_at < end)
+    )
+    bets_row = bets_result.one()
+    total_volume = float(bets_row.total_volume or 0)
+    total_payout = float(bets_row.total_payout or 0)
+    rtp = round(total_payout / total_volume * 100, 2) if total_volume > 0 else 0
+
+    stats = {
+        "total_draws": total_draws,
+        "total_bets": bets_row.total_bets or 0,
+        "total_volume": total_volume,
+        "total_payout": total_payout,
+        "rtp": rtp,
+        "edge": round(100 - rtp, 2),
+    }
+
+    # Fréquence des numéros tirés (calculée en Python : ARRAY Postgres non
+    # agrégeable simplement en SQL portable)
+    numbers_result = await db.execute(
+        select(KenoDraw.numbers).where(
+            KenoDraw.draw_time >= start, KenoDraw.draw_time < end,
+            KenoDraw.status == KenoDrawStatus.COMPLETED, KenoDraw.numbers.isnot(None)
+        )
+    )
+    from collections import Counter
+    counter = Counter()
+    for (numbers,) in numbers_result.all():
+        counter.update(numbers or [])
+    most_common = counter.most_common(10)
+    least_common = sorted(counter.items(), key=lambda kv: kv[1])[:10]
+    popular_numbers = [{"number": n, "count": c} for n, c in most_common]
+    least_popular_numbers = [{"number": n, "count": c} for n, c in least_common]
+
+    # Évolution quotidienne
+    daily_result = await db.execute(
+        select(
+            func.date_trunc('day', KenoBet.placed_at).label("day"),
+            func.count(func.distinct(KenoBet.draw_id)).label("draws"),
+            func.count(KenoBet.id).label("bets"),
+            func.coalesce(func.sum(KenoBet.stake), 0).label("volume"),
+            func.coalesce(func.sum(KenoBet.winnings), 0).label("payout"),
+        )
+        .where(KenoBet.placed_at >= start, KenoBet.placed_at < end)
+        .group_by(func.date_trunc('day', KenoBet.placed_at))
+        .order_by(func.date_trunc('day', KenoBet.placed_at))
+    )
+    daily_rows = daily_result.all()
+    daily_data = []
+    for row in daily_rows:
+        volume = float(row.volume)
+        payout = float(row.payout)
+        day_rtp = round(payout / volume * 100, 2) if volume > 0 else 0
+        daily_data.append({
+            "date": row.day.strftime("%d/%m/%Y"),
+            "draws": row.draws,
+            "bets": row.bets,
+            "volume": volume,
+            "payout": payout,
+            "rtp": day_rtp,
+            "edge": round(100 - day_rtp, 2),
+        })
+
+    chart_data = {
+        "labels": [d["date"] for d in daily_data],
+        "bets": [d["bets"] for d in daily_data],
+        "volume": [d["volume"] for d in daily_data],
+        "payout": [d["payout"] for d in daily_data],
+    }
+
+    return templates.TemplateResponse(request, "admin/games/keno/statistics.html", {
+        "active": "keno",
+        "start_date": start_date,
+        "end_date": end_date,
+        "stats": stats,
+        "popular_numbers": popular_numbers,
+        "least_popular_numbers": least_popular_numbers,
+        "daily_data": daily_data,
+        "chart_data": chart_data,
+        "admin_name": admin.full_name or admin.email,
+        "admin_role": admin.role,
+        "version": "1.0.0"
+    })
 
 
 # ==================== CONFIGURATION LUCKY ====================
@@ -1087,11 +1954,163 @@ async def admin_lucky_config(
     # Statistiques Lucky
     stats = await _get_lucky_stats(db)
     
-    return templates.TemplateResponse("games/lucky/config.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "admin/games/lucky/config.html", {
         "active": "lucky",
         "config": config,
         "stats": stats,
+        "admin_name": admin.full_name or admin.email,
+        "admin_role": admin.role,
+        "version": "1.0.0"
+    })
+
+
+@router.get("/games/lucky/statistics", response_class=HTMLResponse)
+async def admin_lucky_statistics_page(
+    request: Request,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Statistiques détaillées du jeu Lucky Wheel"""
+    if not end_date:
+        end_date = datetime.utcnow().date().isoformat()
+    if not start_date:
+        start_date = (datetime.utcnow() - timedelta(days=30)).date().isoformat()
+
+    start = datetime.strptime(start_date, "%Y-%m-%d")
+    end = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+
+    stats_result = await db.execute(
+        select(
+            func.count(LuckyPlay.id).label("total_plays"),
+            func.coalesce(func.sum(LuckyPlay.stake), 0).label("total_stake"),
+            func.coalesce(func.sum(LuckyPlay.winnings), 0).label("total_wins"),
+            func.coalesce(func.max(LuckyPlay.multiplier), 0).label("max_multiplier"),
+            func.coalesce(func.max(LuckyPlay.winnings), 0).label("max_win"),
+        ).where(LuckyPlay.played_at >= start, LuckyPlay.played_at < end)
+    )
+    row = stats_result.one()
+    total_stake = float(row.total_stake or 0)
+    total_wins = float(row.total_wins or 0)
+    rtp = round(total_wins / total_stake * 100, 2) if total_stake > 0 else 0
+
+    stats = {
+        "total_plays": row.total_plays or 0,
+        "total_stake": total_stake,
+        "total_wins": total_wins,
+        "rtp": rtp,
+        "max_multiplier": float(row.max_multiplier or 0),
+        "max_win": float(row.max_win or 0),
+    }
+
+    # Configuration active (pour le poids théorique de chaque segment)
+    config_result = await db.execute(
+        select(LuckyWheelConfig)
+        .where(LuckyWheelConfig.is_active == True)
+        .order_by(LuckyWheelConfig.is_default.desc())
+        .limit(1)
+    )
+    config = config_result.scalar_one_or_none()
+    theoretical_weights = {}
+    if config and config.segments:
+        total_weight = sum(s["weight"] for s in config.segments) or 1
+        theoretical_weights = {
+            s["label"]: {"weight_pct": s["weight"] / total_weight * 100, "multiplier": s["multiplier"], "color": s["color"]}
+            for s in config.segments
+        }
+
+    # Répartition réelle des segments obtenus (calculée en Python : JSON non
+    # agrégeable simplement en SQL portable)
+    segments_result = await db.execute(
+        select(LuckyPlay.result_segment).where(LuckyPlay.played_at >= start, LuckyPlay.played_at < end)
+    )
+    from collections import Counter
+    segment_counter = Counter()
+    for (result_segment,) in segments_result.all():
+        if result_segment:
+            segment_counter[result_segment.get("label", "?")] += 1
+    total_plays = sum(segment_counter.values()) or 1
+
+    segment_stats = []
+    for label, count in segment_counter.most_common():
+        theo = theoretical_weights.get(label, {})
+        segment_stats.append({
+            "label": label,
+            "multiplier": theo.get("multiplier", "-"),
+            "color": theo.get("color", "#94a3b8"),
+            "count": count,
+            "frequency": count / total_plays * 100,
+            "theoretical_weight": theo.get("weight_pct", 0),
+        })
+
+    # Évolution quotidienne
+    daily_result = await db.execute(
+        select(
+            func.date_trunc('day', LuckyPlay.played_at).label("day"),
+            func.count(LuckyPlay.id).label("plays"),
+            func.coalesce(func.sum(LuckyPlay.stake), 0).label("stake"),
+            func.coalesce(func.sum(LuckyPlay.winnings), 0).label("wins"),
+            func.coalesce(func.max(LuckyPlay.multiplier), 0).label("max_multiplier"),
+        )
+        .where(LuckyPlay.played_at >= start, LuckyPlay.played_at < end)
+        .group_by(func.date_trunc('day', LuckyPlay.played_at))
+        .order_by(func.date_trunc('day', LuckyPlay.played_at))
+    )
+    daily_rows = daily_result.all()
+    daily_data = []
+    for r in daily_rows:
+        day_stake = float(r.stake)
+        day_wins = float(r.wins)
+        day_rtp = round(day_wins / day_stake * 100, 2) if day_stake > 0 else 0
+        daily_data.append({
+            "date": r.day.strftime("%d/%m/%Y"),
+            "plays": r.plays,
+            "stake": day_stake,
+            "wins": day_wins,
+            "rtp": day_rtp,
+            "max_multiplier": float(r.max_multiplier or 0),
+        })
+
+    chart_data = {
+        "labels": [d["date"] for d in daily_data],
+        "plays": [d["plays"] for d in daily_data],
+        "stake": [d["stake"] for d in daily_data],
+        "wins": [d["wins"] for d in daily_data],
+        "segment_distribution": [
+            {"label": s["label"], "count": s["count"], "color": s["color"]} for s in segment_stats
+        ],
+    }
+
+    # Plus gros gains
+    big_wins_result = await db.execute(
+        select(LuckyPlay, User)
+        .join(User, LuckyPlay.user_id == User.id, isouter=True)
+        .where(LuckyPlay.played_at >= start, LuckyPlay.played_at < end, LuckyPlay.winnings > 0)
+        .order_by(LuckyPlay.winnings.desc())
+        .limit(10)
+    )
+    big_wins = []
+    for play, user in big_wins_result.all():
+        segment = play.result_segment or {}
+        big_wins.append({
+            "date": play.played_at,
+            "player": (user.full_name or user.phone) if user else None,
+            "segment": segment.get("label", "-"),
+            "color": segment.get("color", "#94a3b8"),
+            "multiplier": float(play.multiplier),
+            "amount": float(play.winnings),
+        })
+
+    return templates.TemplateResponse(request, "admin/games/lucky/statistics.html", {
+        "active": "lucky",
+        "start_date": start_date,
+        "end_date": end_date,
+        "stats": stats,
+        "segment_stats": segment_stats,
+        "daily_data": daily_data,
+        "chart_data": chart_data,
+        "big_wins": big_wins,
         "admin_name": admin.full_name or admin.email,
         "admin_role": admin.role,
         "version": "1.0.0"
@@ -1136,41 +2155,53 @@ async def admin_transactions(
     request: Request,
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
+    search: Optional[str] = None,
     transaction_type: Optional[str] = None,
     status: Optional[str] = None,
+    method: Optional[str] = None,
     user_id: Optional[str] = None,
+    min_amount: Optional[float] = None,
+    max_amount: Optional[float] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Liste des transactions"""
-    
+
     query = select(Transaction)
-    
+
+    if search:
+        query = query.where(Transaction.reference.contains(search))
     if transaction_type:
         query = query.where(Transaction.transaction_type == transaction_type)
     if status:
         query = query.where(Transaction.status == status)
+    if method:
+        query = query.where(Transaction.payment_method == method)
     if user_id:
         query = query.where(Transaction.user_id == user_id)
+    if min_amount is not None:
+        query = query.where(Transaction.amount >= min_amount)
+    if max_amount is not None:
+        query = query.where(Transaction.amount <= max_amount)
     if start_date:
         start = datetime.strptime(start_date, "%Y-%m-%d")
         query = query.where(Transaction.created_at >= start)
     if end_date:
         end = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
         query = query.where(Transaction.created_at < end)
-    
+
     # Pagination
     total_result = await db.execute(select(func.count()).select_from(query.subquery()))
     total = total_result.scalar() or 0
-    
+
     query = query.order_by(Transaction.created_at.desc())
     query = query.offset((page - 1) * per_page).limit(per_page)
-    
+
     result = await db.execute(query)
     transactions = result.scalars().all()
-    
+
     # Récupérer les noms des utilisateurs
     for tx in transactions:
         if tx.user_id:
@@ -1179,11 +2210,49 @@ async def admin_transactions(
             )
             user = user_result.scalar_one_or_none()
             tx.user_name = user.full_name if user else None
-    
-    return templates.TemplateResponse("transactions/index.html", {
-        "request": request,
+
+    # Statistiques rapides
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    stats_result = await db.execute(
+        select(
+            func.coalesce(func.sum(Transaction.amount).filter(Transaction.status == TransactionStatus.COMPLETED), 0).label("total_volume"),
+            func.coalesce(func.sum(Transaction.amount).filter(
+                Transaction.transaction_type == TransactionType.DEPOSIT, Transaction.status == TransactionStatus.COMPLETED
+            ), 0).label("total_deposits"),
+            func.coalesce(func.sum(Transaction.amount).filter(
+                Transaction.transaction_type == TransactionType.WITHDRAWAL, Transaction.status == TransactionStatus.COMPLETED
+            ), 0).label("total_withdrawals"),
+            func.coalesce(func.sum(Transaction.amount).filter(
+                Transaction.transaction_type == TransactionType.WIN, Transaction.status == TransactionStatus.COMPLETED
+            ), 0).label("total_wins"),
+            func.count(Transaction.id).filter(Transaction.status == TransactionStatus.PENDING).label("pending"),
+            func.count(Transaction.id).filter(Transaction.created_at >= today_start).label("today"),
+        )
+    )
+    stats_row = stats_result.one()
+
+    return templates.TemplateResponse(request, "admin/transactions/index.html", {
         "active": "transactions",
         "transactions": transactions,
+        "stats": {
+            "total_volume": float(stats_row.total_volume or 0),
+            "total_deposits": float(stats_row.total_deposits or 0),
+            "total_withdrawals": float(stats_row.total_withdrawals or 0),
+            "total_wins": float(stats_row.total_wins or 0),
+            "pending": stats_row.pending or 0,
+            "today": stats_row.today or 0,
+        },
+        "filters": {
+            "search": search,
+            "type": transaction_type,
+            "status": status,
+            "method": method,
+            "user_id": user_id,
+            "min_amount": min_amount,
+            "max_amount": max_amount,
+            "start_date": start_date,
+            "end_date": end_date,
+        },
         "pagination": {
             "page": page,
             "per_page": per_page,
@@ -1200,6 +2269,36 @@ async def admin_transactions(
     })
 
 
+@router.get("/transactions/{transaction_id}", response_class=HTMLResponse)
+async def admin_transaction_detail_page(
+    request: Request,
+    transaction_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Détails d'une transaction"""
+    result = await db.execute(
+        select(Transaction, User)
+        .join(User, Transaction.user_id == User.id, isouter=True)
+        .where(Transaction.id == transaction_id)
+    )
+    row = result.first()
+
+    if not row:
+        raise HTTPException(404, "Transaction non trouvée")
+
+    transaction, user = row
+    transaction.user = user
+
+    return templates.TemplateResponse(request, "admin/transactions/detail.html", {
+        "active": "transactions",
+        "transaction": transaction,
+        "admin_name": admin.full_name or admin.email,
+        "admin_role": admin.role,
+        "version": "1.0.0"
+    })
+
+
 # ==================== TICKETS ====================
 
 @router.get("/tickets", response_class=HTMLResponse)
@@ -1209,18 +2308,25 @@ async def admin_tickets(
     per_page: int = Query(20, ge=1, le=100),
     status: Optional[str] = None,
     bureau_id: Optional[str] = None,
+    agent_id: Optional[str] = None,
     search: Optional[str] = None,
+    min_amount: Optional[float] = None,
+    max_amount: Optional[float] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Gestion des tickets"""
-    
+
     query = select(Ticket)
-    
+
     if status:
         query = query.where(Ticket.status == status)
     if bureau_id:
         query = query.where(Ticket.bureau_id == bureau_id)
+    if agent_id:
+        query = query.where(Ticket.agent_id == agent_id)
     if search:
         query = query.where(
             or_(
@@ -1229,21 +2335,74 @@ async def admin_tickets(
                 Ticket.player_phone.contains(search)
             )
         )
-    
+    if min_amount is not None:
+        query = query.where(Ticket.initial_amount >= min_amount)
+    if max_amount is not None:
+        query = query.where(Ticket.initial_amount <= max_amount)
+    if start_date:
+        start = datetime.strptime(start_date, "%Y-%m-%d")
+        query = query.where(Ticket.created_at >= start)
+    if end_date:
+        end = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+        query = query.where(Ticket.created_at < end)
+
     # Pagination
     total_result = await db.execute(select(func.count()).select_from(query.subquery()))
     total = total_result.scalar() or 0
-    
+
     query = query.order_by(Ticket.created_at.desc())
     query = query.offset((page - 1) * per_page).limit(per_page)
-    
+
     result = await db.execute(query)
     tickets = result.scalars().all()
-    
-    return templates.TemplateResponse("tickets/index.html", {
-        "request": request,
+
+    # Bureaux et agents pour les filtres
+    bureaus_result = await db.execute(select(Bureau).where(Bureau.is_deleted == False))
+    bureaus = bureaus_result.scalars().all()
+    agents_result = await db.execute(
+        select(User).where(User.role == UserRole.AGENT, User.is_deleted == False)
+    )
+    agents = agents_result.scalars().all()
+
+    # Statistiques rapides
+    soon = datetime.utcnow() + timedelta(days=2)
+    stats_result = await db.execute(
+        select(
+            func.count(Ticket.id).label("total"),
+            func.count(Ticket.id).filter(Ticket.status == TicketStatus.ACTIVE).label("active"),
+            func.count(Ticket.id).filter(Ticket.status == TicketStatus.EXPIRED).label("expired"),
+            func.count(Ticket.id).filter(Ticket.status == TicketStatus.PAID).label("paid"),
+            func.coalesce(func.sum(Ticket.balance).filter(Ticket.status == TicketStatus.ACTIVE), 0).label("total_balance"),
+            func.count(Ticket.id).filter(
+                Ticket.status == TicketStatus.ACTIVE, Ticket.expires_at <= soon
+            ).label("expiring_soon"),
+        )
+    )
+    stats_row = stats_result.one()
+
+    return templates.TemplateResponse(request, "admin/tickets/index.html", {
         "active": "tickets",
         "tickets": tickets,
+        "bureaus": bureaus,
+        "agents": agents,
+        "stats": {
+            "total": stats_row.total or 0,
+            "active": stats_row.active or 0,
+            "expired": stats_row.expired or 0,
+            "paid": stats_row.paid or 0,
+            "total_balance": float(stats_row.total_balance or 0),
+            "expiring_soon": stats_row.expiring_soon or 0,
+        },
+        "filters": {
+            "search": search,
+            "status": status,
+            "bureau_id": bureau_id,
+            "agent_id": agent_id,
+            "min_amount": min_amount,
+            "max_amount": max_amount,
+            "start_date": start_date,
+            "end_date": end_date,
+        },
         "pagination": {
             "page": page,
             "per_page": per_page,
@@ -1252,6 +2411,55 @@ async def admin_tickets(
             "has_prev": page > 1,
             "has_next": page * per_page < total
         },
+        "admin_name": admin.full_name or admin.email,
+        "admin_role": admin.role,
+        "version": "1.0.0",
+        "now": datetime.utcnow(),
+    })
+
+
+@router.get("/tickets/{ticket_id}", response_class=HTMLResponse)
+async def admin_ticket_detail_page(
+    request: Request,
+    ticket_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Détails d'un ticket"""
+    result = await db.execute(
+        select(Ticket).where(Ticket.id == ticket_id)
+    )
+    ticket = result.scalar_one_or_none()
+
+    if not ticket:
+        raise HTTPException(404, "Ticket non trouvé")
+
+    tx_result = await db.execute(
+        select(Transaction)
+        .where(Transaction.ticket_id == ticket_id)
+        .order_by(Transaction.created_at.desc())
+    )
+    transactions = tx_result.scalars().all()
+    for tx in transactions:
+        tx.type = tx.transaction_type.value if hasattr(tx.transaction_type, "value") else tx.transaction_type
+        tx.balance = tx.balance_after
+        tx.description = tx.failure_reason or tx.external_reference
+
+    bets_result = await db.execute(
+        select(KenoBet)
+        .where(KenoBet.ticket_id == ticket_id)
+        .order_by(KenoBet.placed_at.desc())
+    )
+    bets = bets_result.scalars().all()
+    for bet in bets:
+        bet.game = "Keno"
+
+    return templates.TemplateResponse(request, "admin/tickets/detail.html", {
+        "active": "tickets",
+        "ticket": ticket,
+        "transactions": transactions,
+        "bets": bets,
+        "now": datetime.utcnow(),
         "admin_name": admin.full_name or admin.email,
         "admin_role": admin.role,
         "version": "1.0.0"
@@ -1293,8 +2501,7 @@ async def admin_reports_financial(
         "net": [d["net"] for d in daily_data]
     }
     
-    return templates.TemplateResponse("reports/financial.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "admin/reports/financial.html", {
         "active": "reports",
         "start_date": start_date,
         "end_date": end_date,
@@ -1314,41 +2521,91 @@ async def admin_audit_logs(
     request: Request,
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=200),
+    search: Optional[str] = None,
     action: Optional[str] = None,
+    resource_type: Optional[str] = None,
     user_id: Optional[str] = None,
+    ip_address: Optional[str] = None,
+    leh_exported: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Logs d'audit pour la conformité LEH"""
-    
+
     query = select(AuditLog).order_by(AuditLog.created_at.desc())
-    
+
+    if search:
+        query = query.where(
+            or_(
+                AuditLog.resource_id.contains(search),
+                AuditLog.reason.contains(search)
+            )
+        )
     if action:
         query = query.where(AuditLog.action == action)
+    if resource_type:
+        query = query.where(AuditLog.resource_type == resource_type)
     if user_id:
         query = query.where(AuditLog.user_id == user_id)
+    if ip_address:
+        query = query.where(AuditLog.ip_address == ip_address)
+    if leh_exported in ("true", "false"):
+        query = query.where(AuditLog.leh_exported == (leh_exported == "true"))
     if start_date:
         start = datetime.strptime(start_date, "%Y-%m-%d")
         query = query.where(AuditLog.created_at >= start)
     if end_date:
         end = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
         query = query.where(AuditLog.created_at < end)
-    
+
     # Pagination
     total_result = await db.execute(select(func.count()).select_from(query.subquery()))
     total = total_result.scalar() or 0
-    
+
     query = query.offset((page - 1) * per_page).limit(per_page)
-    
+
     result = await db.execute(query)
     logs = result.scalars().all()
-    
-    return templates.TemplateResponse("audit/logs.html", {
-        "request": request,
+
+    # Statistiques rapides
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    stats_result = await db.execute(
+        select(
+            func.count(AuditLog.id).label("total"),
+            func.count(AuditLog.id).filter(AuditLog.leh_exported == True).label("exported"),
+            func.count(AuditLog.id).filter(AuditLog.leh_exported == False).label("pending"),
+            func.count(AuditLog.id).filter(AuditLog.created_at >= today_start).label("today"),
+            func.count(AuditLog.id).filter(
+                AuditLog.action.in_([AuditAction.LOGIN_FAILED, AuditAction.USER_BLOCKED])
+            ).label("critical"),
+        )
+    )
+    stats_row = stats_result.one()
+
+    return templates.TemplateResponse(request, "admin/audit/logs.html", {
         "active": "audit",
         "logs": logs,
+        "stats": {
+            "total": stats_row.total or 0,
+            "exported": stats_row.exported or 0,
+            "pending": stats_row.pending or 0,
+            "today": stats_row.today or 0,
+            "critical": stats_row.critical or 0,
+            # Pas encore configurable : durée de conservation réglementaire LEH par défaut.
+            "retention_days": 365,
+        },
+        "filters": {
+            "search": search,
+            "action": action,
+            "resource_type": resource_type,
+            "user_id": user_id,
+            "ip_address": ip_address,
+            "leh_exported": leh_exported,
+            "start_date": start_date,
+            "end_date": end_date,
+        },
         "pagination": {
             "page": page,
             "per_page": per_page,
@@ -1428,20 +2685,85 @@ async def admin_audit_export(
 @router.get("/promotions", response_class=HTMLResponse)
 async def admin_promotions(
     request: Request,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    search: Optional[str] = None,
+    status: Optional[str] = None,
+    type: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Liste des promotions"""
-    
-    result = await db.execute(
-        select(Promotion).order_by(Promotion.created_at.desc())
-    )
+
+    query = select(Promotion)
+
+    if search:
+        query = query.where(
+            or_(
+                Promotion.name.contains(search),
+                Promotion.code.contains(search)
+            )
+        )
+    if status:
+        query = query.where(Promotion.status == status)
+    if type:
+        query = query.where(Promotion.type == type)
+    if start_date:
+        start = datetime.strptime(start_date, "%Y-%m-%d")
+        query = query.where(Promotion.start_date >= start)
+    if end_date:
+        end = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+        query = query.where(Promotion.end_date < end)
+
+    total_result = await db.execute(select(func.count()).select_from(query.subquery()))
+    total = total_result.scalar() or 0
+
+    query = query.order_by(Promotion.created_at.desc())
+    query = query.offset((page - 1) * per_page).limit(per_page)
+
+    result = await db.execute(query)
     promotions = result.scalars().all()
-    
-    return templates.TemplateResponse("promotions/index.html", {
-        "request": request,
+
+    stats_result = await db.execute(
+        select(
+            func.count(Promotion.id).label("total"),
+            func.count(Promotion.id).filter(Promotion.status == PromotionStatus.ACTIVE).label("active"),
+            func.count(Promotion.id).filter(Promotion.status == PromotionStatus.DRAFT).label("pending"),
+            func.count(Promotion.id).filter(Promotion.status == PromotionStatus.EXPIRED).label("expired"),
+            func.coalesce(func.sum(Promotion.used_budget), 0).label("used_budget"),
+            func.coalesce(func.sum(Promotion.total_claims), 0).label("total_claims"),
+        )
+    )
+    stats_row = stats_result.one()
+
+    return templates.TemplateResponse(request, "admin/promotions/index.html", {
         "active": "promotions",
         "promotions": promotions,
+        "stats": {
+            "total": stats_row.total or 0,
+            "active": stats_row.active or 0,
+            "pending": stats_row.pending or 0,
+            "expired": stats_row.expired or 0,
+            "used_budget": float(stats_row.used_budget or 0),
+            "total_claims": stats_row.total_claims or 0,
+        },
+        "filters": {
+            "search": search,
+            "status": status,
+            "type": type,
+            "start_date": start_date,
+            "end_date": end_date,
+        },
+        "pagination": {
+            "page": page,
+            "per_page": per_page,
+            "total": total,
+            "pages": (total + per_page - 1) // per_page,
+            "has_prev": page > 1,
+            "has_next": page * per_page < total
+        },
         "admin_name": admin.full_name or admin.email,
         "admin_role": admin.role,
         "version": "1.0.0"
@@ -1527,8 +2849,90 @@ async def admin_promotion_delete(
     
     await db.delete(promotion)
     await db.commit()
-    
+
     return {"success": True, "message": "Promotion supprimée avec succès"}
+
+
+@router.get("/promotions/create", response_class=HTMLResponse)
+async def admin_promotion_create_page(
+    request: Request,
+    admin: User = Depends(get_current_admin)
+):
+    """Page de création d'une promotion"""
+    return templates.TemplateResponse(request, "admin/promotions/create.html", {
+        "active": "promotions",
+        "admin_name": admin.full_name or admin.email,
+        "admin_role": admin.role,
+        "version": "1.0.0"
+    })
+
+
+@router.get("/promotions/{promotion_id}", response_class=HTMLResponse)
+async def admin_promotion_detail(
+    request: Request,
+    promotion_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Détails d'une promotion"""
+    result = await db.execute(
+        select(Promotion).where(Promotion.id == promotion_id)
+    )
+    promotion = result.scalar_one_or_none()
+
+    if not promotion:
+        raise HTTPException(404, "Promotion non trouvée")
+
+    claims_result = await db.execute(
+        select(UserPromotion, User)
+        .join(User, UserPromotion.user_id == User.id, isouter=True)
+        .where(UserPromotion.promotion_id == promotion_id)
+        .order_by(UserPromotion.claimed_at.desc())
+        .limit(20)
+    )
+    recent_claims = [
+        {
+            "user_name": (user.full_name or user.phone) if user else "Utilisateur supprimé",
+            "bonus_amount": float(claim.bonus_amount),
+            "created_at": claim.claimed_at,
+        }
+        for claim, user in claims_result.all()
+    ]
+
+    return templates.TemplateResponse(request, "admin/promotions/detail.html", {
+        "active": "promotions",
+        "promotion": promotion,
+        "recent_claims": recent_claims,
+        "admin_name": admin.full_name or admin.email,
+        "admin_role": admin.role,
+        "version": "1.0.0"
+    })
+
+
+@router.get("/promotions/{promotion_id}/edit", response_class=HTMLResponse)
+async def admin_promotion_edit_page(
+    request: Request,
+    promotion_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Page d'édition d'une promotion"""
+    result = await db.execute(
+        select(Promotion).where(Promotion.id == promotion_id)
+    )
+    promotion = result.scalar_one_or_none()
+
+    if not promotion:
+        raise HTTPException(404, "Promotion non trouvée")
+
+    return templates.TemplateResponse(request, "admin/promotions/edit.html", {
+        "active": "promotions",
+        "promotion": promotion,
+        "admin_name": admin.full_name or admin.email,
+        "admin_role": admin.role,
+        "version": "1.0.0"
+    })
+
 
 # ==================== API SUPPLEMENTAIRES POUR KYC ====================
 
@@ -1550,16 +2954,24 @@ async def admin_user_kyc_verify(
     user.kyc_status = KYCStatus.VERIFIED
     user.kyc_verified_at = datetime.utcnow()
     user.kyc_verified_by = admin.id
-    
+
+    audit = AuditLog(
+        user_id=admin.id,
+        action=AuditAction.KYC_VERIFIED,
+        resource_type="user",
+        resource_id=user_id,
+        ip_address="0.0.0.0"
+    )
+    db.add(audit)
     await db.commit()
-    
+
     return {"success": True, "message": "KYC validé avec succès"}
 
 
 @router.post("/api/users/{user_id}/kyc/reject")
 async def admin_user_kyc_reject(
     user_id: str,
-    reason: str = Body(...),
+    reason: str = Body(..., embed=True),
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
@@ -1580,6 +2992,7 @@ async def admin_user_kyc_reject(
         action=AuditAction.KYC_SUBMITTED,
         resource_type="user",
         resource_id=user_id,
+        ip_address="0.0.0.0",
         reason=reason
     )
     db.add(audit)
@@ -1606,10 +3019,73 @@ async def admin_user_kyc_reset(
     user.kyc_status = KYCStatus.PENDING
     user.kyc_verified_at = None
     user.kyc_verified_by = None
-    
+
+    audit = AuditLog(
+        user_id=admin.id,
+        action=AuditAction.KYC_SUBMITTED,
+        resource_type="user",
+        resource_id=user_id,
+        ip_address="0.0.0.0",
+        reason="Réinitialisation par un administrateur"
+    )
+    db.add(audit)
     await db.commit()
-    
+
     return {"success": True, "message": "KYC réinitialisé"}
+
+
+@router.get("/users/{user_id}/kyc", response_class=HTMLResponse)
+async def admin_user_kyc_page(
+    request: Request,
+    user_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Page de gestion KYC d'un utilisateur"""
+    result = await db.execute(
+        select(User).where(User.id == user_id, User.is_deleted == False)
+    )
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(404, "Utilisateur non trouvé")
+
+    history_result = await db.execute(
+        select(AuditLog)
+        .where(
+            AuditLog.resource_type == "user",
+            AuditLog.resource_id == user_id,
+            AuditLog.action.in_([AuditAction.KYC_SUBMITTED, AuditAction.KYC_VERIFIED])
+        )
+        .order_by(AuditLog.created_at.desc())
+        .limit(20)
+    )
+    logs = history_result.scalars().all()
+
+    action_labels = {
+        AuditAction.KYC_SUBMITTED: "Soumission",
+        AuditAction.KYC_VERIFIED: "Validation",
+    }
+    kyc_history = [
+        {
+            "created_at": log.created_at,
+            "action": action_labels.get(log.action, log.action),
+            "status": "verified" if log.action == AuditAction.KYC_VERIFIED else "pending",
+            "by": log.user_id,
+            "comment": log.reason,
+        }
+        for log in logs
+    ]
+
+    return templates.TemplateResponse(request, "admin/users/kyc.html", {
+        "active": "users",
+        "user": user,
+        "documents": [],
+        "kyc_history": kyc_history,
+        "admin_name": admin.full_name or admin.email,
+        "admin_role": admin.role,
+        "version": "1.0.0"
+    })
 
 
 @router.post("/api/users/{user_id}/credit")
@@ -1623,31 +3099,29 @@ async def admin_user_credit(
 ):
     """Crédite manuellement un utilisateur"""
     from decimal import Decimal
-    from app.models.transaction import Transaction, TransactionType, PaymentMethod, TransactionStatus
-    
+
     wallet_service = WalletService(db, redis_client)
-    wallet = await wallet_service.get_wallet(user_id)
-    
-    old_balance = wallet.balance
-    wallet.balance += Decimal(str(amount))
-    
-    transaction = Transaction(
-        reference=f"ADJ-CREDIT-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
+    transaction = await wallet_service.credit(
         user_id=user_id,
-        wallet_id=wallet.id,
-        transaction_type=TransactionType.ADJUSTMENT,
-        payment_method=PaymentMethod.CASH,
         amount=Decimal(str(amount)),
-        balance_before=old_balance,
-        balance_after=wallet.balance,
-        status=TransactionStatus.COMPLETED,
-        completed_at=datetime.utcnow(),
-        metadata={"admin_id": admin.id, "reason": reason}
+        transaction_type="ADJUSTMENT",
+        payment_method="cash",
+        reference=f"ADJ-CREDIT-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
     )
-    
-    db.add(transaction)
+    transaction.created_by = admin.id
+
+    audit = AuditLog(
+        user_id=admin.id,
+        action=AuditAction.DEPOSIT,
+        resource_type="wallet",
+        resource_id=transaction.wallet_id,
+        ip_address="0.0.0.0",
+        new_values={"credited": float(amount), "balance_after": float(transaction.balance_after)},
+        reason=reason,
+    )
+    db.add(audit)
     await db.commit()
-    
+
     return {"success": True, "message": f"{amount} HTG crédités"}
 
 
@@ -1662,34 +3136,33 @@ async def admin_user_debit(
 ):
     """Débite manuellement un utilisateur"""
     from decimal import Decimal
-    from app.models.transaction import Transaction, TransactionType, PaymentMethod, TransactionStatus
-    
+    from app.core.exceptions import InsufficientBalanceException
+
     wallet_service = WalletService(db, redis_client)
-    wallet = await wallet_service.get_wallet(user_id)
-    
-    if wallet.balance < Decimal(str(amount)):
+    try:
+        transaction = await wallet_service.debit(
+            user_id=user_id,
+            amount=Decimal(str(amount)),
+            transaction_type="ADJUSTMENT",
+            payment_method="cash",
+            reference=f"ADJ-DEBIT-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
+        )
+    except InsufficientBalanceException:
         raise HTTPException(400, "Solde insuffisant")
-    
-    old_balance = wallet.balance
-    wallet.balance -= Decimal(str(amount))
-    
-    transaction = Transaction(
-        reference=f"ADJ-DEBIT-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
-        user_id=user_id,
-        wallet_id=wallet.id,
-        transaction_type=TransactionType.ADJUSTMENT,
-        payment_method=PaymentMethod.CASH,
-        amount=Decimal(str(amount)),
-        balance_before=old_balance,
-        balance_after=wallet.balance,
-        status=TransactionStatus.COMPLETED,
-        completed_at=datetime.utcnow(),
-        metadata={"admin_id": admin.id, "reason": reason}
+    transaction.created_by = admin.id
+
+    audit = AuditLog(
+        user_id=admin.id,
+        action=AuditAction.WITHDRAWAL,
+        resource_type="wallet",
+        resource_id=transaction.wallet_id,
+        ip_address="0.0.0.0",
+        new_values={"debited": float(amount), "balance_after": float(transaction.balance_after)},
+        reason=reason,
     )
-    
-    db.add(transaction)
+    db.add(audit)
     await db.commit()
-    
+
     return {"success": True, "message": f"{amount} HTG débités"}
 
 # ==================== API SUPPLEMENTAIRES POUR BUREAUX ====================
@@ -1791,7 +3264,7 @@ async def admin_bureau_toggle_status(
     return {"success": True, "message": f"Bureau {status} avec succès"}
 
 
-@router.get("/admin/bureaus/{bureau_id}/agents")
+@router.get("/bureaus/{bureau_id}/agents", response_class=HTMLResponse)
 async def admin_bureau_agents(
     request: Request,
     bureau_id: str,
@@ -1809,8 +3282,7 @@ async def admin_bureau_agents(
     )
     agents = result.scalars().all()
     
-    return templates.TemplateResponse("bureaus/agents.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "admin/bureaus/agents.html", {
         "active": "bureaus",
         "bureau": await db.get(Bureau, bureau_id),
         "agents": agents,
@@ -1820,7 +3292,7 @@ async def admin_bureau_agents(
     })
 
 
-@router.get("/admin/bureaus/{bureau_id}/tickets")
+@router.get("/bureaus/{bureau_id}/tickets", response_class=HTMLResponse)
 async def admin_bureau_tickets(
     request: Request,
     bureau_id: str,
@@ -1836,8 +3308,7 @@ async def admin_bureau_tickets(
     )
     tickets = result.scalars().all()
     
-    return templates.TemplateResponse("bureaus/tickets.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "admin/bureaus/tickets.html", {
         "active": "bureaus",
         "bureau": await db.get(Bureau, bureau_id),
         "tickets": tickets,
@@ -1885,6 +3356,32 @@ async def admin_settings_maintenance_update(
     await redis_client.setex("settings:maintenance:message", 86400, maintenance_data.get('maintenance_message', ''))
     
     return {"success": True, "message": "Mode maintenance mis à jour"}
+
+
+@router.put("/api/settings/integrations")
+async def admin_settings_integrations_update(
+    integrations_data: dict,
+    admin: User = Depends(get_current_admin),
+    redis_client: redis.Redis = Depends(get_redis)
+):
+    """Met à jour la configuration des intégrations de paiement (MonCash, NatCash, LEH)"""
+    for key, value in integrations_data.items():
+        await redis_client.setex(f"settings:{key}", 86400, str(value))
+
+    return {"success": True, "message": "Intégrations mises à jour"}
+
+
+@router.put("/api/settings/logging")
+async def admin_settings_logging_update(
+    logging_data: dict,
+    admin: User = Depends(get_current_admin),
+    redis_client: redis.Redis = Depends(get_redis)
+):
+    """Met à jour la configuration de logging"""
+    for key, value in logging_data.items():
+        await redis_client.setex(f"settings:{key}", 86400, str(value))
+
+    return {"success": True, "message": "Configuration de logging mise à jour"}
 
 
 @router.put("/api/settings/security/auth")
@@ -2004,6 +3501,190 @@ async def admin_settings_status(
         "redis": redis_status,
         "worker_count": worker_count
     }
+
+
+async def _redis_str(redis_client: redis.Redis, key: str, default):
+    value = await redis_client.get(key)
+    return value if value is not None else default
+
+
+async def _redis_bool(redis_client: redis.Redis, key: str, default: bool) -> bool:
+    value = await redis_client.get(key)
+    if value is None:
+        return default
+    return str(value).lower() in ("true", "1", "on")
+
+
+async def _redis_num(redis_client: redis.Redis, key: str, default):
+    value = await redis_client.get(key)
+    if value is None:
+        return default
+    try:
+        return type(default)(value)
+    except (TypeError, ValueError):
+        return default
+
+
+async def _get_general_settings(redis_client: redis.Redis) -> dict:
+    """Reconstruit les paramètres généraux à partir de Redis (écrits par
+    /api/settings/general, /api/settings/limits, /api/settings/maintenance,
+    aucune valeur persistée en base - ce n'est qu'un cache 24h), avec repli
+    sur app.config.settings."""
+    return {
+        "app_name": await _redis_str(redis_client, "settings:app_name", settings.APP_NAME),
+        "app_version": await _redis_str(redis_client, "settings:app_version", settings.APP_VERSION),
+        "timezone": await _redis_str(redis_client, "settings:timezone", "America/Port-au-Prince"),
+        "currency": await _redis_str(redis_client, "settings:currency", "HTG"),
+        "base_url": await _redis_str(redis_client, "settings:base_url", settings.BASE_URL),
+        "frontend_url": await _redis_str(redis_client, "settings:frontend_url", settings.FRONTEND_URL),
+        "max_daily_deposit": await _redis_num(redis_client, "settings:limits:max_daily_deposit", settings.MAX_DAILY_DEPOSIT),
+        "max_daily_withdrawal": await _redis_num(redis_client, "settings:limits:max_daily_withdrawal", 200000),
+        "max_single_bet": await _redis_num(redis_client, "settings:limits:max_single_bet", settings.MAX_SINGLE_BET),
+        "kyc_required_amount": await _redis_num(redis_client, "settings:limits:kyc_required_amount", 10000),
+        "maintenance_mode": await _redis_bool(redis_client, "settings:maintenance:mode", False),
+        "maintenance_message": await _redis_str(redis_client, "settings:maintenance:message", ""),
+        "moncash_enabled": await _redis_bool(redis_client, "settings:moncash_enabled", settings.MONCASH_ENABLED),
+        "moncash_merchant_id": await _redis_str(redis_client, "settings:moncash_merchant_id", settings.MONCASH_MERCHANT_ID),
+        "moncash_api_key": await _redis_str(redis_client, "settings:moncash_api_key", settings.MONCASH_API_KEY),
+        "moncash_api_secret": await _redis_str(redis_client, "settings:moncash_api_secret", ""),
+        "natcash_enabled": await _redis_bool(redis_client, "settings:natcash_enabled", settings.NATCASH_ENABLED),
+        "natcash_merchant_id": await _redis_str(redis_client, "settings:natcash_merchant_id", settings.NATCASH_MERCHANT_ID),
+        "natcash_api_key": await _redis_str(redis_client, "settings:natcash_api_key", settings.NATCASH_API_KEY),
+        "leh_enabled": await _redis_bool(redis_client, "settings:leh_api_enabled", settings.LEH_ENABLED),
+        "leh_api_url": await _redis_str(redis_client, "settings:leh_api_url", settings.LEH_API_URL or ""),
+        "log_level": await _redis_str(redis_client, "settings:log_level", settings.LOG_LEVEL),
+        "log_file": await _redis_str(redis_client, "settings:log_file", settings.LOG_FILE),
+    }
+
+
+async def _get_security_settings(redis_client: redis.Redis) -> dict:
+    """Reconstruit les paramètres de sécurité à partir de Redis (écrits par
+    /api/settings/security/*), avec repli sur app.config.settings."""
+    whitelist_raw = await redis_client.get("settings:security:whitelist")
+    ip_whitelist = json.loads(whitelist_raw) if whitelist_raw else []
+
+    return {
+        "two_factor_auth": await _redis_bool(redis_client, "settings:security:two_factor_auth", False),
+        "session_timeout_minutes": await _redis_num(redis_client, "settings:security:session_timeout_minutes", 60),
+        "max_login_attempts": await _redis_num(redis_client, "settings:security:max_login_attempts", 5),
+        "password_policy": {
+            "min_length": await _redis_num(redis_client, "settings:password:min_length", 8),
+            "require_uppercase": await _redis_bool(redis_client, "settings:password:require_uppercase", True),
+            "require_lowercase": await _redis_bool(redis_client, "settings:password:require_lowercase", True),
+            "require_numbers": await _redis_bool(redis_client, "settings:password:require_numbers", True),
+            "require_special": await _redis_bool(redis_client, "settings:password:require_special", False),
+        },
+        "ip_whitelist": ip_whitelist,
+        "rate_limit_requests": await _redis_num(redis_client, "settings:ratelimit:rate_limit_requests", settings.RATE_LIMIT_REQUESTS),
+        "rate_limit_period": await _redis_num(redis_client, "settings:ratelimit:rate_limit_period", settings.RATE_LIMIT_PERIOD_SECONDS),
+    }
+
+
+async def _get_active_sessions(redis_client: redis.Redis, db: AsyncSession) -> list:
+    """Sessions actives stockées dans Redis (session:*)."""
+    keys = await redis_client.keys("session:*")
+    sessions = []
+    for key in keys:
+        raw = await redis_client.get(key)
+        if not raw:
+            continue
+        try:
+            data = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        user_id = data.get("user_id")
+        user_name = None
+        if user_id:
+            result = await db.execute(select(User).where(User.id == user_id))
+            user = result.scalar_one_or_none()
+            user_name = (user.full_name or user.phone) if user else None
+        sessions.append({
+            "id": key.replace("session:", "", 1) if isinstance(key, str) else key,
+            "user_name": user_name or "Utilisateur inconnu",
+            "ip_address": data.get("ip_address", "-"),
+            "created_at": datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.utcnow(),
+            "last_activity": datetime.fromisoformat(data["last_activity"]) if data.get("last_activity") else datetime.utcnow(),
+        })
+    return sessions
+
+
+@router.get("/settings", name="admin_settings")
+async def admin_settings_redirect(admin: User = Depends(get_current_admin)):
+    """Redirige vers l'onglet Général des paramètres"""
+    return RedirectResponse(url="/admin/settings/general", status_code=303)
+
+
+@router.get("/settings/general", response_class=HTMLResponse)
+async def admin_settings_general(
+    request: Request,
+    admin: User = Depends(get_current_admin),
+    redis_client: redis.Redis = Depends(get_redis)
+):
+    """Page des paramètres généraux"""
+    settings_dict = await _get_general_settings(redis_client)
+    worker_count = 0
+    try:
+        from app.workers.celery import celery_app
+        active = celery_app.control.inspect().active()
+        worker_count = len(active) if active else 0
+    except Exception:
+        worker_count = 0
+
+    return templates.TemplateResponse(request, "admin/settings/general.html", {
+        "active": "settings",
+        "settings": settings_dict,
+        "worker_count": worker_count,
+        "env": settings.ENVIRONMENT,
+        "uptime": "N/A",
+        "admin_name": admin.full_name or admin.email,
+        "admin_role": admin.role,
+        "version": "1.0.0"
+    })
+
+
+@router.get("/settings/security", response_class=HTMLResponse)
+async def admin_settings_security(
+    request: Request,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis)
+):
+    """Page des paramètres de sécurité"""
+    security_dict = await _get_security_settings(redis_client)
+    active_sessions = await _get_active_sessions(redis_client, db)
+
+    logs_result = await db.execute(
+        select(AuditLog)
+        .where(AuditLog.action.in_([AuditAction.LOGIN, AuditAction.LOGIN_FAILED, AuditAction.LOGOUT]))
+        .order_by(AuditLog.created_at.desc())
+        .limit(20)
+    )
+    logs = logs_result.scalars().all()
+    security_logs = []
+    for log in logs:
+        user_name = None
+        if log.user_id:
+            user_result = await db.execute(select(User).where(User.id == log.user_id))
+            user = user_result.scalar_one_or_none()
+            user_name = user.full_name if user else None
+        security_logs.append({
+            "created_at": log.created_at,
+            "action": log.action.value if hasattr(log.action, "value") else log.action,
+            "user_name": user_name,
+            "user_id": log.user_id,
+            "ip_address": log.ip_address,
+        })
+
+    return templates.TemplateResponse(request, "admin/settings/security.html", {
+        "active": "settings",
+        "security": security_dict,
+        "active_sessions": active_sessions,
+        "security_logs": security_logs,
+        "admin_name": admin.full_name or admin.email,
+        "admin_role": admin.role,
+        "version": "1.0.0"
+    })
+
 
 # ==================== API SUPPLEMENTAIRES POUR GAMES ====================
 
@@ -2195,19 +3876,7 @@ async def admin_keno_paytable_reset(
     redis_client: redis.Redis = Depends(get_redis)
 ):
     """Réinitialise la table de paiement Keno"""
-    default_paytable = {
-        "1": {"1": 2.5},
-        "2": {"2": 6},
-        "3": {"3": 12, "2": 1.5},
-        "4": {"4": 30, "3": 3, "2": 1},
-        "5": {"5": 60, "4": 6, "3": 2, "2": 0.5},
-        "6": {"6": 120, "5": 15, "4": 4, "3": 1.5, "2": 0.5},
-        "7": {"7": 300, "6": 30, "5": 8, "4": 2, "3": 1, "2": 0.5},
-        "8": {"8": 600, "7": 60, "6": 15, "5": 4, "4": 1.5, "3": 0.5},
-        "9": {"9": 1200, "8": 120, "7": 30, "6": 8, "5": 3, "4": 1},
-        "10": {"10": 5000, "9": 500, "8": 60, "7": 15, "6": 5, "5": 2, "4": 0.5}
-    }
-    await redis_client.setex("config:keno:paytable", 86400, json.dumps(default_paytable))
+    await redis_client.setex("config:keno:paytable", 86400, json.dumps(DEFAULT_KENO_PAYTABLE))
     return {"success": True, "message": "Table de paiement réinitialisée"}
 
 
@@ -2224,8 +3893,8 @@ async def admin_keno_jackpot_threshold(
 
 # ==================== LUCKY ====================
 
-@router.put("/admin/api/lucky/config")
-async def admin_lucky_config_update(
+@router.put("/api/lucky/config")
+async def admin_lucky_active_config_update(
     config_data: AdminLuckyConfig,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
@@ -2255,7 +3924,7 @@ async def admin_lucky_config_update(
     return {"success": True, "message": "Configuration mise à jour"}
 
 
-@router.put("/admin/api/lucky/config/{config_id}/segments")
+@router.put("/api/lucky/config/{config_id}/segments")
 async def admin_lucky_segments_update(
     config_id: str,
     segments: List[LuckyWheelSegment] = Body(...),
@@ -2539,7 +4208,7 @@ async def admin_audit_logs_bulk_leh_export(
 
 
 @router.get("/api/audit/export")
-async def admin_audit_export(
+async def admin_audit_export_csv(
     request: Request,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
@@ -2908,7 +4577,7 @@ async def admin_ticket_payout(
 @router.post("/api/tickets/{ticket_id}/cancel")
 async def admin_ticket_cancel(
     ticket_id: str,
-    reason: str = Body(...),
+    reason: str = Body(..., embed=True),
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
@@ -3124,7 +4793,6 @@ async def admin_transaction_detail(
         "failure_reason": transaction.failure_reason,
         "ip_address": transaction.ip_address,
         "user_agent": transaction.user_agent,
-        "metadata": transaction.metadata,
         "user_id": transaction.user_id,
         "user_name": user.full_name if user else None,
         "created_at": transaction.created_at,
@@ -3139,69 +4807,72 @@ async def admin_transaction_confirm(
     db: AsyncSession = Depends(get_db),
     redis_client: redis.Redis = Depends(get_redis)
 ):
-    """Confirme une transaction en attente"""
+    """Confirme manuellement une transaction MonCash/NatCash en attente
+    (paiement bloqué côté fournisseur, etc.). Délègue à WalletService pour
+    rester cohérent avec la confirmation automatique par webhook : mêmes
+    règles de crédit/idempotence, pas de logique dupliquée et divergente."""
     result = await db.execute(
         select(Transaction).where(Transaction.id == transaction_id)
     )
     transaction = result.scalar_one_or_none()
-    
+
     if not transaction:
         raise HTTPException(404, "Transaction non trouvée")
-    
+
     if transaction.status != TransactionStatus.PENDING:
         raise HTTPException(400, "Seules les transactions en attente peuvent être confirmées")
-    
-    transaction.status = TransactionStatus.COMPLETED
-    transaction.completed_at = datetime.utcnow()
-    
-    # Si c'est un retrait, mettre à jour le wallet
-    if transaction.transaction_type == TransactionType.WITHDRAWAL:
-        wallet_result = await db.execute(
-            select(Wallet).where(Wallet.id == transaction.wallet_id)
-        )
-        wallet = wallet_result.scalar_one()
-        wallet.pending_withdrawals -= transaction.amount
-    
+
+    if not transaction.external_reference:
+        raise HTTPException(400, "Transaction sans référence fournisseur : rien à confirmer")
+
+    wallet_service = WalletService(db, redis_client)
+    if transaction.transaction_type == TransactionType.DEPOSIT:
+        await wallet_service.confirm_deposit(transaction.external_reference)
+    elif transaction.transaction_type == TransactionType.WITHDRAWAL:
+        await wallet_service.confirm_withdrawal(transaction.external_reference)
+    else:
+        raise HTTPException(400, f"Type de transaction non confirmable: {transaction.transaction_type}")
+
     await db.commit()
-    
+
     return {"success": True, "message": "Transaction confirmée avec succès"}
 
 
 @router.post("/api/transactions/{transaction_id}/cancel")
 async def admin_transaction_cancel(
     transaction_id: str,
-    reason: str = Body(...),
+    reason: str = Body(..., embed=True),
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
     redis_client: redis.Redis = Depends(get_redis)
 ):
-    """Annule une transaction en attente"""
+    """Annule manuellement une transaction MonCash/NatCash en attente.
+    Délègue à WalletService (même logique que l'échec signalé par webhook :
+    un retrait annulé rembourse les fonds déjà réservés)."""
     result = await db.execute(
         select(Transaction).where(Transaction.id == transaction_id)
     )
     transaction = result.scalar_one_or_none()
-    
+
     if not transaction:
         raise HTTPException(404, "Transaction non trouvée")
-    
+
     if transaction.status != TransactionStatus.PENDING:
         raise HTTPException(400, "Seules les transactions en attente peuvent être annulées")
-    
-    transaction.status = TransactionStatus.CANCELLED
-    transaction.failure_reason = reason
-    transaction.completed_at = datetime.utcnow()
-    
-    # Si c'est un retrait, recréditer le wallet
-    if transaction.transaction_type == TransactionType.WITHDRAWAL:
-        wallet_result = await db.execute(
-            select(Wallet).where(Wallet.id == transaction.wallet_id)
-        )
-        wallet = wallet_result.scalar_one()
-        wallet.balance += transaction.amount
-        wallet.pending_withdrawals -= transaction.amount
-    
+
+    if not transaction.external_reference:
+        raise HTTPException(400, "Transaction sans référence fournisseur : rien à annuler")
+
+    wallet_service = WalletService(db, redis_client)
+    if transaction.transaction_type == TransactionType.DEPOSIT:
+        await wallet_service.fail_deposit(transaction.external_reference, reason=reason)
+    elif transaction.transaction_type == TransactionType.WITHDRAWAL:
+        await wallet_service.fail_withdrawal(transaction.external_reference, reason=reason)
+    else:
+        raise HTTPException(400, f"Type de transaction non annulable: {transaction.transaction_type}")
+
     await db.commit()
-    
+
     return {"success": True, "message": "Transaction annulée avec succès"}
 
 

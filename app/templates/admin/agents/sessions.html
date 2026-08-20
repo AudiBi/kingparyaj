@@ -1,0 +1,69 @@
+<!-- app/templates/admin/agents/sessions.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Sessions de caisse - Administration{% endblock %}
+
+{% block page_title %}Sessions de caisse{% endblock %}
+{% block page_subtitle %}{{ agent.full_name or agent.phone }}{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+    <a href="/admin/agents/{{ agent.id }}" class="btn btn-sm btn-secondary">
+        <i class="fas fa-arrow-left"></i> Retour à l'agent
+    </a>
+</div>
+
+<div class="table-container">
+    <div class="table-header">
+        <div class="title">
+            <i class="fas fa-cash-register"></i> Sessions ({{ sessions|length }})
+        </div>
+    </div>
+
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Ouverture</th>
+                    <th>Fermeture</th>
+                    <th>Solde initial</th>
+                    <th>Entrées</th>
+                    <th>Sorties</th>
+                    <th>Solde attendu</th>
+                    <th>Écart</th>
+                    <th>Statut</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for session in sessions %}
+                <tr>
+                    <td class="text-muted" style="font-size: 12px;">{{ session.opened_at.strftime('%d/%m/%Y') }}</td>
+                    <td style="font-size: 12px;">{{ session.opened_at.strftime('%H:%M') }}</td>
+                    <td style="font-size: 12px;">{{ session.closed_at.strftime('%H:%M') if session.closed_at else '-' }}</td>
+                    <td>{{ session.starting_balance|format_number }} HTG</td>
+                    <td class="text-success">{{ session.cash_in_amount|format_number }} HTG</td>
+                    <td class="text-danger">{{ session.cash_out_amount|format_number }} HTG</td>
+                    <td>{{ session.expected_balance|format_number }} HTG</td>
+                    <td class="{% if session.difference > 0 %}text-success{% elif session.difference < 0 %}text-danger{% endif %}">
+                        {{ session.difference|format_number }} HTG
+                    </td>
+                    <td>
+                        <span class="badge {% if session.status == 'CLOSED' %}success{% elif session.status == 'OPEN' %}warning{% else %}gray{% endif %}">
+                            {{ session.status }}
+                        </span>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="9" class="text-center text-muted" style="padding: 40px;">
+                        <i class="fas fa-cash-register" style="font-size: 40px; display: block; margin-bottom: 12px; opacity: 0.3;"></i>
+                        Aucune session de caisse
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

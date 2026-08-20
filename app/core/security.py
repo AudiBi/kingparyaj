@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 import bcrypt
 import jwt
-from fastapi import HTTPException, status, Depends
+from fastapi import HTTPException, status, Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 import redis.asyncio as redis
@@ -20,7 +20,10 @@ from app.models.user import User
 
 # ==================== SECURITY ====================
 
-security = HTTPBearer()
+# auto_error=False : un header Authorization absent ne doit pas suffire à
+# rejeter la requête, puisque les panels HTML (admin) s'authentifient par
+# cookie plutôt que par header Bearer (cf. get_current_user ci-dessous).
+security = HTTPBearer(auto_error=False)
 
 
 def hash_password(password: str) -> str:
@@ -80,16 +83,32 @@ def generate_verification_code(length: int = 6) -> str:
 # ==================== GET CURRENT USER ====================
 
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     db: AsyncSession = Depends(get_db),
     redis_client: redis.Redis = Depends(get_redis)
 ):
     """
     Récupère l'utilisateur courant à partir du token JWT.
     Utilisé comme dépendance pour protéger les routes.
+
+    Le token est lu soit dans le header `Authorization: Bearer <token>`
+    (clients API sous /api/v1), soit dans le cookie `admin_token` posé par
+    le panel HTML admin (app/routes/admin.py), soit dans le cookie
+    `agent_token` posé par le panel HTML agent (app/routes/agent.py) : une
+    seule dépendance sert les trois, au lieu de plusieurs implémentations
+    divergentes (cf. l'ancien app/dependencies.py, qui n'a jamais géré le cas
+    cookie).
     """
-    token = credentials.credentials
-    
+    token = credentials.credentials if credentials else (
+        request.cookies.get("admin_token") or request.cookies.get("agent_token")
+    )
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Non authentifié"
+        )
+
     # Vérifier blacklist
     is_blacklisted = await redis_client.get(f"blacklist:{token}")
     if is_blacklisted:
@@ -178,18 +197,19 @@ async def get_current_agent(
 
 
 async def get_optional_user(
+    request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     db: AsyncSession = Depends(get_db),
     redis_client: redis.Redis = Depends(get_redis)
 ):
     """
-    Récupère l'utilisateur si token présent, sinon None.
+    Récupère l'utilisateur si token présent (header ou cookie), sinon None.
     Utilisé pour les routes optionnelles.
     """
-    if not credentials:
+    if not credentials and not request.cookies.get("admin_token") and not request.cookies.get("agent_token"):
         return None
-    
+
     try:
-        return await get_current_user(credentials, db, redis_client)
+        return await get_current_user(request, credentials, db, redis_client)
     except HTTPException:
         return None

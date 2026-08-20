@@ -73,6 +73,7 @@ class DepositResponse(BaseModel):
     transaction_id: str
     reference: str
     amount: float
+    status: str = "completed"  # "completed" (cash) ou "pending" (moncash/natcash, en attente du fournisseur)
     new_balance: float
     payment_url: Optional[str] = None  # Pour redirection mobile money
     message: str
@@ -101,6 +102,7 @@ class WithdrawResponse(BaseModel):
     transaction_id: str
     reference: str
     amount: float
+    status: str = "completed"  # "completed" (cash) ou "pending" (moncash/natcash, en attente du fournisseur)
     new_balance: float
     message: str
 

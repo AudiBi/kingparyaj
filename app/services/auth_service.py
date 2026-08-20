@@ -1,7 +1,7 @@
 # app/services/auth_service.py
 """Service d'authentification - Gestion des utilisateurs, sessions et tokens JWT"""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 import redis.asyncio as redis
@@ -114,7 +114,10 @@ class AuthService:
         # Blacklist le token jusqu'à expiration
         payload = decode_token(token)
         if payload and payload.get("exp"):
-            ttl = payload["exp"] - datetime.utcnow().timestamp()
+            # datetime.utcnow().timestamp() interprète l'heure UTC comme heure
+            # locale : sur un serveur qui n'est pas en UTC, le TTL calculé est
+            # faux (souvent négatif) et le token n'est alors jamais blacklisté.
+            ttl = payload["exp"] - datetime.now(timezone.utc).timestamp()
             if ttl > 0:
                 await self.redis.setex(f"blacklist:{token}", int(ttl), "1")
         

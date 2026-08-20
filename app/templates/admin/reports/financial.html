@@ -1,0 +1,179 @@
+<!-- app/templates/admin/reports/financial.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Rapports financiers - Administration{% endblock %}
+
+{% block page_title %}Rapports financiers{% endblock %}
+{% block page_subtitle %}Vue d'ensemble des flux financiers de la plateforme{% endblock %}
+
+{% block content %}
+<!-- ==================== FILTRES PÉRIODE ==================== -->
+<div class="table-container mb-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-calendar"></i> Période</div>
+        <div class="actions">
+            <button class="btn btn-sm btn-secondary" onclick="exportReport()">
+                <i class="fas fa-file-export"></i> Exporter
+            </button>
+        </div>
+    </div>
+    <div style="padding: 16px 20px;">
+        <form method="GET" action="{{ url_for('admin_reports_financial') }}" class="grid-3">
+            <div class="form-group" style="margin-bottom: 0;">
+                <label>Du</label>
+                <input type="date" name="start_date" class="form-control" value="{{ start_date }}">
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+                <label>Au</label>
+                <input type="date" name="end_date" class="form-control" value="{{ end_date }}">
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+                <label>&nbsp;</label>
+                <button type="submit" class="btn btn-primary w-full">
+                    <i class="fas fa-filter"></i> Appliquer
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- ==================== RÉSUMÉ ==================== -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-icon green"><i class="fas fa-arrow-down"></i></div>
+        <div class="stat-label">Dépôts</div>
+        <div class="stat-value">{{ summary.deposits|format_number }} HTG</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon red"><i class="fas fa-arrow-up"></i></div>
+        <div class="stat-label">Retraits</div>
+        <div class="stat-value">{{ summary.withdrawals|format_number }} HTG</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon orange"><i class="fas fa-dice"></i></div>
+        <div class="stat-label">Mises</div>
+        <div class="stat-value">{{ summary.bets_volume|format_number }} HTG</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon purple"><i class="fas fa-trophy"></i></div>
+        <div class="stat-label">Gains distribués</div>
+        <div class="stat-value">{{ summary.wins|format_number }} HTG</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon blue"><i class="fas fa-chart-line"></i></div>
+        <div class="stat-label">Revenu net</div>
+        <div class="stat-value">{{ summary.net_revenue|format_number }} HTG</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon green"><i class="fas fa-percentage"></i></div>
+        <div class="stat-label">Marge (edge)</div>
+        <div class="stat-value">{{ summary.edge }}%</div>
+    </div>
+</div>
+
+<!-- ==================== GRAPHIQUE ==================== -->
+<div class="table-container mb-3">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-chart-area"></i> Évolution journalière</div>
+    </div>
+    <div style="padding: 20px;">
+        <canvas id="financialChart" height="90"></canvas>
+    </div>
+</div>
+
+<!-- ==================== DÉTAIL JOURNALIER ==================== -->
+<div class="table-container">
+    <div class="table-header">
+        <div class="title"><i class="fas fa-table"></i> Détail par jour</div>
+    </div>
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Dépôts</th>
+                    <th>Retraits</th>
+                    <th>Mises</th>
+                    <th>Gains</th>
+                    <th>Net</th>
+                    <th>Edge</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for day in daily_data %}
+                <tr>
+                    <td>{{ day.date }}</td>
+                    <td class="text-success">{{ day.deposits|format_number }} HTG</td>
+                    <td class="text-danger">{{ day.withdrawals|format_number }} HTG</td>
+                    <td>{{ day.bets|format_number }} HTG</td>
+                    <td>{{ day.wins|format_number }} HTG</td>
+                    <td class="{% if day.net >= 0 %}text-success{% else %}text-danger{% endif %}" style="font-weight: 600;">
+                        {{ day.net|format_number }} HTG
+                    </td>
+                    <td>{{ day.edge }}%</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="7" class="text-center text-muted" style="padding: 40px;">Aucune donnée pour cette période</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% block extra_js %}
+<script>
+    const chartData = {{ chart_data|tojson }};
+
+    new Chart(document.getElementById('financialChart').getContext('2d'), {
+        type: 'line',
+        data: {
+            labels: chartData.labels,
+            datasets: [
+                {
+                    label: 'Dépôts',
+                    data: chartData.deposits,
+                    borderColor: '#059669',
+                    backgroundColor: 'rgba(5, 150, 105, 0.1)',
+                    fill: true,
+                    tension: 0.4
+                },
+                {
+                    label: 'Retraits',
+                    data: chartData.withdrawals,
+                    borderColor: '#ef4444',
+                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                    fill: true,
+                    tension: 0.4
+                },
+                {
+                    label: 'Net',
+                    data: chartData.net,
+                    borderColor: '#3b82f6',
+                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                    fill: true,
+                    tension: 0.4
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: { position: 'bottom', labels: { usePointStyle: true, padding: 20 } }
+            },
+            scales: {
+                y: {
+                    ticks: {
+                        callback: function(value) { return value.toLocaleString() + ' HTG'; }
+                    }
+                }
+            }
+        }
+    });
+
+    function exportReport() {
+        const params = new URLSearchParams({ start_date: '{{ start_date }}', end_date: '{{ end_date }}', format: 'excel' });
+        window.location.href = '/admin/api/reports/financial/export?' + params.toString();
+    }
+</script>
+{% endblock %}
+{% endblock %}

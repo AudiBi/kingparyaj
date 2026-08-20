@@ -54,49 +54,33 @@ async def register(
     - **email**: Email (optionnel)
     """
     auth_service = AuthService(db, redis_client)
-    
-    # Vérifier si le téléphone est déjà utilisé
-    existing = await auth_service.user_service.get_user_by_phone(user_data.phone)
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Ce numéro de téléphone est déjà utilisé"
-        )
-    
+
     ip_address = request.client.host if request.client else None
     user_agent = request.headers.get("user-agent")
-    
-    # Créer l'utilisateur
-    user = await auth_service.register(
-        phone=user_data.phone,
-        password=user_data.password,
-        first_name=user_data.first_name,
-        last_name=user_data.last_name,
-        email=user_data.email,
-        ip_address=ip_address,
-        user_agent=user_agent
-    )
-    
+
+    # Créer l'utilisateur (AuthService.register lève déjà une 400 si le
+    # téléphone/email existe : pas besoin de vérifier avant)
+    user = await auth_service.register(user_data, ip_address=ip_address)
+
     # Envoyer SMS de bienvenue en arrière-plan
     background_tasks.add_task(
         send_welcome_sms,
         user.phone,
         user.first_name or "Cher joueur"
     )
-    
+
     # Générer les tokens
-    tokens = await auth_service.login(
-        phone=user_data.phone,
-        password=user_data.password,
+    _, tokens = await auth_service.login(
+        UserLogin(phone=user_data.phone, password=user_data.password),
         ip_address=ip_address,
         user_agent=user_agent
     )
-    
+
     return {
-        "access_token": tokens["access_token"],
-        "refresh_token": tokens["refresh_token"],
+        "access_token": tokens.access_token,
+        "refresh_token": tokens.refresh_token,
         "token_type": "bearer",
-        "expires_in": 3600
+        "expires_in": tokens.expires_in
     }
 
 
@@ -119,36 +103,20 @@ async def login(
     - **password**: Mot de passe
     """
     auth_service = AuthService(db, redis_client)
-    
+
     ip_address = request.client.host if request.client else None
     user_agent = request.headers.get("user-agent")
-    
-    # Tentative de connexion
-    result = await auth_service.login(
-        phone=credentials.phone,
-        password=credentials.password,
-        ip_address=ip_address,
-        user_agent=user_agent
-    )
-    
-    if not result:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Téléphone ou mot de passe incorrect"
-        )
-    
-    # Vérifier si le compte est bloqué
-    if result.get("is_locked"):
-        raise HTTPException(
-            status_code=status.HTTP_423_LOCKED,
-            detail=result.get("lock_reason", "Compte bloqué")
-        )
-    
+
+    # AuthService.login lève UnauthorizedException (401) ou
+    # HTTP_423_LOCKED n'existe pas côté service : un compte bloqué lève
+    # aussi une 401 générique ("Compte bloqué. Contactez le support").
+    _, tokens = await auth_service.login(credentials, ip_address=ip_address, user_agent=user_agent)
+
     return {
-        "access_token": result["access_token"],
-        "refresh_token": result["refresh_token"],
+        "access_token": tokens.access_token,
+        "refresh_token": tokens.refresh_token,
         "token_type": "bearer",
-        "expires_in": result["expires_in"]
+        "expires_in": tokens.expires_in
     }
 
 
@@ -165,20 +133,15 @@ async def refresh_token(
 ):
     """Rafraîchit le token d'accès."""
     auth_service = AuthService(db, redis_client)
-    
-    result = await auth_service.refresh_token(refresh_token)
-    
-    if not result:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token invalide ou expiré"
-        )
-    
+
+    # Lève UnauthorizedException (401) si le refresh token est invalide/expiré
+    tokens = await auth_service.refresh_token(refresh_token)
+
     return {
-        "access_token": result["access_token"],
-        "refresh_token": result["refresh_token"],
+        "access_token": tokens.access_token,
+        "refresh_token": tokens.refresh_token,
         "token_type": "bearer",
-        "expires_in": result["expires_in"]
+        "expires_in": tokens.expires_in
     }
 
 
@@ -214,16 +177,18 @@ async def logout(
 )
 async def get_current_user_info(
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis)
 ):
     """Récupère le profil de l'utilisateur connecté."""
-    user_service = UserService(db, None)
-    user_with_wallet = await user_service.get_user_with_wallet(current_user.id)
-    
-    if not user_with_wallet:
-        raise HTTPException(status_code=404, detail="Utilisateur non trouvé")
-    
-    return user_with_wallet
+    from app.services.wallet_service import WalletService
+
+    wallet_service = WalletService(db, redis_client)
+    balance = await wallet_service.get_balance(current_user.id)
+
+    response = UserResponse.model_validate(current_user)
+    response.wallet_balance = float(balance)
+    return response
 
 
 @router.put(
@@ -235,20 +200,17 @@ async def get_current_user_info(
 async def update_current_user(
     user_update: UserUpdate,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis)
 ):
     """Met à jour le profil."""
-    user_service = UserService(db, None)
-    
-    # Ne pas permettre la modification du téléphone
-    if hasattr(user_update, 'phone') and user_update.phone:
+    # Ne pas permettre la modification du téléphone via cet endpoint
+    if user_update.phone:
         raise HTTPException(status_code=400, detail="Le numéro de téléphone ne peut pas être modifié")
-    
-    user = await user_service.update_user(
-        current_user.id,
-        **user_update.dict(exclude_unset=True, exclude={'phone'})
-    )
-    
+
+    user_service = UserService(db, redis_client)
+    user = await user_service.update_profile(current_user.id, user_update, updater_id=current_user.id)
+
     return user
 
 
@@ -266,19 +228,15 @@ async def change_password(
 ):
     """Change le mot de passe."""
     auth_service = AuthService(db, redis_client)
-    
-    success = await auth_service.change_password(
+
+    # Lève AppException(400) si le mot de passe actuel est incorrect
+    await auth_service.change_password(
         user_id=current_user.id,
         current_password=request.current_password,
-        new_password=request.new_password
+        new_password=request.new_password,
+        ip_address=None
     )
-    
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Mot de passe actuel incorrect"
-        )
-    
+
     return SuccessResponse(message="Mot de passe modifié avec succès")
 
 
@@ -356,8 +314,8 @@ async def forgot_password(
 ):
     """Envoie un code de réinitialisation."""
     user_service = UserService(db, None)
-    
-    user = await user_service.get_user_by_phone(request.phone)
+
+    user = await user_service.get_by_phone(request.phone)
     if not user:
         # Ne pas révéler si l'utilisateur existe (sécurité)
         return SuccessResponse(
@@ -406,8 +364,8 @@ async def reset_password(
     
     # Récupérer l'utilisateur
     user_service = UserService(db, None)
-    user = await user_service.get_user_by_phone(request.phone)
-    
+    user = await user_service.get_by_phone(request.phone)
+
     if not user:
         raise HTTPException(status_code=404, detail="Utilisateur non trouvé")
     

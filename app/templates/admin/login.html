@@ -142,7 +142,7 @@
         <div class="logo">
             <div class="icon">K</div>
             <h1>Administration</h1>
-            <p>Parier Keno & Lucky Haïti</p>
+            <p>King Paryaj</p>
         </div>
         
         {% if error %}
@@ -153,8 +153,8 @@
         {% endif %}
         
         <form method="POST" action="{{ url_for('admin_login') }}">
-           
-            
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
             <div class="form-group">
                 <label for="email">Email</label>
                 <div class="input-wrapper">
@@ -183,7 +183,7 @@
         
         <div class="footer">
             <p>Accès réservé au personnel autorisé</p>
-            <p style="margin-top:4px;">© 2024 Parier Keno Haïti - Tous droits réservés</p>
+            <p style="margin-top:4px;">© 2026 King Paryaj - Tous droits réservés</p>
         </div>
     </div>
     

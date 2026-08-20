@@ -24,7 +24,7 @@
         </div>
     </div>
     <div class="flex" style="gap: 8px;">
-        <a href="{{ url_for('admin_user_edit', user_id=user.id) }}" class="btn btn-primary">
+        <a href="{{ url_for('admin_user_edit_page', user_id=user.id) }}" class="btn btn-primary">
             <i class="fas fa-edit"></i> Modifier
         </a>
         <a href="{{ url_for('admin_users') }}" class="btn btn-secondary">
@@ -103,6 +103,9 @@
                         {% if user.kyc_status == 'verified' and user.kyc_verified_at %}
                             <small class="text-muted" style="font-size: 11px;">({{ user.kyc_verified_at|timeago }})</small>
                         {% endif %}
+                        <a href="/admin/users/{{ user.id }}/kyc" class="btn btn-sm btn-secondary" style="margin-left: 8px;">
+                            <i class="fas fa-id-card"></i> Gérer
+                        </a>
                     </td>
                 </tr>
                 <tr>
@@ -230,7 +233,7 @@
 <div class="table-container mt-3">
     <div class="table-header">
         <div class="title"><i class="fas fa-dice"></i> Derniers paris</div>
-        <a href="{{ url_for('admin_keno_history') }}?user_id={{ user.id }}" class="btn btn-sm btn-secondary">Voir tout</a>
+        <a href="/admin/games/keno/draws?user_id={{ user.id }}" class="btn btn-sm btn-secondary">Voir tout</a>
     </div>
     <div class="table-responsive">
         <table>

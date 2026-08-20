@@ -22,7 +22,6 @@ from app.services.wallet_service import WalletService
 from app.models.user import User
 from app.models.ticket import Ticket, TicketStatus
 from app.models.bureau import Bureau, CashierSession
-from app.models.transaction import Transaction, TransactionType, PaymentMethod, TransactionStatus
 import redis.asyncio as redis
 
 router = APIRouter(prefix="/agent", tags=["Agent"])
@@ -374,7 +373,7 @@ async def agent_deposit(
     redis_client: redis.Redis = Depends(get_redis)
 ):
     """Dépôt cash sur compte joueur."""
-    
+
     # Vérifier la session de caisse
     session_result = await db.execute(
         select(CashierSession).where(
@@ -385,50 +384,47 @@ async def agent_deposit(
         )
     )
     session = session_result.scalar_one_or_none()
-    
+
     if not session:
         raise HTTPException(status_code=400, detail="Aucune session de caisse ouverte")
-    
+
     # Récupérer l'utilisateur
     from app.services.user_service import UserService
     user_service = UserService(db, redis_client)
-    user = await user_service.get_user_by_phone(phone)
-    
+    user = await user_service.get_by_phone(phone)
+
     if not user:
         raise HTTPException(status_code=404, detail="Joueur non trouvé")
-    
-    # Effectuer le dépôt
+
+    # Effectuer le dépôt (cash : réglé immédiatement, pas de passerelle à attendre)
     wallet_service = WalletService(db, redis_client)
-    transaction = await wallet_service.deposit(
+    result = await wallet_service.deposit(
         user_id=user.id,
-        amount=Decimal(str(amount)),
-        payment_method=PaymentMethod.CASH,
-        external_reference=f"AGENT-{current_agent.id}",
-        ip_address=None,
-        user_agent=None
+        request=DepositRequest(amount=amount, payment_method="cash"),
     )
-    
+
     # Mettre à jour la session de caisse
+    deposit_amount = Decimal(str(amount))
     session.cash_in_count += 1
-    session.cash_in_amount += Decimal(str(amount))
-    session.current_balance += Decimal(str(amount))
-    
+    session.cash_in_amount += deposit_amount
+    session.current_balance += deposit_amount
+
     # Mettre à jour la caisse du bureau
     bureau_result = await db.execute(
         select(Bureau).where(Bureau.id == current_agent.bureau_id)
     )
     bureau = bureau_result.scalar_one()
-    bureau.cash_balance += Decimal(str(amount))
-    
+    bureau.cash_balance += deposit_amount
+
     await db.commit()
-    
+
     return SuccessResponse(
         message=f"Dépôt de {amount} HTG effectué sur le compte de {user.full_name}",
         data={
             "user_id": user.id,
             "user_name": user.full_name,
-            "new_balance": float(user.wallet.balance) if user.wallet else 0,
-            "transaction_ref": transaction.reference
+            "new_balance": result["new_balance"],
+            "transaction_ref": result["reference"]
         }
     )
 
@@ -447,7 +443,7 @@ async def agent_withdraw(
     redis_client: redis.Redis = Depends(get_redis)
 ):
     """Retrait cash depuis compte joueur."""
-    
+
     # Vérifier la session de caisse
     session_result = await db.execute(
         select(CashierSession).where(
@@ -458,59 +454,52 @@ async def agent_withdraw(
         )
     )
     session = session_result.scalar_one_or_none()
-    
+
     if not session:
         raise HTTPException(status_code=400, detail="Aucune session de caisse ouverte")
-    
+
     # Vérifier la caisse du bureau
     bureau_result = await db.execute(
         select(Bureau).where(Bureau.id == current_agent.bureau_id)
     )
     bureau = bureau_result.scalar_one()
-    
-    if bureau.cash_balance < amount:
+
+    if bureau.cash_balance < Decimal(str(amount)):
         raise HTTPException(status_code=400, detail="Caisse insuffisante")
-    
+
     # Récupérer l'utilisateur
     from app.services.user_service import UserService
     user_service = UserService(db, redis_client)
-    user = await user_service.get_user_by_phone(phone)
-    
+    user = await user_service.get_by_phone(phone)
+
     if not user:
         raise HTTPException(status_code=404, detail="Joueur non trouvé")
-    
-    # Effectuer le retrait
+
+    # Effectuer le retrait (cash : réglé immédiatement, pas de passerelle à attendre)
     wallet_service = WalletService(db, redis_client)
-    transaction = await wallet_service.withdraw(
+    result = await wallet_service.withdraw(
         user_id=user.id,
-        amount=Decimal(str(amount)),
-        payment_method=PaymentMethod.CASH,
-        destination="BUREAU",
-        ip_address=None,
-        user_agent=None
+        request=WithdrawRequest(amount=amount, payment_method="cash"),
     )
-    
-    # Confirmer immédiatement (retrait cash)
-    transaction.status = TransactionStatus.COMPLETED
-    transaction.completed_at = datetime.utcnow()
-    
+
     # Mettre à jour la session de caisse
+    withdraw_amount = Decimal(str(amount))
     session.cash_out_count += 1
-    session.cash_out_amount += Decimal(str(amount))
-    session.current_balance -= Decimal(str(amount))
-    
+    session.cash_out_amount += withdraw_amount
+    session.current_balance -= withdraw_amount
+
     # Mettre à jour la caisse du bureau
-    bureau.cash_balance -= Decimal(str(amount))
-    
+    bureau.cash_balance -= withdraw_amount
+
     await db.commit()
-    
+
     return SuccessResponse(
         message=f"Retrait de {amount} HTG effectué pour {user.full_name}",
         data={
             "user_id": user.id,
             "user_name": user.full_name,
-            "new_balance": float(user.wallet.balance) if user.wallet else 0,
-            "transaction_ref": transaction.reference
+            "new_balance": result["new_balance"],
+            "transaction_ref": result["reference"]
         }
     )
 

@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     """Configuration de l'application"""
     
     # Application
-    APP_NAME: str = "Parier Keno & Lucky"
+    APP_NAME: str = "King Paryaj"
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = Field(default=False)
     ENVIRONMENT: str = Field(default="development")

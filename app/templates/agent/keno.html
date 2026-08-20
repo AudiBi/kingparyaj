@@ -462,15 +462,13 @@
     }
     
     // ==================== INITIALISATION ====================
-  document.addEventListener('DOMContentLoaded', function () {
+    document.addEventListener('DOMContentLoaded', function() {
         connectWebSocket();
-
-        const nextDraw = {{ next_draw.draw_time.isoformat()|tojson if next_draw else 'null' }};
-
-        if (nextDraw) {
-            startCountdown(nextDraw);
-        }
-
+        // Compte à rebours initial
+        {% if next_draw %}
+        startCountdown('{{ next_draw.draw_time.isoformat() }}');
+        {% endif %}
+        // Demander l'historique
         setTimeout(refreshHistory, 1000);
     });
 </script>

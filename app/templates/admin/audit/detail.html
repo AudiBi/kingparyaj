@@ -192,14 +192,14 @@
 </div>
 
 <!-- ==================== MÉTADONNÉES ==================== -->
-{% if log.metadata %}
+{% if log.extra_data %}
 <div class="table-container mt-3">
     <div class="table-header">
         <div class="title"><i class="fas fa-code"></i> Métadonnées</div>
     </div>
     <div style="padding: 20px;">
         <pre style="background: #f1f5f9; padding: 16px; border-radius: 8px; font-size: 12px; overflow-x: auto; margin: 0;">
-{{ log.metadata|tojson(indent=2) }}
+{{ log.extra_data|tojson(indent=2) }}
         </pre>
     </div>
 </div>

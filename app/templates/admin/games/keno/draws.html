@@ -56,7 +56,7 @@
         <div class="title"><i class="fas fa-filter"></i> Filtres</div>
     </div>
     <div style="padding: 16px 20px;">
-        <form method="GET" action="{{ url_for('admin_keno_draws') }}" id="filterForm">
+        <form method="GET" action="{{ url_for('admin_keno_draws_page') }}" id="filterForm">
             <div class="grid-3">
                 <div class="form-group" style="margin-bottom: 0;">
                     <label>Statut</label>
@@ -193,34 +193,34 @@
     <!-- ==================== PAGINATION ==================== -->
     {% if pagination.pages > 1 %}
     <div class="pagination">
-        <a href="{{ url_for('admin_keno_draws', page=1, **request.args) }}" 
+        <a href="/admin/games/keno/draws{{ qs(request, page=1) }}"
            class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
             <i class="fas fa-angle-double-left"></i>
         </a>
-        
+
         {% if pagination.has_prev %}
-        <a href="{{ url_for('admin_keno_draws', page=pagination.page-1, **request.args) }}" class="page-item">
+        <a href="/admin/games/keno/draws{{ qs(request, page=pagination.page-1) }}" class="page-item">
             <i class="fas fa-chevron-left"></i>
         </a>
         {% endif %}
-        
+
         {% for p in range(1, pagination.pages + 1) %}
             {% if p == pagination.page %}
                 <span class="page-item active">{{ p }}</span>
             {% elif p <= 3 or p > pagination.pages - 3 or (p >= pagination.page - 2 and p <= pagination.page + 2) %}
-                <a href="{{ url_for('admin_keno_draws', page=p, **request.args) }}" class="page-item">{{ p }}</a>
+                <a href="/admin/games/keno/draws{{ qs(request, page=p) }}" class="page-item">{{ p }}</a>
             {% elif p == 4 or p == pagination.pages - 3 %}
                 <span class="page-item">...</span>
             {% endif %}
         {% endfor %}
-        
+
         {% if pagination.has_next %}
-        <a href="{{ url_for('admin_keno_draws', page=pagination.page+1, **request.args) }}" class="page-item">
+        <a href="/admin/games/keno/draws{{ qs(request, page=pagination.page+1) }}" class="page-item">
             <i class="fas fa-chevron-right"></i>
         </a>
         {% endif %}
-        
-        <a href="{{ url_for('admin_keno_draws', page=pagination.pages, **request.args) }}" 
+
+        <a href="/admin/games/keno/draws{{ qs(request, page=pagination.pages) }}"
            class="page-item {% if not pagination.has_next %}disabled{% endif %}">
             <i class="fas fa-angle-double-right"></i>
         </a>

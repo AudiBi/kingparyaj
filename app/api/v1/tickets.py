@@ -381,7 +381,7 @@ async def recharge_ticket(
         resource_id=ticket.id,
         old_values={"balance": float(old_balance)},
         new_values={"balance": float(ticket.balance)},
-        metadata={"recharge_amount": float(recharge_data.amount)},
+        extra_data={"recharge_amount": float(recharge_data.amount)},
         ip_address=request.client.host if request.client else None
     )
     db.add(audit)
@@ -497,7 +497,7 @@ async def payout_ticket(
         resource_id=ticket.id,
         old_values={"balance": float(old_balance), "status": ticket.status},
         new_values={"balance": 0, "status": TicketStatus.PAID},
-        metadata={"paid_amount": float(amount_to_pay)},
+        extra_data={"paid_amount": float(amount_to_pay)},
         ip_address=request.client.host if request.client else None
     )
     db.add(audit)
@@ -610,7 +610,7 @@ async def partial_payout_ticket(
         resource_id=ticket.id,
         old_values={"balance": float(old_balance)},
         new_values={"balance": float(ticket.balance)},
-        metadata={"partial_amount": float(amount)}
+        extra_data={"partial_amount": float(amount)}
     )
     db.add(audit)
     
@@ -694,12 +694,13 @@ async def cancel_ticket(
     ticket.paid_at = datetime.utcnow()
     ticket.paid_by_agent = current_admin.id
     
-    # Audit
+    # Audit (ip_address est NOT NULL en base)
     audit = AuditLog(
         user_id=current_admin.id,
         action=AuditAction.USER_UPDATED,
         resource_type="ticket",
         resource_id=ticket.id,
+        ip_address="0.0.0.0",
         old_values={"status": "ACTIVE", "balance": float(amount_to_refund)},
         new_values={"status": "CANCELLED", "balance": 0},
         reason=reason

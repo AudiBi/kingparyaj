@@ -262,8 +262,8 @@ backups/
 *.sql.gz
 *.dump
 
-# Reports
-reports/
+# Reports (generated output only - NOT app/templates/admin/reports/)
+/reports/
 *.pdf
 *.xlsx
 *.csv

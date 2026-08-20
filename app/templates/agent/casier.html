@@ -212,7 +212,7 @@
             player_name: data.get('player_name') || null
         };
         
-        fetch('{{ url_for("agent_deposit") }}', {
+        fetch('{{ url_for("agent_cashier_deposit") }}', {
             method: 'POST',
             headers: {
                 'X-CSRFToken': '{{ csrf_token() }}',

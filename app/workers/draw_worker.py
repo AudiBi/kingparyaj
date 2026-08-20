@@ -353,6 +353,7 @@ async def _export_keno_to_leh(db: AsyncSession, draw: KenoDraw):
             action=AuditAction.DRAW_GENERATED,
             resource_type="keno_draw",
             resource_id=draw.id,
+            ip_address="0.0.0.0",
             new_values={"exported_to_leh": True}
         )
         db.add(audit)
@@ -567,6 +568,7 @@ async def _export_lucky_results_to_leh_async(start_date: str, end_date: str):
             audit = AuditLog(
                 action=AuditAction.DRAW_GENERATED,
                 resource_type="lucky_play",
+                ip_address="0.0.0.0",
                 new_values={"exported_to_leh": True, "count": len(plays)}
             )
             db.add(audit)

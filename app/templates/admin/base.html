@@ -773,7 +773,9 @@
         <a href="#" class="nav-item" onclick="event.preventDefault(); document.getElementById('logout-form').submit();">
             <i class="fas fa-sign-out-alt"></i> Déconnexion
         </a>
-        <form id="logout-form" action="{{ url_for('admin_logout') }}" method="POST" style="display:none;"></form>
+        <form id="logout-form" action="{{ url_for('admin_logout') }}" method="POST" style="display:none;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        </form>
     </nav>
 </aside>
 

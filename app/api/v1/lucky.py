@@ -22,7 +22,7 @@ from app.services.wallet_service import WalletService
 from app.services.lucky_service import LuckyWheelService
 from app.models.user import User
 from app.models.lucky import LuckyPlay, LuckyWheelConfig
-from app.models.ticket import Ticket
+from app.models.ticket import Ticket, TicketStatus
 from app.models.audit import AuditLog, AuditAction
 import redis.asyncio as redis
 
@@ -193,6 +193,7 @@ async def spin_wheel(
         action=AuditAction.LUCKY_SPIN,
         resource_type="lucky_play",
         resource_id=lucky_play.id,
+        ip_address="0.0.0.0",
         new_values={
             "stake": float(spin_data.stake),
             "multiplier": float(multiplier),
@@ -216,6 +217,12 @@ async def spin_wheel(
             float(winnings)
         )
     
+    message = (
+        f"Gagné {winnings} HTG ({winning_segment['label']}) !"
+        if winnings > 0
+        else "Perdu, retentez votre chance !"
+    )
+
     return {
         "success": True,
         "segment": winning_segment["label"],
@@ -224,7 +231,8 @@ async def spin_wheel(
         "color": winning_segment["color"],
         "play_id": lucky_play.id,
         "verification_hash": verification_hash,
-        "new_balance": new_balance["balance"]
+        "new_balance": new_balance["balance"],
+        "message": message
     }
 
 
@@ -254,9 +262,9 @@ async def spin_wheel_with_ticket(
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket invalide")
     
-    if ticket.status != "ACTIVE":
+    if ticket.status != TicketStatus.ACTIVE:
         raise HTTPException(status_code=400, detail="Ticket expiré ou déjà payé")
-    
+
     if ticket.balance < stake:
         raise HTTPException(status_code=400, detail="Solde ticket insuffisant")
     
@@ -331,13 +339,15 @@ async def spin_wheel_with_ticket(
     
     db.add(lucky_play)
     
-    # Audit log
+    # Audit log (ip_address est NOT NULL en base : "0.0.0.0" par défaut,
+    # comme AuditService.log(), faute d'objet Request dans cette route)
     audit = AuditLog(
         user_id=ticket.agent_id,
         agent_id=current_agent.id,
         action=AuditAction.LUCKY_SPIN,
         resource_type="lucky_play",
         resource_id=lucky_play.id,
+        ip_address="0.0.0.0",
         new_values={
             "stake": stake,
             "multiplier": float(multiplier),
@@ -350,6 +360,12 @@ async def spin_wheel_with_ticket(
     
     await db.commit()
     
+    message = (
+        f"Gagné {winnings} HTG ({winning_segment['label']}) !"
+        if winnings > 0
+        else "Perdu, retentez votre chance !"
+    )
+
     return {
         "success": True,
         "segment": winning_segment["label"],
@@ -358,7 +374,8 @@ async def spin_wheel_with_ticket(
         "color": winning_segment["color"],
         "play_id": lucky_play.id,
         "verification_hash": verification_hash,
-        "new_balance": float(ticket.balance)
+        "new_balance": float(ticket.balance),
+        "message": message
     }
 
 

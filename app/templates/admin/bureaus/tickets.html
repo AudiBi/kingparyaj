@@ -1,0 +1,84 @@
+<!-- app/templates/admin/bureaus/tickets.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Tickets du bureau - Administration{% endblock %}
+
+{% block page_title %}Tickets{% if bureau %} - {{ bureau.name }}{% endif %}{% endblock %}
+{% block page_subtitle %}100 derniers tickets émis par ce bureau{% endblock %}
+
+{% block content %}
+<div class="mb-3">
+    <a href="{{ url_for('admin_bureaus') }}" class="btn btn-sm btn-secondary">
+        <i class="fas fa-arrow-left"></i> Retour aux bureaux
+    </a>
+</div>
+
+<div class="table-container">
+    <div class="table-header">
+        <div class="title">
+            <i class="fas fa-ticket-alt"></i> Tickets ({{ tickets|length }})
+        </div>
+    </div>
+
+    <div class="table-responsive">
+        <table>
+            <thead>
+                <tr>
+                    <th>Ticket</th>
+                    <th>Joueur</th>
+                    <th>Agent</th>
+                    <th>Montant</th>
+                    <th>Solde</th>
+                    <th>Statut</th>
+                    <th>Expire</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for ticket in tickets %}
+                <tr>
+                    <td>
+                        <span style="font-family: monospace; font-size: 13px; font-weight: 600; color: #0f172a;">
+                            {{ ticket.ticket_number }}
+                        </span>
+                    </td>
+                    <td>
+                        <div style="font-weight: 500;">{{ ticket.player_name or 'Anonyme' }}</div>
+                        {% if ticket.player_phone %}
+                        <div style="font-size: 12px; color: #94a3b8;">{{ ticket.player_phone }}</div>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if ticket.agent %}
+                        <span style="font-size: 13px;">{{ ticket.agent.full_name or ticket.agent.phone }}</span>
+                        {% else %}
+                        <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+                    <td style="font-weight: 600;">{{ ticket.initial_amount|format_number }} HTG</td>
+                    <td class="{% if ticket.balance > 0 %}text-success{% else %}text-muted{% endif %}" style="font-weight: 600;">
+                        {{ ticket.balance|format_number }} HTG
+                    </td>
+                    <td>
+                        <span class="badge {% if ticket.status == 'active' %}success{% elif ticket.status == 'paid' %}gray{% elif ticket.status == 'expired' %}danger{% elif ticket.status == 'cancelled' %}warning{% endif %}">
+                            {% if ticket.status == 'active' %}<i class="fas fa-check-circle"></i> Actif
+                            {% elif ticket.status == 'paid' %}<i class="fas fa-check"></i> Payé
+                            {% elif ticket.status == 'expired' %}<i class="fas fa-times-circle"></i> Expiré
+                            {% elif ticket.status == 'cancelled' %}<i class="fas fa-ban"></i> Annulé
+                            {% endif %}
+                        </span>
+                    </td>
+                    <td class="text-muted" style="font-size: 12px;">{{ ticket.expires_at.strftime('%d/%m/%Y') if ticket.expires_at else '-' }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="7" class="text-center text-muted" style="padding: 40px;">
+                        <i class="fas fa-ticket-alt" style="font-size: 40px; display: block; margin-bottom: 12px; opacity: 0.3;"></i>
+                        Aucun ticket pour ce bureau
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

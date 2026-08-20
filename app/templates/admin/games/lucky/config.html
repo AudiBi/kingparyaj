@@ -7,6 +7,11 @@
 {% block page_subtitle %}Paramètres de la roue de la chance{% endblock %}
 
 {% block content %}
+<div class="mb-3">
+    <a href="{{ url_for('admin_lucky_statistics_page') }}" class="btn btn-sm btn-secondary">
+        <i class="fas fa-chart-bar"></i> Voir les statistiques
+    </a>
+</div>
 <div class="grid-2">
     <!-- ==================== PARAMÈTRES ==================== -->
     <div class="table-container">

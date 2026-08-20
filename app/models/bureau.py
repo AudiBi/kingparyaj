@@ -71,7 +71,7 @@ class Bureau(BaseModel):
     last_cash_count = Column(DateTime, nullable=True)
     
     # ========== Relations ==========
-    agents = relationship("User", backref="bureau")
+    agents = relationship("User", backref="bureau", foreign_keys="User.bureau_id")
     tickets = relationship("Ticket", back_populates="bureau")
     cashier_sessions = relationship("CashierSession", back_populates="bureau")
     

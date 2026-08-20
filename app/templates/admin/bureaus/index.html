@@ -73,7 +73,7 @@
                         <button type="submit" class="btn btn-primary">
                             <i class="fas fa-search"></i> Filtrer
                         </button>
-                        <a href="{{ url_for('admin_bureau_create') }}" class="btn btn-success">
+                        <a href="{{ url_for('admin_bureau_create_page') }}" class="btn btn-success">
                             <i class="fas fa-plus"></i> Ajouter
                         </a>
                     </div>
@@ -153,11 +153,11 @@
                     <td class="text-muted" style="font-size: 12px;">{{ bureau.created_at|timeago }}</td>
                     <td>
                         <div class="flex" style="gap: 4px;">
-                            <a href="{{ url_for('admin_bureau_detail', bureau_id=bureau.id) }}" 
+                            <a href="{{ url_for('admin_bureau_detail', bureau_id=bureau.id) }}"
                                class="btn btn-sm btn-secondary" title="Voir">
                                 <i class="fas fa-eye"></i>
                             </a>
-                            <a href="{{ url_for('admin_bureau_edit', bureau_id=bureau.id) }}" 
+                            <a href="{{ url_for('admin_bureau_edit_page', bureau_id=bureau.id) }}"
                                class="btn btn-sm btn-primary" title="Modifier">
                                 <i class="fas fa-edit"></i>
                             </a>
@@ -187,34 +187,34 @@
     <!-- ==================== PAGINATION ==================== -->
     {% if pagination.pages > 1 %}
     <div class="pagination">
-        <a href="{{ url_for('admin_bureaus', page=1, **request.args) }}" 
+        <a href="{{ url_for('admin_bureaus') }}{{ qs(request, page=1) }}"
            class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
             <i class="fas fa-angle-double-left"></i>
         </a>
-        
+
         {% if pagination.has_prev %}
-        <a href="{{ url_for('admin_bureaus', page=pagination.page-1, **request.args) }}" class="page-item">
+        <a href="{{ url_for('admin_bureaus') }}{{ qs(request, page=pagination.page-1) }}" class="page-item">
             <i class="fas fa-chevron-left"></i>
         </a>
         {% endif %}
-        
+
         {% for p in range(1, pagination.pages + 1) %}
             {% if p == pagination.page %}
                 <span class="page-item active">{{ p }}</span>
             {% elif p <= 3 or p > pagination.pages - 3 or (p >= pagination.page - 2 and p <= pagination.page + 2) %}
-                <a href="{{ url_for('admin_bureaus', page=p, **request.args) }}" class="page-item">{{ p }}</a>
+                <a href="{{ url_for('admin_bureaus') }}{{ qs(request, page=p) }}" class="page-item">{{ p }}</a>
             {% elif p == 4 or p == pagination.pages - 3 %}
                 <span class="page-item">...</span>
             {% endif %}
         {% endfor %}
-        
+
         {% if pagination.has_next %}
-        <a href="{{ url_for('admin_bureaus', page=pagination.page+1, **request.args) }}" class="page-item">
+        <a href="{{ url_for('admin_bureaus') }}{{ qs(request, page=pagination.page+1) }}" class="page-item">
             <i class="fas fa-chevron-right"></i>
         </a>
         {% endif %}
-        
-        <a href="{{ url_for('admin_bureaus', page=pagination.pages, **request.args) }}" 
+
+        <a href="{{ url_for('admin_bureaus') }}{{ qs(request, page=pagination.pages) }}"
            class="page-item {% if not pagination.has_next %}disabled{% endif %}">
             <i class="fas fa-angle-double-right"></i>
         </a>

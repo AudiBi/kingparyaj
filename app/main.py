@@ -22,6 +22,7 @@ from app.core.database import engine
 from app.core.redis_client import redis_client
 from app.core.logger import logger
 from app.core.exceptions import AppException
+from app.core.csrf import AdminCsrfMiddleware
 
 # Ajouter le chemin du projet pour les imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -155,6 +156,10 @@ app.add_middleware(
     expose_headers=["X-Total-Count", "X-Page"],
 )
 
+# 1bis. Protection CSRF pour le panel HTML /admin (génération + validation
+# centralisées, cf. app/core/csrf.py)
+app.add_middleware(AdminCsrfMiddleware)
+
 
 # 2. Request logging middleware
 @app.middleware("http")
@@ -186,6 +191,24 @@ async def app_exception_handler(request: Request, exc: AppException):
             "success": False,
             "error": exc.detail,
             "code": exc.code,
+            "timestamp": datetime.utcnow().isoformat(),
+            "path": request.url.path
+        }
+    )
+
+
+@app.exception_handler(CsrfProtectError)
+async def csrf_protect_exception_handler(request: Request, exc: CsrfProtectError):
+    """Filet de sécurité générique pour toute route protégée par CSRF qui
+    n'intercepte pas l'erreur elle-même (les routes HTML comme /admin/login
+    la traitent localement pour réafficher un formulaire avec message)."""
+    logger.warning(f"⚠️ CsrfProtectError: {exc.message} on {request.url.path}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "success": False,
+            "error": exc.message,
+            "code": "CSRF_ERROR",
             "timestamp": datetime.utcnow().isoformat(),
             "path": request.url.path
         }
@@ -225,7 +248,8 @@ from app.api.v1 import (
     tickets,
     agent,
     admin,
-    reports
+    reports,
+    payments,
 )
 
 api_v1_prefix = "/api/v1"
@@ -239,6 +263,7 @@ app.include_router(tickets.router, prefix=api_v1_prefix)
 app.include_router(agent.router, prefix=api_v1_prefix)
 app.include_router(admin.router, prefix=api_v1_prefix)
 app.include_router(reports.router, prefix=api_v1_prefix)
+app.include_router(payments.router, prefix=api_v1_prefix)
 
 
 # ==================== WEBSOCKETS ====================

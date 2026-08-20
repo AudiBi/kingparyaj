@@ -13,7 +13,7 @@
         <div class="title"><i class="fas fa-filter"></i> Période</div>
     </div>
     <div style="padding: 16px 20px;">
-        <form method="GET" action="{{ url_for('admin_keno_statistics') }}" class="grid-3">
+        <form method="GET" action="/admin/games/keno/statistics" class="grid-3">
             <div class="form-group" style="margin-bottom: 0;">
                 <label>Du</label>
                 <input type="date" name="start_date" class="form-control" value="{{ start_date }}">
