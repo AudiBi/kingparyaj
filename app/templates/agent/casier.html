@@ -177,7 +177,11 @@
 
 <script>
     // ==================== TYPE DE JOUEUR ====================
-    document.getElementById('playerType').addEventListener('change', function() {
+    // Sans session ouverte, les formulaires ne sont pas affichés : les éléments
+    // n'existent pas (sans ces gardes : erreur JavaScript à chaque ouverture de la page).
+    const playerTypeEl = document.getElementById('playerType');
+    if (playerTypeEl) {
+    playerTypeEl.addEventListener('change', function() {
         const group = document.getElementById('playerPhoneGroup');
         if (this.value === 'account') {
             group.style.display = 'block';
@@ -187,10 +191,12 @@
             group.querySelector('input').required = false;
         }
     });
-    document.getElementById('playerType').dispatchEvent(new Event('change'));
+    playerTypeEl.dispatchEvent(new Event('change'));
+    }
     
     // ==================== TYPE DE PAIEMENT ====================
-    document.getElementById('payoutType').addEventListener('change', function() {
+    const payoutTypeEl = document.getElementById('payoutType');
+    if (payoutTypeEl) payoutTypeEl.addEventListener('change', function() {
         const input = document.querySelector('input[name="identifier"]');
         if (this.value === 'ticket') {
             input.placeholder = 'Ex: KNO-ABCD-1234';
@@ -302,4 +308,4 @@
         location.reload();
     }
 </script>
-{% endblock %}
+{% endblock %}

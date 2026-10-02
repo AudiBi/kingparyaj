@@ -1,0 +1,422 @@
+<!-- app/templates/agent/keno_shared.html : Keno partagé (un tirage commun toutes les N minutes) -->
+{% extends "agent/base.html" %}
+
+{% block title %}Keno - Agent{% endblock %}
+{% block page_title %}Keno{% endblock %}
+{% block page_subtitle %}Tirage partagé — 20 numéros sur 80 toutes les {{ keno_config.interval_minutes }} minutes{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/keno_live.css">
+<style>
+    .kl { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(320px, 1fr); gap: 16px; }
+    @media (max-width: 1150px) { .kl { grid-template-columns: minmax(0, 1fr); } }
+    .kc { background: #fff; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,.06); padding: 14px; margin-bottom: 16px; }
+    .kdark { background: #06140f; border-radius: 12px; padding: 12px; }
+    .khead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+    .ktitle { font-size: 18px; font-weight: 800; }
+    .kst { padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; background: #e2e8f0; color: #1e293b; }
+    .kst.open { background: #dcfce7; color: #166534; } .kst.closed, .kst.drawing, .kst.intro { background: #fef3c7; color: #92400e; }
+    .kst.cancelled { background: #fee2e2; color: #991b1b; }
+    .kcd { font-variant-numeric: tabular-nums; font-size: 24px; font-weight: 800; color: #059669; }
+    .klive { font-size: 12px; color: #64748b; display: flex; align-items: center; gap: 6px; }
+    .klive i { width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; display: inline-block; }
+    .klive.on i { background: #22c55e; }
+    .kpicker { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 4px; padding: 8px; background: #06140f; border-radius: 10px; }
+    .kpicker button { border: 0; background: none; padding: 0; cursor: pointer; display: flex; justify-content: center; }
+    .kpicker .kn-ball { width: 30px; height: 30px; font-size: 12px; }
+    .kpicker button.off .kn-ball { opacity: .35; filter: saturate(.4); }
+    .kpicker button.on .kn-ball { outline: 3px solid #fbbf24; outline-offset: 1px; }
+    .kpicker button:disabled { cursor: not-allowed; }
+    .kchosen { display: flex; flex-wrap: wrap; gap: 5px; min-height: 36px; align-items: center; margin: 10px 0 6px; }
+    .kactions { display: flex; gap: 6px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+    .kactions select { padding: 4px 6px; border: 1px solid #cbd5e1; border-radius: 6px; }
+    .kstakes { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+    .kstakes button { padding: 6px 10px; border-radius: 8px; border: 1px solid #cbd5e1; background: #f8fafc; font-weight: 700; cursor: pointer; }
+    .kstakes button.on { background: #059669; color: #fff; border-color: #059669; }
+    .kinput { width: 100%; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px; margin-bottom: 8px; }
+    .kseg { display: flex; gap: 6px; margin-bottom: 8px; }
+    .kseg label { flex: 1; padding: 6px; border: 2px solid #e2e8f0; border-radius: 8px; text-align: center; cursor: pointer; font-size: 13px; font-weight: 600; }
+    .kseg input { display: none; }
+    .kseg label:has(input:checked) { border-color: #059669; background: #ecfdf5; }
+    .kpay { width: 100%; font-size: 12px; border-collapse: collapse; margin: 6px 0; }
+    .kpay td { padding: 3px 6px; border-bottom: 1px solid #f1f5f9; font-variant-numeric: tabular-nums; }
+    .kpay td:last-child { text-align: right; font-weight: 700; }
+    .ksum { background: #f8fafc; border-radius: 8px; padding: 10px; margin: 8px 0; font-size: 13px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .ksum b { font-size: 16px; display: block; }
+    .kbet { font-size: 18px; font-weight: 900; letter-spacing: .06em; }
+    .ktable { width: 100%; font-size: 12px; border-collapse: collapse; }
+    .ktable td, .ktable th { padding: 6px 4px; border-bottom: 1px solid #f1f5f9; text-align: left; vertical-align: middle; }
+    .kballs { display: flex; flex-wrap: wrap; gap: 3px; }
+    .receipt { font-family: 'Courier New', monospace; font-size: 13px; line-height: 1.5; color: #000; }
+    .receipt .code { font-size: 11px; word-break: break-all; }
+    @media print {
+        body * { visibility: hidden !important; }
+        #receiptPrint, #receiptPrint * { visibility: visible !important; }
+        #receiptPrint { position: absolute; left: 0; top: 0; width: 72mm; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="kl">
+    <div>
+        <div class="kc">
+            <div class="khead">
+                <div>
+                    <div class="ktitle">KENO <span id="liveNo">—</span></div>
+                    <span id="liveSt" class="kst">Chargement…</span>
+                </div>
+                <div style="text-align:right;">
+                    <div id="liveLabel" style="font-size:12px;color:#64748b;">Tirage dans</div>
+                    <div id="liveCd" class="kcd">--:--</div>
+                </div>
+            </div>
+            <div class="kdark"><div id="board"></div></div>
+            <div class="khead" style="margin:8px 0 0;">
+                <div id="ws" class="klive"><i></i><span>Connexion…</span></div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                    <button type="button" id="counterBtn" class="btn btn-primary btn-sm"><i class="fas fa-desktop"></i> Écran joueur (guichet)</button>
+                    <a href="/keno/salle" target="_blank" class="btn btn-secondary btn-sm"><i class="fas fa-tv"></i> Écran salle</a>
+                </div>
+            </div>
+            <div style="font-size:11px;color:#64748b;margin-top:6px;word-break:break-all;">Écran joueur (TV) : <span id="counterUrl"></span></div>
+        </div>
+
+        <div class="kc">
+            <div class="khead"><strong><i class="fas fa-receipt"></i> Mes derniers tickets Keno</strong><input type="search" class="tk-search" data-target="myBets" placeholder="Rechercher un n° de ticket…" aria-label="Rechercher un numéro de ticket" style="padding:5px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:12px;min-width:0;max-width:210px;"></div>
+            <div class="table-responsive">
+                <table class="ktable">
+                    <thead><tr><th>Heure</th><th>Ticket</th><th>Tirage</th><th>Numéros</th><th>Mise</th><th>Résultat</th><th></th></tr></thead>
+                    <tbody id="myBets"><tr><td colspan="7" class="text-muted">Aucun ticket</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="kc">
+            <div class="khead"><strong><i class="fas fa-history"></i> Derniers tirages</strong></div>
+            <div class="table-responsive">
+                <table class="ktable">
+                    <thead><tr><th>Tirage</th><th>Heure</th><th>20 numéros</th></tr></thead>
+                    <tbody id="history"><tr><td colspan="3" class="text-muted">—</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div>
+        <div class="kc">
+            <div class="khead">
+                <strong><i class="fas fa-ticket-alt"></i> Nouveau ticket</strong>
+                <div style="text-align:right;font-size:12px;">
+                    <div id="betDraw" class="text-muted">Aucun tirage ouvert</div>
+                    <div id="betCd" class="kcd" style="font-size:18px;"></div>
+                </div>
+            </div>
+            <div class="kpicker" id="picker" aria-label="Numéros de 1 à 80"></div>
+            <div class="kchosen" id="chosen"></div>
+            <div class="kactions">
+                <select id="qpCount" aria-label="Combien de numéros"></select>
+                <button type="button" id="randomBtn" class="btn btn-secondary btn-sm"><i class="fas fa-random"></i> Aléatoire</button>
+                <button type="button" id="clearBtn" class="btn btn-secondary btn-sm"><i class="fas fa-eraser"></i> Effacer</button>
+                <span id="pickCount" class="text-muted" style="margin-left:auto;font-size:13px;">0</span>
+            </div>
+            <form id="betForm" autocomplete="off">
+                <div class="kstakes" id="stakes"></div>
+                <input class="kinput" id="stake" type="number" min="1" step="1" value="50" required aria-label="Mise">
+                <div class="kseg">
+                    <label><input type="radio" name="player_type" value="cash" checked><span><i class="fas fa-money-bill-wave"></i> Espèces</span></label>
+                    <label><input type="radio" name="player_type" value="ticket"><span><i class="fas fa-ticket-alt"></i> Ticket</span></label>
+                    <label><input type="radio" name="player_type" value="account"><span><i class="fas fa-user"></i> Compte</span></label>
+                </div>
+                <input class="kinput" id="identifier" placeholder="Numéro de ticket existant (KNO-XXXX-XXXX)" style="display:none">
+                <table class="kpay" id="payRows"></table>
+                <div class="ksum">
+                    <div>Numéros joués<b id="sumSpots">0</b></div>
+                    <div style="text-align:right;">Gain maximum<b id="sumMax">—</b></div>
+                </div>
+                <button type="submit" id="betBtn" class="btn btn-primary btn-block btn-lg kbet" disabled>VALIDER LE TICKET</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="modal-overlay" id="receiptModal">
+    <div class="modal" style="max-width:420px;">
+        <div id="receiptPrint" class="receipt" style="max-height:65vh;overflow:auto;background:#f1f5f9;padding:8px;border-radius:8px;"></div>
+        <div class="flex" style="gap:8px;margin-top:12px;">
+            <button class="btn btn-primary" onclick="KPReceipt.print(window.__kpReceipt)"><i class="fas fa-print"></i> Imprimer</button>
+            <select class="kp-paper" aria-label="Largeur du papier" onchange="KPReceipt.setPaper(this.value); window.__kpReceipt && KPReceipt.preview(document.getElementById('receiptPrint'), window.__kpReceipt)" style="padding:6px 8px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;">
+                <option value="80">Papier 80 mm</option><option value="58">Papier 58 mm</option>
+            </select>
+            <button class="btn btn-secondary" onclick="closeModal('receiptModal')">Fermer</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="/static/js/keno_live.js"></script>
+<script>
+(function () {
+    const K = window.KenoLive;
+    const $ = id => document.getElementById(id);
+    const esc = K.esc, money = K.money;
+    const COUNTER_URL = location.origin + '/keno/salle?c={{ screen_code }}';
+    const BUREAU = {{ (agent.bureau_name or '')|tojson }};
+    const clock = new K.ServerClock();
+    const board = new K.Board($('board'), { clock });
+
+    let cfg = null, live = null, betting = null, picks = [], myBets = [];
+    const time = iso => iso ? new Date(K.parseUtc(iso)).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '—';
+
+    // Espèces (par défaut) : le numéro de ticket est créé automatiquement par le serveur
+    function playerType() { const r = document.querySelector('input[name="player_type"]:checked'); return r ? r.value : 'cash'; }
+    function syncPlayerType() {
+        const t = playerType();
+        $('identifier').style.display = t === 'cash' ? 'none' : '';
+        $('identifier').placeholder = t === 'ticket' ? 'Numéro de ticket existant (KNO-XXXX-XXXX)' : 'Téléphone du joueur';
+        if (t === 'cash') $('identifier').value = '';
+    }
+
+    // Recherche d'un numéro de ticket dans l'historique (plusieurs gagnants : retrouver le bon ticket)
+    function filterTickets() {
+        document.querySelectorAll('.tk-search').forEach(inp => {
+            const q = inp.value.trim().toUpperCase();
+            document.querySelectorAll('#' + inp.dataset.target + ' tr').forEach(tr => {
+                tr.style.display = !q || tr.textContent.toUpperCase().includes(q) ? '' : 'none';
+            });
+        });
+    }
+    document.querySelectorAll('.tk-search').forEach(inp => inp.addEventListener('input', filterTickets));
+
+    function errorText(data, fallback) {
+        if (!data) return fallback;
+        if (typeof data.error === 'string') return data.error;
+        if (typeof data.detail === 'string') return data.detail;
+        if (Array.isArray(data.detail) && data.detail[0]) return String(data.detail[0].msg || '').replace(/^Value error, /, '');
+        return data.message || fallback;
+    }
+    async function csrf() { return (await (await fetch('/agent/api/keno/csrf-token')).json()).csrf_token; }
+
+    // ---------- Grille 1-80 ----------
+    let html = '';
+    for (let n = 1; n <= K.TOTAL; n++) html += `<button type="button" data-n="${n}" aria-pressed="false">${K.ballHtml(n)}</button>`;
+    $('picker').innerHTML = html;
+
+    const rules = () => betting || cfg;
+    function renderPicks() {
+        const max = rules() ? rules().max_picks : 10;
+        const full = picks.length >= max;
+        $('picker').querySelectorAll('button').forEach(b => {
+            const on = picks.includes(Number(b.dataset.n));
+            b.classList.toggle('on', on); b.classList.toggle('off', full && !on); b.setAttribute('aria-pressed', on);
+        });
+        $('chosen').innerHTML = picks.slice().sort((a, b) => a - b).map(n => K.ballHtml(n)).join('') || '<span class="text-muted" style="font-size:13px;">Choisissez de 1 à ' + max + ' numéros</span>';
+        $('pickCount').textContent = picks.length + ' / ' + max;
+        updateForm();
+    }
+    function toggle(n) {
+        const i = picks.indexOf(n);
+        if (i >= 0) picks.splice(i, 1);
+        else if (picks.length < (rules() ? rules().max_picks : 10)) picks.push(n);
+        renderPicks(); sendPreview();
+    }
+
+    const stakeValue = () => { const v = Number($('stake').value); return isFinite(v) && v > 0 ? v : null; };
+    function updateForm() {
+        const r = rules(), stake = stakeValue();
+        const row = r && r.paytable ? (r.paytable[String(picks.length)] || {}) : {};
+        const entries = Object.entries(row).map(([h, m]) => [Number(h), Number(m)]).sort((a, b) => b[0] - a[0]);
+        $('payRows').innerHTML = picks.length ? entries.map(([h, m]) =>
+            `<tr><td>${h} trouvé${h > 1 ? 's' : ''} sur ${picks.length}</td><td>x${m}</td><td>${stake ? money(Math.min(Math.floor(Math.round(stake * m * 10000) / 100) / 100, r.max_payout)) : ''}</td></tr>`).join('') : '';
+        $('sumSpots').textContent = picks.length;
+        const top = entries.length ? entries[0][1] : null;
+        $('sumMax').textContent = top && stake ? money(Math.min(Math.floor(Math.round(stake * top * 10000) / 100) / 100, r.max_payout)) : '—';
+        const ok = betting && cfg && cfg.enabled && K.parseUtc(betting.betting_closes_at) > clock.now()
+            && picks.length >= betting.min_picks && picks.length <= betting.max_picks && entries.length
+            && stake && stake >= betting.min_bet && stake <= betting.max_bet && (playerType() === 'cash' || $('identifier').value.trim());
+        $('betBtn').disabled = !ok;
+        document.querySelectorAll('#stakes button').forEach(b => b.classList.toggle('on', Number(b.dataset.v) === stake));
+    }
+
+    let previewTimer = null, lastPreview = '';
+    function sendPreview() {
+        clearTimeout(previewTimer);
+        previewTimer = setTimeout(async () => {
+            const body = JSON.stringify({ draw_id: betting ? betting.draw_id : null, picks, stake: stakeValue() });
+            if (body === lastPreview) return;
+            lastPreview = body;
+            try {
+                await fetch('/agent/api/keno/shared/screen', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': await csrf() }, body });
+            } catch (e) { /* affichage seulement */ }
+        }, 250);
+    }
+
+    async function submitBet(e) {
+        e.preventDefault();
+        if ($('betBtn').disabled) return;
+        $('betBtn').disabled = true;
+        const payload = {
+            draw_id: betting.draw_id, picks: picks.slice(), stake: stakeValue(),
+            player_type: playerType(),
+            identifier: $('identifier').value.trim(),
+        };
+        try {
+            const res = await fetch('/agent/api/keno/shared/bet', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': await csrf() }, body: JSON.stringify(payload),
+            });
+            const data = await res.json().catch(() => null);
+            if (!res.ok || !data || !data.success) throw new Error(errorText(data, 'Ticket refusé'));
+            showToast('Ticket enregistré pour le tirage #' + data.bet.draw_number, 'success');
+            showReceipt(data.bet);
+            // Ticket suivant : les boules choisies sont réinitialisées
+            picks = [];
+            renderPicks();
+            lastPreview = '';
+            sendPreview();
+            loadMyBets();
+        } catch (err) {
+            showToast(err.message || 'Erreur', 'error');
+        } finally { updateForm(); }
+    }
+
+    function showReceipt(b) {
+        const done = b.status && b.status !== 'pending';
+        const sections = [
+            { type: 'numbers', label: `Numéros joués (${b.spots})`, items: b.picks, highlight: done ? b.matches : [] },
+            { type: 'sep' },
+            { type: 'rows', rows: [
+                ['Mise', KPReceipt.money(b.stake)],
+                ['Gain maximum', KPReceipt.money(b.max_win)],
+            ] },
+        ];
+        if (done) {
+            sections.push({ type: 'rows', rows: [['Trouvés', `${b.match_count} / ${b.spots}`], ['Multiplicateur', 'x' + Number(b.multiplier).toLocaleString('fr-FR')]] });
+            sections.push({ type: 'total', label: 'GAIN', value: KPReceipt.money(b.payout) });
+            sections.push({ type: 'stamp', text: b.status === 'won' ? 'GAGNANT' : (b.status === 'refunded' ? 'REMBOURSÉ' : 'PERDANT'), won: b.status === 'won' });
+        } else {
+            sections.push({ type: 'total', label: 'TOTAL PAYÉ', value: KPReceipt.money(b.stake) });
+        }
+        kpShowReceipt({
+            game: 'KENO', round: `Tirage n° ${b.draw_number}`, roundTime: 'Tirage à ' + time(b.draw_time),
+            bureau: KP_AGENT.bureau, address: KP_AGENT.address, phone: KP_AGENT.phone, agent: KP_AGENT.name,
+            ticket: b.ticket_number, code: b.bet_id, placedAt: b.placed_at, sections,
+            hash: b.server_seed_hash, verifyUrl: location.host + '/keno/verifier?tirage=' + b.draw_id,
+            footer: 'Résultat sur les écrans et au guichet. Conservez ce reçu : il est exigé pour tout paiement.',
+        });
+    }
+
+    // ---------- Listes ----------
+    function result(b) {
+        const label = { pending: 'En attente', won: 'Gagné', lost: 'Perdu', refunded: 'Remboursé' }[b.status] || b.status;
+        const color = b.status === 'won' ? '#059669' : b.status === 'lost' ? '#94a3b8' : '#0f172a';
+        return `<b style="color:${color}">${label}</b>${b.status === 'won' || b.status === 'lost' ? ' · ' + b.match_count + '/' + b.spots : ''}${b.payout > 0 ? '<br>' + money(b.payout) : ''}`;
+    }
+    async function loadMyBets() {
+        try {
+            const data = await (await fetch('/agent/api/keno/shared/my-bets?limit=15')).json();
+            myBets = data.bets || [];
+            $('myBets').innerHTML = myBets.map(b => `<tr${b.status === 'won' || b.status === 'WON' ? ' style="background:#ecfdf5"' : ''}>
+                <td>${time(b.placed_at)}</td><td>${b.ticket_number ? '<b style="font-family:monospace">' + esc(b.ticket_number) + '</b>' : '<span class="text-muted">Compte</span>'}</td><td>#${b.draw_number}</td>
+                <td><div class="kballs">${b.picks.map(n => K.ballHtml(n, 'kn-mini' + (b.matches.includes(n) ? ' kn-hit' : ''))).join('')}</div></td>
+                <td>${money(b.stake)}</td><td>${result(b)}</td>
+                <td><button class="btn btn-secondary btn-sm" data-reprint="${esc(b.bet_id)}" title="Réimprimer"><i class="fas fa-print"></i></button></td>
+            </tr>`).join('') || '<tr><td colspan="7" class="text-muted">Aucun ticket</td></tr>';
+            filterTickets();
+            boardPicks();
+        } catch (e) { /* réessai */ }
+    }
+    async function loadHistory() {
+        try {
+            const data = await (await fetch('/agent/api/keno/shared/history?limit=8')).json();
+            $('history').innerHTML = (data.draws || []).map(d => `<tr><td>#${d.draw_number}</td><td>${time(d.draw_time)}</td>
+                <td><div class="kballs">${(d.numbers || []).map(n => K.ballHtml(n, 'kn-mini')).join('') || 'Annulé'}</div></td></tr>`).join('')
+                || '<tr><td colspan="3" class="text-muted">—</td></tr>';
+        } catch (e) { /* réessai */ }
+    }
+    // Tableau : numéros du dernier ticket de l'agent sur le tirage affiché
+    function boardPicks() {
+        const b = live && myBets.find(x => x.draw_id === live.draw_id);
+        board.setPicks(b ? b.picks : []);
+    }
+
+    let lastKey = '';
+    async function loadState() {
+        try {
+            const data = await (await fetch('/agent/api/keno/live')).json();
+            clock.sync(data.server_time);
+            cfg = data.config; live = data.draw; betting = data.betting_draw;
+            board.setDraw(live);
+            $('stakes').innerHTML = cfg.stake_options.map(v => `<button type="button" data-v="${v}">${v}</button>`).join('');
+            const max = rules().max_picks, min = rules().min_picks;
+            if ($('qpCount').options.length !== max - min + 1) {
+                $('qpCount').innerHTML = Array.from({ length: max - min + 1 }, (_, i) => `<option value="${min + i}" ${min + i === Math.min(5, max) ? 'selected' : ''}>${min + i} n°</option>`).join('');
+            }
+            const key = (live ? live.draw_id + live.status : '') + '|' + (betting ? betting.draw_id : '');
+            if (key !== lastKey) { lastKey = key; loadMyBets(); loadHistory(); lastPreview = ''; sendPreview(); }
+            renderPicks();
+        } catch (e) { /* réessai */ }
+    }
+
+    function tick() {
+        board.render();
+        const now = clock.now();
+        const pr = K.progress(live, now);
+        $('liveNo').textContent = live ? '#' + live.draw_number : '—';
+        const labels = { open: 'Paris ouverts', closed: 'Paris fermés', intro: 'Tirage', drawing: 'Tirage en cours', done: 'Tirage terminé', cancelled: 'Annulé', none: 'Aucun tirage' };
+        $('liveSt').className = 'kst ' + pr.phase; $('liveSt').textContent = labels[pr.phase] || '';
+        if (live && (pr.phase === 'open' || pr.phase === 'closed')) {
+            $('liveLabel').textContent = 'Tirage dans'; $('liveCd').textContent = K.countdown(K.parseUtc(live.draw_time) - now);
+        } else { $('liveLabel').textContent = ''; $('liveCd').textContent = pr.phase === 'drawing' ? pr.revealed + ' / 20' : ''; }
+        if (pr.phase === 'done' && live && live.status === 'completed' && !tick.reloaded) { tick.reloaded = true; setTimeout(loadState, 1500); }
+        if (pr.phase !== 'done') tick.reloaded = false;
+        if (betting) {
+            const left = K.parseUtc(betting.betting_closes_at) - now;
+            $('betDraw').textContent = 'Tirage #' + betting.draw_number + ' à ' + time(betting.draw_time);
+            $('betCd').textContent = 'Fermeture ' + K.countdown(left);
+            if (left <= 0) { if (!$('betBtn').disabled) $('betBtn').disabled = true; if (!tick.closing) { tick.closing = true; setTimeout(() => { tick.closing = false; loadState(); }, 1500); } }
+        } else {
+            $('betDraw').textContent = cfg && !cfg.enabled ? 'Keno fermé' : 'Aucun tirage ouvert (hors heures ?)';
+            $('betCd').textContent = '';
+        }
+    }
+
+    // ---------- Événements ----------
+    $('picker').addEventListener('click', e => { const b = e.target.closest('button[data-n]'); if (b) toggle(Number(b.dataset.n)); });
+    $('randomBtn').addEventListener('click', async () => {
+        try {
+            const data = await (await fetch('/agent/api/keno/quick-pick?count=' + $('qpCount').value)).json();
+            picks = (data.picks || []).slice(); renderPicks(); sendPreview();
+        } catch (e) { showToast('Sélection aléatoire indisponible', 'error'); }
+    });
+    $('clearBtn').addEventListener('click', () => { picks = []; renderPicks(); sendPreview(); });
+    $('stakes').addEventListener('click', e => { const b = e.target.closest('button[data-v]'); if (b) { $('stake').value = b.dataset.v; updateForm(); sendPreview(); } });
+    $('stake').addEventListener('input', () => { updateForm(); sendPreview(); });
+    $('identifier').addEventListener('input', updateForm);
+    document.querySelectorAll('input[name="player_type"]').forEach(r => r.addEventListener('change', () => { syncPlayerType(); updateForm(); }));
+    $('betForm').addEventListener('submit', submitBet);
+    $('myBets').addEventListener('click', async e => {
+        const b = e.target.closest('[data-reprint]');
+        if (!b) return;
+        try {
+            const data = await (await fetch('/agent/api/keno/shared/bets/' + encodeURIComponent(b.dataset.reprint))).json();
+            if (data.bet) showReceipt(data.bet);
+        } catch (err) { showToast('Reçu introuvable', 'error'); }
+    });
+    $('counterUrl').textContent = COUNTER_URL;
+    $('counterBtn').addEventListener('click', () => {
+        const w = window.open(COUNTER_URL, 'knCounterScreen', 'popup,width=1280,height=720');
+        if (!w) showToast("Autorisez les fenêtres pop-up, ou ouvrez l'adresse de l'écran sur la TV", 'warning');
+    });
+    K.connectLive((data, type) => { if (type === 'keno_round' || type === 'keno_draw') loadState(); }, on => {
+        $('ws').classList.toggle('on', on);
+        $('ws').lastElementChild.textContent = on ? 'En direct' : 'Reconnexion…';
+    });
+
+    renderPicks();
+    loadState();
+    setInterval(tick, 250);
+    setInterval(loadState, 10000);
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<!-- app/templates/public/keno_live.html : Keno partagé (TV de la salle, ou écran du joueur au guichet avec ?c=<code>) -->
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Keno — King Paryaj</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png">
+    <link rel="icon" href="/static/img/favicon.ico" sizes="any">
+    <link rel="stylesheet" href="/static/css/keno_live.css">
+    <style>
+        :root { --bg: #04110c; --panel: rgba(255,255,255,.045); --line: rgba(110,231,183,.2); --text: #ecfdf5; --muted: #8fb5a6; --gold: #fbbf24; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { height: 100%; }
+        body { color: var(--text); font-family: Inter, system-ui, -apple-system, 'Segoe UI', sans-serif; overflow: hidden;
+               background: radial-gradient(ellipse at 20% 0%, #134e3a 0, transparent 50%), radial-gradient(ellipse at 90% 100%, #0b3b4a 0, transparent 45%), var(--bg); }
+        .screen { height: 100vh; display: grid; grid-template-rows: auto 1fr auto; gap: 1.4vh; padding: 1.6vh 1.6vw; }
+        header { display: flex; align-items: center; gap: 1.4vw; flex-wrap: wrap; min-width: 0; }
+        header img { height: 6.5vh; width: auto; }
+        .brand { font-size: 4.4vh; font-weight: 900; letter-spacing: .3vh; }
+        .brand span { color: var(--gold); }
+        .pill { padding: .7vh 1.4vw; border-radius: 999px; font-weight: 800; font-size: 2vh; background: #173b2f; white-space: nowrap; }
+        .pill.open { background: #065f46; color: #a7f3d0; }
+        .pill.drawing, .pill.intro, .pill.closed { background: #f59e0b; color: #1b1000; }
+        .live { width: 1.2vh; height: 1.2vh; border-radius: 50%; background: #64748b; display: inline-block; }
+        .live.on { background: #22c55e; box-shadow: 0 0 1vh #22c55e; }
+        .round { margin-left: auto; text-align: right; min-width: 0; }
+        .round .no { font-size: 3vh; font-weight: 800; }
+        .round .hash { font-family: 'Courier New', monospace; font-size: 1.3vh; color: var(--muted); word-break: break-all; max-width: 42vw; }
+
+        main { display: grid; grid-template-columns: minmax(0, 1.75fr) minmax(0, 1fr); gap: 1.4vw; min-height: 0; }
+        .card { background: var(--panel); border: 1px solid var(--line); border-radius: 2vh; padding: 1.4vh 1vw; min-height: 0; overflow: hidden; }
+        .title { font-size: 1.7vh; letter-spacing: .25vh; text-transform: uppercase; color: var(--muted); font-weight: 800; margin-bottom: 1vh; display: flex; justify-content: space-between; gap: 1vw; }
+
+        #board .kn-board { gap: 1.3vh; }
+        #board .kn-stage { grid-template-columns: 17vh 1fr auto; padding: 1.4vh; }
+        #board .kn-drum { width: 15vh; height: 15vh; }
+        #board .kn-ball { width: 4.6vh; height: 4.6vh; font-size: 1.9vh; }
+        #board .kn-ball.kn-big { width: 14vh; height: 14vh; font-size: 5.6vh; }
+        #board .kn-count { font-size: 4.6vh; }
+        #board .kn-phase { font-size: 2.1vh; }
+        #board .kn-hits > b { font-size: 3.6vh; }
+        #board .kn-hits > span { font-size: 1.4vh; }
+        #board .kn-slots { gap: .8vh; }
+        #board .kn-slot { max-height: 6.6vh; }
+        #board .kn-slot .kn-ball { width: 88%; height: 88%; font-size: 1.8vh; }
+        #board .kn-cell { font-size: 1.75vh; padding: .55vh 0; }
+
+        .side { display: grid; grid-template-rows: auto 1fr; gap: 1.4vh; min-height: 0; }
+        .next { display: flex; justify-content: space-between; align-items: center; gap: 1vw; }
+        .next b { font-size: 6vh; font-variant-numeric: tabular-nums; color: var(--gold); }
+        .next small { display: block; color: var(--muted); font-size: 1.7vh; }
+        .hist { display: grid; gap: .9vh; overflow: hidden; }
+        .hist .row { display: grid; grid-template-columns: 8vh 1fr; gap: .6vw; align-items: center; }
+        .hist .row b { font-size: 1.8vh; }
+        .hist .balls { display: flex; flex-wrap: wrap; gap: .3vh; }
+        .hist .kn-ball { width: 2.7vh; height: 2.7vh; font-size: 1.1vh; }
+        .ticket { background: rgba(0,0,0,.25); border: 1px solid var(--line); border-radius: 1.4vh; padding: 1vh .8vw; margin-bottom: .9vh; }
+        .ticket .top { display: flex; justify-content: space-between; font-size: 1.7vh; color: var(--muted); margin-bottom: .6vh; gap: .6vw; }
+        .ticket .balls { display: flex; gap: .45vh; flex-wrap: wrap; }
+        .ticket .kn-ball { width: 3.8vh; height: 3.8vh; font-size: 1.6vh; }
+        .ticket .amount { display: flex; justify-content: space-between; margin-top: .7vh; font-size: 2vh; font-weight: 800; }
+        .ticket.won { border-color: var(--gold); box-shadow: 0 0 1.6vh rgba(251,191,36,.45); }
+        .ticket.preview { border-style: dashed; }
+        .tag { font-weight: 900; } .tag.won { color: var(--gold); } .tag.lost { color: #6b8f80; } .tag.refunded { color: #7dd3fc; }
+        .muted { color: var(--muted); font-size: 1.8vh; }
+        .pay { width: 100%; border-collapse: collapse; font-size: 1.7vh; margin-top: .8vh; }
+        .pay td { padding: .3vh .4vw; border-bottom: 1px solid rgba(110,231,183,.1); font-variant-numeric: tabular-nums; }
+        .pay td:last-child { text-align: right; font-weight: 800; color: var(--gold); }
+        .pay tr.hot td { background: rgba(251,191,36,.18); }
+
+        footer { min-height: 8vh; display: flex; align-items: center; justify-content: center; text-align: center; border-radius: 2vh;
+                 font-size: 3.4vh; font-weight: 900; background: rgba(6,20,15,.8); border: 1px solid var(--line); padding: 0 2vw; }
+        footer.win { background: linear-gradient(90deg, #065f46, #10b981, #fbbf24, #065f46); background-size: 200% 100%; color: #04110c; animation: shine 2.4s linear infinite; }
+        @keyframes shine { to { background-position: 200% 0; } }
+
+        @media (orientation: portrait), (max-width: 900px) {
+            body { overflow: auto; }
+            .screen { height: auto; min-height: 100vh; }
+            main { grid-template-columns: minmax(0, 1fr); }
+            .round { margin-left: 0; width: 100%; text-align: left; }
+            .round .hash { max-width: 100%; }
+            #board .kn-stage { grid-template-columns: 1fr; }
+            #board .kn-drum { display: none; }
+            #board .kn-slots { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+            footer { font-size: 2.6vh; }
+        }
+        @media (prefers-reduced-motion: reduce) { footer.win { animation: none; } }
+    </style>
+</head>
+<body>
+<div class="screen">
+    <header>
+        <img src="/static/img/logo.png" alt="King Paryaj" onerror="this.style.display='none'">
+        <div class="brand">KENO <span>20/80</span></div>
+        <span id="pill" class="pill">Connexion…</span>
+        <span id="live" class="live" title="Temps réel"></span>
+        <div class="round"><div class="no" id="drawNo">—</div><div class="hash" id="hash"></div></div>
+    </header>
+
+    <main>
+        <section class="card"><div id="board"></div></section>
+        <section class="side">
+            <div class="card">
+                <div class="title"><span>Prochain tirage</span><span id="nextNo"></span></div>
+                <div class="next"><div><small>Paris ouverts au guichet</small><span id="nextTime" class="muted"></span></div><b id="nextCd">--:--</b></div>
+            </div>
+            <div class="card">
+                <div class="title"><span id="sideTitle">Derniers tirages</span><span id="sideExtra"></span></div>
+                <div id="side" class="hist"></div>
+            </div>
+        </section>
+    </main>
+
+    <footer id="footer">Chargement…</footer>
+</div>
+
+<script src="/static/js/keno_live.js"></script>
+<script>
+(function () {
+    const K = window.KenoLive;
+    const $ = id => document.getElementById(id);
+    const esc = K.esc, money = K.money;
+    const CODE = {{ code|tojson }};
+    const clock = new K.ServerClock();
+    const board = new K.Board($('board'), { clock });
+    let state = null, screen = null;
+    const time = iso => iso ? new Date(K.parseUtc(iso)).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '—';
+
+    const shown = () => state && state.draw;
+    const mineFor = id => ((screen && screen.tickets) || []).filter(t => t.draw_id === id);
+
+    function render() {
+        const d = shown();
+        board.setDraw(d);
+        const mine = d ? mineFor(d.draw_id) : [];
+        board.setPicks(mine.length ? mine[mine.length - 1].picks : []);
+        $('drawNo').textContent = d ? 'Tirage #' + d.draw_number + ' — ' + time(d.draw_time) : 'Keno';
+        $('hash').textContent = d ? (d.server_seed ? 'Seed : ' + d.server_seed : 'Empreinte : ' + d.server_seed_hash) : '';
+        renderSide();
+    }
+
+    function ticketHtml(t, preview) {
+        const label = preview ? 'En saisie' : ({ pending: 'En attente', won: 'GAGNÉ', lost: 'Perdu', refunded: 'Remboursé' }[t.status] || t.status);
+        const balls = (t.picks || []).map(n => K.ballHtml(n, (t.matches || []).includes(n) ? 'kn-hit' : '')).join('');
+        const right = !preview && t.status === 'won' ? money(t.payout) : (t.max_win != null ? 'max ' + money(t.max_win) : '');
+        return `<div class="ticket ${preview ? 'preview' : esc(t.status)}">
+            <div class="top"><span>${t.draw_number ? 'Tirage #' + t.draw_number + ' · ' : ''}${t.spots} numéro(s)</span><span class="tag ${preview ? '' : esc(t.status)}">${label}</span></div>
+            <div class="balls">${balls || '<span class="muted">L\'agent saisit vos numéros…</span>'}</div>
+            <div class="amount"><span>${t.stake != null ? 'Mise ' + money(t.stake) : 'Mise —'}</span><span>${right}</span></div>
+        </div>`;
+    }
+
+    function renderSide() {
+        if (CODE) {
+            $('sideTitle').textContent = 'Vos tickets';
+            const items = [];
+            const pv = screen && screen.preview;
+            if (pv && (pv.picks.length || pv.stake)) {
+                items.push(ticketHtml(pv, true));
+                if (pv.paytable && pv.paytable.length) {
+                    items.push('<table class="pay">' + pv.paytable.map(r => `<tr><td>${r.hits} trouvé(s)</td><td>x${r.multiplier}</td><td>${r.payout != null ? money(r.payout) : ''}</td></tr>`).join('') + '</table>');
+                }
+            }
+            ((screen && screen.tickets) || []).slice().reverse().slice(0, 4).forEach(t => items.push(ticketHtml(t, false)));
+            $('side').innerHTML = items.join('') || '<div class="muted">Votre ticket s\'affichera ici pendant la saisie au guichet.</div>';
+            return;
+        }
+        $('sideTitle').textContent = 'Derniers tirages';
+        $('side').innerHTML = ((state && state.history) || []).slice(0, 6).map(h => `<div class="row"><b>#${h.draw_number}</b>
+            <div class="balls">${(h.numbers || []).map(n => K.ballHtml(n)).join('') || '<span class="muted">Annulé</span>'}</div></div>`).join('')
+            || '<div class="muted">—</div>';
+    }
+
+    function tick() {
+        board.render();
+        const d = shown(), now = clock.now(), pr = K.progress(d, now);
+        const labels = { open: 'Paris ouverts', closed: 'Paris fermés', intro: 'Tirage', drawing: 'Tirage en cours', done: 'Tirage terminé', cancelled: 'Annulé', none: 'En attente' };
+        $('pill').className = 'pill ' + pr.phase; $('pill').textContent = labels[pr.phase] || '';
+        const next = state && state.betting_draw;
+        $('nextNo').textContent = next ? '#' + next.draw_number : '';
+        $('nextTime').textContent = next ? ' — tirage à ' + time(next.draw_time) : ' — aucun pour le moment';
+        $('nextCd').textContent = next ? K.countdown(K.parseUtc(next.draw_time) - now) : '--:--';
+
+        let text = '', win = false;
+        if (!d) text = 'Keno — prochain tirage bientôt';
+        else if (pr.phase === 'open') text = 'Paris ouverts — tirage #' + d.draw_number + ' dans ' + K.countdown(K.parseUtc(d.draw_time) - now);
+        else if (pr.phase === 'closed') text = 'Paris fermés — le tirage va commencer';
+        else if (pr.phase === 'intro') text = 'Le tirage commence…';
+        else if (pr.phase === 'drawing') {
+            text = `Boule ${pr.revealed} / 20 : ${d.draw_order[pr.revealed - 1]}`;
+            if (board.picks.length) text += ` — vous avez ${K.hitsOf(board.picks, d.draw_order, pr.revealed)} / ${board.picks.length}`;
+        } else if (pr.phase === 'cancelled') text = 'Tirage annulé — les mises sont remboursées';
+        else {
+            const mine = CODE ? mineFor(d.draw_id) : [];
+            const won = mine.filter(t => t.status === 'won');
+            if (won.length) { win = true; text = 'GAGNÉ ! ' + money(won.reduce((s, t) => s + t.payout, 0)); }
+            else if (mine.length && mine.every(t => t.status !== 'pending')) text = 'Pas gagnant cette fois — bonne chance au prochain tirage';
+            else text = 'Tirage #' + d.draw_number + ' terminé' + (next ? ' — prochain à ' + time(next.draw_time) : '');
+        }
+        const f = $('footer');
+        if (f.textContent !== text) f.textContent = text;
+        f.classList.toggle('win', win);
+        if (pr.phase === 'done' && !tick.reload) { tick.reload = setTimeout(() => { tick.reload = null; load(); loadScreen(); }, 4000); }
+    }
+
+    async function load() {
+        try {
+            state = await (await fetch('/keno/api/live')).json();
+            clock.sync(state.server_time);
+            render();
+        } catch (e) { /* réessai */ }
+    }
+    async function loadScreen() {
+        if (!CODE) return;
+        try { screen = (await (await fetch('/keno/api/salle/' + encodeURIComponent(CODE))).json()).state || null; render(); } catch (e) { /* réessai */ }
+    }
+
+    K.connectLive((data, type) => { if (type === 'keno_round' || type === 'keno_draw') { load(); loadScreen(); } }, on => $('live').classList.toggle('on', on));
+    if (CODE) K.connectLive((data, type) => { if (type === 'kn_screen') { screen = data; render(); } }, null, 'kn-screen-' + CODE);
+
+    load(); loadScreen();
+    setInterval(tick, 250);
+    setInterval(load, 10000);
+    setInterval(loadScreen, 15000);
+})();
+</script>
+</body>
+</html>

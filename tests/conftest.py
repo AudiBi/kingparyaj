@@ -26,8 +26,11 @@ from app.core.redis_client import get_redis
 from app.models.audit import AuditLog
 from app.models.bureau import Bureau, CashierSession
 from app.models.enums import KYCStatus, UserRole
+from app.models.game import GameBet, GameRound
 from app.models.lucky import LuckyPlay, LuckyWheelConfig
+from app.models.keno import KenoBet, KenoDraw
 from app.models.promotion import Promotion, UserPromotion
+from app.models.responsible import PlayerLimit, SelfExclusion
 from app.models.ticket import Ticket
 from app.models.transaction import Transaction
 from app.models.user import User
@@ -57,6 +60,15 @@ TEST_TABLES = [
     LuckyPlay.__table__,
     Promotion.__table__,
     UserPromotion.__table__,
+    # Jeu responsable : consultées par WalletService avant chaque mise
+    SelfExclusion.__table__,
+    PlayerLimit.__table__,
+    # Jeux à manches génériques (Horse Races) : JSON uniquement, portable SQLite
+    GameRound.__table__,
+    GameBet.__table__,
+    # Keno : listes d'entiers en JSON sous SQLite (ARRAY sous PostgreSQL)
+    KenoDraw.__table__,
+    KenoBet.__table__,
 ]
 
 

@@ -300,3 +300,27 @@ async def test_admin_keno_draws_and_statistics_pages_render(admin_client, admin_
 # intestable sous la base SQLite de test - fonctionne en production
 # (Postgres, cf. docker-compose.yml). Vérifié par lecture de code, pas par
 # un test automatisé ici.
+
+
+@pytest.mark.asyncio
+async def test_admin_audit_logs_render_system_entries_without_user(admin_client, admin_user, db_session):
+    """Les actions automatiques (worker Horse Races, Celery…) n'ont pas d'utilisateur :
+    user_id NULL ne doit pas faire planter la page des logs d'audit."""
+    import uuid
+    from app.models.audit import AuditAction, AuditLog
+
+    db_session.add(AuditLog(
+        id=str(uuid.uuid4()),
+        user_id=None,
+        ip_address="system",
+        action=AuditAction.DRAW_GENERATED,
+        resource_type="game_round",
+        resource_id=str(uuid.uuid4()),
+        reason="race_created",
+    ))
+    await db_session.commit()
+
+    await _login(admin_client)
+    response = await admin_client.get("/admin/audit/logs")
+    assert response.status_code == 200, response.text[:500]
+    assert "Système" in response.text

@@ -97,6 +97,8 @@ class Settings(BaseSettings):
     KENO_MIN_PICKS: int = Field(default=1)
     KENO_MAX_PICKS: int = Field(default=10)
     KENO_DRAW_INTERVAL_MINUTES: int = Field(default=5)
+    # Cycle automatique des jeux dans l'application (création et lancement des parties)
+    GAME_LOOP_ENABLED: bool = Field(default=True)
     
     LUCKY_WHEEL_MIN_BET: int = Field(default=10)
     LUCKY_WHEEL_MAX_BET: int = Field(default=10000)

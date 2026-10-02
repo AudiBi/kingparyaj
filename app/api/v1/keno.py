@@ -27,6 +27,8 @@ import redis.asyncio as redis
 
 router = APIRouter(prefix="/keno", tags=["Keno"])
 
+AGENT_ONLY = "Les paris Keno se prennent uniquement chez un agent (au bureau)"
+
 
 # ==================== FONCTIONS UTILITAIRES ====================
 
@@ -51,7 +53,7 @@ async def get_next_draw(
     result = await db.execute(
         select(KenoDraw)
         .where(KenoDraw.draw_time > datetime.utcnow())
-        .where(KenoDraw.status == KenoDrawStatus.PENDING)
+        .where(KenoDraw.status == KenoDrawStatus.PENDING, KenoDraw.mode == "scheduled")
         .order_by(KenoDraw.draw_time)
         .limit(1)
     )
@@ -144,78 +146,10 @@ async def place_keno_bet(
     redis_client: redis.Redis = Depends(get_redis)
 ):
     """
-    Place un pari Keno.
-    
-    - **draw_id**: ID du tirage
-    - **picks**: Liste des numéros choisis (1-10 numéros entre 1 et 80)
-    - **stake**: Montant de la mise (min 10 HTG)
+    Désactivé : les paris Keno se prennent uniquement chez un agent (au bureau).
+    Le joueur peut consulter son historique, les résultats et vérifier un tirage.
     """
-    # Vérifier le tirage
-    draw_result = await db.execute(
-        select(KenoDraw).where(KenoDraw.id == bet_data.draw_id)
-    )
-    draw = draw_result.scalar_one_or_none()
-    
-    if not draw:
-        raise HTTPException(status_code=404, detail="Tirage non trouvé")
-    
-    if draw.status != KenoDrawStatus.PENDING:
-        raise HTTPException(status_code=400, detail="Ce tirage n'est plus disponible")
-    
-    if draw.draw_time < datetime.utcnow():
-        raise HTTPException(status_code=400, detail="Ce tirage est déjà passé")
-    
-    # Vérifier le solde
-    wallet_service = WalletService(db, redis_client)
-    balance = await wallet_service.get_balance(current_user.id)
-    
-    if balance["balance"] < bet_data.stake:
-        raise HTTPException(status_code=400, detail="Solde insuffisant")
-    
-    # Débiter le wallet
-    transaction = await wallet_service.debit_for_bet(
-        user_id=current_user.id,
-        amount=bet_data.stake,
-        bet_id=None,  # Sera mis à jour après création
-        draw_id=bet_data.draw_id
-    )
-    
-    # Créer le pari
-    bet = KenoBet(
-        user_id=current_user.id,
-        draw_id=bet_data.draw_id,
-        picks=bet_data.picks,
-        stake=bet_data.stake,
-        status=KenoBetStatus.PENDING,
-        placed_at=datetime.utcnow()
-    )
-    
-    db.add(bet)
-    await db.flush()
-    
-    # Mettre à jour la transaction avec le bet_id
-    transaction.bet_id = bet.id
-    await db.flush()
-    
-    # Mettre à jour les stats utilisateur
-    current_user.total_bets_count += 1
-    current_user.total_bets_amount += bet_data.stake
-    
-    # Mettre à jour les stats du tirage
-    draw.total_bets += 1
-    draw.total_amount += bet_data.stake
-    
-    await db.commit()
-    
-    # Notification en arrière-plan
-    background_tasks.add_task(
-        notify_bet_placed,
-        current_user.id,
-        bet.id,
-        bet_data.stake
-    )
-    
-    return bet
+    raise HTTPException(status_code=403, detail=AGENT_ONLY)
 
 
 @router.post(
@@ -230,30 +164,8 @@ async def quick_pick(
     db: AsyncSession = Depends(get_db),
     redis_client: redis.Redis = Depends(get_redis)
 ):
-    """
-    Génère des numéros aléatoires et place un pari.
-    
-    - **numbers_count**: Nombre de numéros à générer (1-10)
-    - **stake**: Montant de la mise
-    """
-    import secrets
-    
-    # Générer des numéros aléatoires uniques
-    numbers = list(range(1, 81))
-    for i in range(len(numbers) - 1, 0, -1):
-        j = secrets.randbelow(i + 1)
-        numbers[i], numbers[j] = numbers[j], numbers[i]
-    
-    picks = sorted(numbers[:request.numbers_count])
-    
-    # Créer le pari
-    bet_data = KenoBetCreate(
-        draw_id=request.draw_id,
-        picks=picks,
-        stake=request.stake
-    )
-    
-    return await place_keno_bet(bet_data, BackgroundTasks(), current_user, db, redis_client)
+    """Désactivé : les paris Keno se prennent uniquement chez un agent."""
+    raise HTTPException(status_code=403, detail=AGENT_ONLY)
 
 
 @router.get(
@@ -479,11 +391,46 @@ async def get_global_statistics(
 
 # ==================== AGENT ENDPOINTS (joueurs sans compte) ====================
 
+@router.get(
+    "/config",
+    summary="Règles du Keno",
+    description="Table de paiement, limites et taux de redistribution en vigueur",
+)
+async def get_keno_config(redis_client: redis.Redis = Depends(get_redis), db: AsyncSession = Depends(get_db)):
+    from app.services import keno_engine
+
+    return keno_engine.public_config(await KenoService(db, redis_client).get_config())
+
+
+@router.get(
+    "/draws/{draw_id}/verify",
+    summary="Vérifier un tirage",
+    description="Seed révélé, empreinte publiée avant le pari, recalcul des 20 numéros",
+)
+async def verify_keno_draw(draw_id: str, db: AsyncSession = Depends(get_db), redis_client: redis.Redis = Depends(get_redis)):
+    return await KenoService(db, redis_client).verify(draw_id)
+
+
+@router.get(
+    "/instant/draw",
+    summary="Tirage instantané préparé (Agent)",
+    description="Empreinte du seed à afficher avant le pari",
+)
+async def prepare_instant_draw(
+    current_agent: User = Depends(get_current_agent),
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    draw = await KenoService(db, redis_client).prepare_instant_draw(current_agent.id)
+    await db.commit()
+    return {"draw_id": draw.id, "draw_number": draw.draw_number, "server_seed_hash": draw.server_seed_hash}
+
+
 @router.post(
     "/ticket-bets",
-    response_model=KenoBetResponse,
-    summary="Pari avec ticket (Agent)",
-    description="Place un pari Keno avec un ticket (joueur sans compte)"
+    summary="Ticket Keno avec un ticket bureau (Agent)",
+    description="Tirage partagé : ticket enregistré sur le tirage ouvert (réglé à l'heure du tirage). "
+                "Tirage instantané (GET /keno/instant/draw) : pari, tirage et règlement immédiats.",
 )
 async def place_ticket_keno_bet(
     ticket_number: str,
@@ -496,52 +443,23 @@ async def place_ticket_keno_bet(
     Place un pari avec un ticket.
     Réservé aux agents de bureau.
     """
-    # Vérifier le ticket
-    ticket_result = await db.execute(
-        select(Ticket).where(Ticket.ticket_number == ticket_number)
-    )
-    ticket = ticket_result.scalar_one_or_none()
-    
-    if not ticket:
-        raise HTTPException(status_code=404, detail="Ticket invalide")
-    
-    if ticket.status != TicketStatus.ACTIVE:
-        raise HTTPException(status_code=400, detail="Ticket expiré ou déjà payé")
+    from app.models.keno import KenoDraw
+    from app.services.keno_service import MODE_SCHEDULED
 
-    stake = Decimal(str(bet_data.stake))
-
-    if ticket.balance < stake:
-        raise HTTPException(status_code=400, detail="Solde ticket insuffisant")
-
-    # Vérifier le tirage
-    draw_result = await db.execute(
-        select(KenoDraw).where(KenoDraw.id == bet_data.draw_id)
-    )
-    draw = draw_result.scalar_one_or_none()
-
-    if not draw or draw.status != KenoDrawStatus.PENDING:
-        raise HTTPException(status_code=400, detail="Tirage non disponible")
-
-    # Débiter le ticket
-    ticket.balance -= stake
-
-    # Créer le pari
-    bet = KenoBet(
-        ticket_id=ticket.id,
+    service = KenoService(db, redis_client)
+    draw = await db.get(KenoDraw, bet_data.draw_id)
+    if draw is not None and draw.mode == MODE_SCHEDULED:
+        bet = await service.create_bet(
+            draw_id=draw.id, picks=bet_data.picks, stake=bet_data.stake,
+            ticket_number=ticket_number, agent_id=current_agent.id,
+        )
+        await db.commit()
+        return service.serialize_shared_bet(bet, draw, await service.get_config())
+    result = await service.play_instant(
         draw_id=bet_data.draw_id,
         picks=bet_data.picks,
-        stake=stake,
+        stake=bet_data.stake,
         agent_id=current_agent.id,
-        status=KenoBetStatus.PENDING,
-        placed_at=datetime.utcnow()
+        ticket_number=ticket_number,
     )
-
-    db.add(bet)
-
-    # Mettre à jour les stats du tirage
-    draw.total_bets += 1
-    draw.total_amount += stake
-    
-    await db.commit()
-    
-    return bet
+    return result

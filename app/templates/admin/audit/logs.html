@@ -168,14 +168,14 @@
                         <input type="checkbox" class="log-checkbox" value="{{ log.id }}">
                     </td>
                     <td class="text-muted" style="font-size: 12px; white-space: nowrap;">
-                        {{ log.created_at.strftime('%d/%m/%Y %H:%M:%S') }}
+                        {{ (log.created_at|local).strftime('%d/%m/%Y %H:%M:%S') }}
                     </td>
                     <td>
                         {% if log.user %}
                         <a href="{{ url_for('admin_user_detail', user_id=log.user_id) }}" style="color: #0f172a; text-decoration: none;">
                             <div class="flex-center" style="gap: 6px;">
                                 <div style="width: 28px; height: 28px; border-radius: 50%; background: #e2e8f0; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; color: #475569;">
-                                    {{ (log.user.full_name or log.user.phone)[:1]|upper }}
+                                    {{ (log.user.full_name or log.user.phone or '?')[:1]|upper }}
                                 </div>
                                 <div>
                                     <div style="font-size: 13px; font-weight: 500;">{{ log.user.full_name or log.user.phone }}</div>
@@ -184,7 +184,7 @@
                             </div>
                         </a>
                         {% else %}
-                        <span class="text-muted" style="font-size: 13px;">{{ log.user_id[:8] or 'Système' }}</span>
+                        <span class="text-muted" style="font-size: 13px;">{{ log.user_id[:8] if log.user_id else 'Système' }}</span>
                         {% endif %}
                     </td>
                     <td>
@@ -215,7 +215,7 @@
                     <td>
                         {% if log.leh_exported %}
                             <span class="badge success" style="font-size: 10px;">
-                                <i class="fas fa-check"></i> {{ log.leh_exported_at.strftime('%d/%m/%Y') if log.leh_exported_at else 'Exporté' }}
+                                <i class="fas fa-check"></i> {{ (log.leh_exported_at|local).strftime('%d/%m/%Y') if log.leh_exported_at else 'Exporté' }}
                             </span>
                         {% else %}
                             <span class="badge warning" style="font-size: 10px;">
@@ -334,6 +334,7 @@
         </div>
     </div>
 </div>
+{% endblock %}
 
 {% block extra_js %}
 <script>
@@ -431,7 +432,7 @@
         fetch(`/admin/api/audit/logs/${logId}`)
         .then(response => response.json())
         .then(data => {
-            document.getElementById('logModalTitle').textContent = `Log #${data.id[:8]}`;
+            document.getElementById('logModalTitle').textContent = `Log #${String(data.id || '').slice(0, 8)}`;
             
             let html = `
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
@@ -558,5 +559,4 @@
         window.location.href = `/admin/api/audit/logs/download?ids=${ids}`;
     }
 </script>
-{% endblock %}
 {% endblock %}

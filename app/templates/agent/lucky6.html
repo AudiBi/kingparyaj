@@ -1,0 +1,512 @@
+<!-- app/templates/agent/lucky6.html -->
+{% extends "agent/base.html" %}
+
+{% block title %}Lucky6 - Agent{% endblock %}
+{% block page_title %}Lucky6{% endblock %}
+{% block page_subtitle %}6 numéros sur 48 — 35 boules tirées — manches partagées{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/lucky6.css">
+<style>
+    .l6-layout { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(320px, 1fr); gap: 16px; }
+    @media (max-width: 1150px) { .l6-layout { grid-template-columns: minmax(0, 1fr); } }
+    .l6-card { background: #fff; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,.06); padding: 14px; margin-bottom: 16px; }
+    .l6-dark { background: #0b0e24; border-radius: 12px; padding: 12px; }
+    .l6-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+    .l6-title { font-size: 18px; font-weight: 800; }
+    .l6-status { padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; background: #e2e8f0; color: #1e293b; }
+    .l6-status.BETTING_OPEN { background: #dcfce7; color: #166534; }
+    .l6-status.BETTING_CLOSED, .l6-status.RUNNING { background: #fef3c7; color: #92400e; }
+    .l6-status.CANCELLED { background: #fee2e2; color: #991b1b; }
+    .l6-cd { font-variant-numeric: tabular-nums; font-size: 24px; font-weight: 800; color: #059669; }
+    .l6-livedot { font-size: 12px; color: #64748b; display: flex; align-items: center; gap: 6px; }
+    .l6-livedot i { width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; display: inline-block; }
+    .l6-livedot.on i { background: #22c55e; }
+    .l6-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 10px; }
+    .l6-tab { padding: 9px 4px; border: 2px solid #e2e8f0; border-radius: 8px; background: #fff; font-weight: 800; font-size: 13px; cursor: pointer; }
+    .l6-tab small { display: block; font-weight: 500; color: #64748b; font-size: 11px; }
+    .l6-tab.active { border-color: #4f46e5; background: #eef2ff; }
+    .l6-picker { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px; justify-items: center; padding: 8px; background: #0b0e24; border-radius: 10px; }
+    .l6-picker button { border: 0; background: none; padding: 0; cursor: pointer; border-radius: 50%; transition: transform .1s; }
+    .l6-picker button:hover:not(:disabled) { transform: scale(1.1); }
+    .l6-picker button:disabled { cursor: not-allowed; }
+    .l6-picker button.off .l6-ball { opacity: .35; filter: saturate(.5); }
+    .l6-picker button.on .l6-ball { outline: 3px solid #ffd54a; outline-offset: 2px; transform: scale(1.06); }
+    .l6-chosen { display: flex; gap: 6px; align-items: center; min-height: 40px; flex-wrap: wrap; margin: 10px 0 6px; }
+    .l6-slot-empty { width: 34px; height: 34px; border-radius: 50%; border: 2px dashed #cbd5e1; display: inline-block; }
+    .l6-actions { display: flex; gap: 6px; margin-bottom: 10px; }
+    .l6-parity { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .l6-parity button { padding: 14px; border-radius: 10px; border: 2px solid #e2e8f0; background: #fff; font-weight: 800; cursor: pointer; }
+    .l6-parity button.on { border-color: #4f46e5; background: #eef2ff; }
+    .l6-stakes { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+    .l6-stakes button { padding: 6px 10px; border-radius: 8px; border: 1px solid #cbd5e1; background: #f8fafc; font-weight: 700; cursor: pointer; }
+    .l6-stakes button.on { background: #4f46e5; color: #fff; border-color: #4f46e5; }
+    .l6-input { width: 100%; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px; margin-bottom: 8px; }
+    .l6-seg { display: flex; gap: 6px; margin-bottom: 8px; }
+    .l6-seg label { flex: 1; padding: 6px; border: 2px solid #e2e8f0; border-radius: 8px; text-align: center; cursor: pointer; font-size: 13px; font-weight: 600; }
+    .l6-seg input { display: none; }
+    .l6-seg label:has(input:checked) { border-color: #4f46e5; background: #eef2ff; }
+    .l6-summary { background: #f8fafc; border-radius: 8px; padding: 10px; margin: 8px 0; font-size: 13px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .l6-summary b { font-size: 16px; display: block; }
+    .l6-bet-btn { font-size: 18px; font-weight: 900; letter-spacing: .06em; }
+    .l6-table { width: 100%; font-size: 12px; border-collapse: collapse; }
+    .l6-table td, .l6-table th { padding: 6px 4px; border-bottom: 1px solid #f1f5f9; text-align: left; vertical-align: middle; }
+    .l6-balls { display: flex; flex-wrap: wrap; gap: 3px; }
+    .l6-pay { font-size: 11px; color: #64748b; }
+    .l6-pay span { display: inline-block; margin: 0 6px 2px 0; }
+    .receipt { font-family: 'Courier New', monospace; font-size: 13px; line-height: 1.5; color: #000; }
+    .receipt .code { font-size: 11px; word-break: break-all; }
+    .receipt .l6-ball { box-shadow: none; text-shadow: none; background: #fff !important; color: #000 !important; border: 1.5px solid #000; width: 26px; height: 26px; font-size: 12px; }
+    @media print {
+        body * { visibility: hidden !important; }
+        #receiptPrint, #receiptPrint * { visibility: visible !important; }
+        #receiptPrint { position: absolute; left: 0; top: 0; width: 72mm; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="l6-layout">
+    <!-- ==================== TIRAGE EN DIRECT ==================== -->
+    <div>
+        <div class="l6-card">
+            <div class="l6-head">
+                <div>
+                    <div class="l6-title">LUCKY6 <span id="liveNumber">—</span></div>
+                    <span id="liveStatus" class="l6-status">Chargement…</span>
+                </div>
+                <div style="text-align:right;">
+                    <div id="liveCdLabel" style="font-size:12px;color:#64748b;">Tirage dans</div>
+                    <div id="liveCd" class="l6-cd">--:--</div>
+                </div>
+            </div>
+            <div class="l6-dark"><div id="board"></div></div>
+            <div class="l6-head" style="margin:8px 0 0;">
+                <div id="wsStatus" class="l6-livedot"><i></i><span>Connexion…</span></div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                    <button type="button" id="counterBtn" class="btn btn-primary btn-sm"><i class="fas fa-desktop"></i> Écran joueur (guichet)</button>
+                    <a href="/lucky6/ecran" target="_blank" class="btn btn-secondary btn-sm"><i class="fas fa-tv"></i> Écran salle</a>
+                </div>
+            </div>
+            <div style="font-size:11px;color:#64748b;margin-top:6px;word-break:break-all;">Écran joueur (TV) : <span id="counterUrl"></span></div>
+        </div>
+
+        <div class="l6-card">
+            <div class="l6-head"><strong><i class="fas fa-receipt"></i> Mes derniers paris Lucky6</strong><input type="search" class="tk-search" data-target="myBets" placeholder="Rechercher un n° de ticket…" aria-label="Rechercher un numéro de ticket" style="padding:5px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:12px;min-width:0;max-width:210px;"></div>
+            <div class="table-responsive">
+                <table class="l6-table">
+                    <thead><tr><th>Heure</th><th>Ticket</th><th>Manche</th><th>Pari</th><th>Mise</th><th>Résultat</th><th></th></tr></thead>
+                    <tbody id="myBets"><tr><td colspan="7" class="text-muted">Aucun pari</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="l6-card">
+            <div class="l6-head"><strong><i class="fas fa-history"></i> Derniers tirages</strong></div>
+            <div class="table-responsive">
+                <table class="l6-table">
+                    <thead><tr><th>Manche</th><th>Heure</th><th>1re</th><th>35 boules (ordre de sortie)</th></tr></thead>
+                    <tbody id="history"><tr><td colspan="4" class="text-muted">—</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== PARI ==================== -->
+    <div>
+        <div class="l6-card">
+            <div class="l6-head">
+                <strong><i class="fas fa-ticket-alt"></i> Nouveau pari</strong>
+                <div style="text-align:right;font-size:12px;">
+                    <div id="betRound" class="text-muted">Aucune manche ouverte</div>
+                    <div id="betCd" class="l6-cd" style="font-size:18px;"></div>
+                </div>
+            </div>
+
+            <div class="l6-tabs" id="tabs">
+                <button type="button" class="l6-tab active" data-tab="SIX">6 NUMÉROS<small>gain selon la position du 6e</small></button>
+                <button type="button" class="l6-tab" data-tab="PARITY">1re BOULE<small>paire ou impaire</small></button>
+            </div>
+
+            <div id="sixPanel">
+                <div class="l6-picker" id="picker" aria-label="Choisissez 6 numéros"></div>
+                <div class="l6-chosen" id="chosen"></div>
+                <div class="l6-actions">
+                    <button type="button" id="randomBtn" class="btn btn-secondary btn-sm"><i class="fas fa-random"></i> Aléatoire</button>
+                    <button type="button" id="clearBtn" class="btn btn-secondary btn-sm"><i class="fas fa-eraser"></i> Effacer</button>
+                    <span id="pickCount" class="text-muted" style="margin-left:auto;font-size:13px;align-self:center;">0 / 6</span>
+                </div>
+            </div>
+            <div id="parityPanel" style="display:none;">
+                <div class="l6-parity" id="parity">
+                    <button type="button" data-p="FIRST_ODD">IMPAIR<br><small class="parity-odds"></small></button>
+                    <button type="button" data-p="FIRST_EVEN">PAIR<br><small class="parity-odds"></small></button>
+                </div>
+                <p class="text-muted" style="font-size:12px;margin:8px 0;">Gagné si la 1re boule tirée est de la parité choisie.</p>
+            </div>
+
+            <form id="betForm" autocomplete="off">
+                <div class="l6-stakes" id="stakes"></div>
+                <input class="l6-input" id="stake" type="number" min="1" step="1" value="50" required aria-label="Mise">
+                <div class="l6-seg">
+                    <label><input type="radio" name="player_type" value="cash" checked><span><i class="fas fa-money-bill-wave"></i> Espèces</span></label>
+                    <label><input type="radio" name="player_type" value="ticket"><span><i class="fas fa-ticket-alt"></i> Ticket</span></label>
+                    <label><input type="radio" name="player_type" value="account"><span><i class="fas fa-user"></i> Compte</span></label>
+                </div>
+                <input class="l6-input" id="identifier" placeholder="Numéro de ticket existant (KNO-XXXX-XXXX)" style="display:none">
+                <div class="l6-summary">
+                    <div>Cote / meilleur multiplicateur<b id="sumOdds">—</b></div>
+                    <div style="text-align:right;">Gain maximum<b id="sumMax">—</b></div>
+                </div>
+                <button type="submit" id="betBtn" class="btn btn-primary btn-block btn-lg l6-bet-btn" disabled>BET</button>
+            </form>
+            <div class="l6-pay" id="payHint" style="margin-top:10px;"></div>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== REÇU ==================== -->
+<div class="modal-overlay" id="receiptModal">
+    <div class="modal" style="max-width:420px;">
+        <div id="receiptPrint" class="receipt" style="max-height:65vh;overflow:auto;background:#f1f5f9;padding:8px;border-radius:8px;"></div>
+        <div class="flex" style="gap:8px;margin-top:12px;">
+            <button class="btn btn-primary" onclick="KPReceipt.print(window.__kpReceipt)"><i class="fas fa-print"></i> Imprimer</button>
+            <select class="kp-paper" aria-label="Largeur du papier" onchange="KPReceipt.setPaper(this.value); window.__kpReceipt && KPReceipt.preview(document.getElementById('receiptPrint'), window.__kpReceipt)" style="padding:6px 8px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;">
+                <option value="80">Papier 80 mm</option><option value="58">Papier 58 mm</option>
+            </select>
+            <button class="btn btn-secondary" onclick="closeModal('receiptModal')">Fermer</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="/static/js/lucky6.js"></script>
+<script>
+(function () {
+    const L6 = window.Lucky6;
+    const $ = id => document.getElementById(id);
+    const esc = L6.esc, money = L6.money, mult = L6.mult;
+    const COUNTER_URL = location.origin + '/lucky6/ecran?c={{ screen_code }}';
+    const BUREAU = {{ (agent.bureau_name or '')|tojson }};
+    const clock = new L6.ServerClock();
+    const board = new L6.Board($('board'), { clock });
+
+    let cfg = null, live = null, betting = null;
+    let picks = [], tab = 'SIX', parity = null, myBets = [];
+
+    const localTime = iso => iso ? new Date(L6.parseUtc(iso)).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '—';
+    const betType = () => tab === 'SIX' ? 'SIX' : parity;
+
+    // ---------- Grille de sélection ----------
+    function buildPicker() {
+        let html = '';
+        for (let n = 1; n <= L6.TOTAL; n++) html += `<button type="button" data-n="${n}" aria-pressed="false">${L6.ballHtml(n)}</button>`;
+        $('picker').innerHTML = html;
+    }
+    function renderPicks() {
+        const full = picks.length >= L6.PICKS;
+        $('picker').querySelectorAll('button').forEach(b => {
+            const on = picks.includes(Number(b.dataset.n));
+            b.classList.toggle('on', on);
+            b.classList.toggle('off', full && !on);
+            b.setAttribute('aria-pressed', on);
+        });
+        let chosen = picks.slice().sort((a, b) => a - b).map(n => L6.ballHtml(n)).join('');
+        for (let i = picks.length; i < L6.PICKS; i++) chosen += '<span class="l6-slot-empty"></span>';
+        $('chosen').innerHTML = chosen;
+        $('pickCount').textContent = picks.length + ' / ' + L6.PICKS;
+        updateForm();
+    }
+    function togglePick(n) {
+        const i = picks.indexOf(n);
+        if (i >= 0) picks.splice(i, 1);
+        else if (picks.length < L6.PICKS) picks.push(n);
+        renderPicks();
+        sendPreview();
+    }
+
+    // ---------- Résumé ----------
+    function stakeValue() { const v = Number($('stake').value); return isFinite(v) && v > 0 ? v : null; }
+    function updateForm() {
+        const r = betting, stake = stakeValue();
+        let odds = null;
+        if (r) {
+            if (tab === 'SIX') odds = r.paytable[0].multiplier;
+            else if (r.parity_enabled) odds = r.parity_odds;
+        }
+        $('sumOdds').textContent = odds ? (tab === 'SIX' ? mult(odds) + ' (6e en position 6)' : odds.toFixed(2)) : '—';
+        $('sumMax').textContent = odds && stake ? money(Math.min(Math.floor(stake * odds * 100) / 100, r.max_payout)) : '—';
+        const ready = r && r.status === 'BETTING_OPEN' && L6.parseUtc(r.betting_closes_at) > clock.now()
+            && stake && (tab === 'SIX' ? picks.length === L6.PICKS : !!parity && r.parity_enabled)
+            && (playerType() === 'cash' || $('identifier').value.trim().length > 0);
+        $('betBtn').disabled = !ready;
+        document.querySelectorAll('#stakes button').forEach(b => b.classList.toggle('on', Number(b.dataset.v) === stake));
+    }
+
+    function renderConfig() {
+        if (!cfg) return;
+        $('stakes').innerHTML = cfg.stake_options.map(v => `<button type="button" data-v="${v}">${v}</button>`).join('');
+        $('stake').min = cfg.min_bet; $('stake').max = cfg.max_bet;
+        document.querySelectorAll('.parity-odds').forEach(el => el.textContent = 'cote ' + Number(cfg.parity_odds).toFixed(2));
+        document.querySelector('[data-tab="PARITY"]').style.display = cfg.parity_enabled ? '' : 'none';
+        if (!cfg.parity_enabled && tab !== 'SIX') setTab('SIX');
+        $('payHint').innerHTML = '<b>Table (position du 6e numéro → multiplicateur)</b><br>' +
+            cfg.paytable.map(p => `<span>${p.position}e ${mult(p.multiplier)}</span>`).join('') +
+            `<br>Taux de redistribution : ${(cfg.rtp * 100).toFixed(2)} % · mise ${cfg.min_bet}–${cfg.max_bet} HTG · gain max ${money(cfg.max_payout)}`;
+    }
+
+    function setTab(t) {
+        tab = t;
+        document.querySelectorAll('.l6-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
+        $('sixPanel').style.display = t === 'SIX' ? '' : 'none';
+        $('parityPanel').style.display = t === 'SIX' ? 'none' : '';
+        updateForm();
+        sendPreview();
+    }
+
+    // ---------- Écran du joueur (aperçu, affichage seulement) ----------
+    let previewTimer = null, lastPreview = '';
+    function sendPreview() {
+        clearTimeout(previewTimer);
+        previewTimer = setTimeout(async () => {
+            if (!betting) return;
+            const body = JSON.stringify({ race_id: betting.race_id, bet_type: betType() || 'SIX', selection: tab === 'SIX' ? picks : [], stake: stakeValue() });
+            if (body === lastPreview) return;
+            lastPreview = body;
+            try {
+                const token = await csrf();
+                await fetch('/agent/api/lucky6/screen', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token }, body });
+            } catch (e) { /* l'écran n'est qu'un affichage */ }
+        }, 250);
+    }
+
+    // Espèces (par défaut) : le numéro de ticket est créé automatiquement par le serveur
+    function playerType() { const r = document.querySelector('input[name="player_type"]:checked'); return r ? r.value : 'cash'; }
+    function syncPlayerType() {
+        const t = playerType();
+        $('identifier').style.display = t === 'cash' ? 'none' : '';
+        $('identifier').placeholder = t === 'ticket' ? 'Numéro de ticket existant (KNO-XXXX-XXXX)' : 'Téléphone du joueur';
+        if (t === 'cash') $('identifier').value = '';
+    }
+
+    // Recherche d'un numéro de ticket dans l'historique (plusieurs gagnants : retrouver le bon ticket)
+    function filterTickets() {
+        document.querySelectorAll('.tk-search').forEach(inp => {
+            const q = inp.value.trim().toUpperCase();
+            document.querySelectorAll('#' + inp.dataset.target + ' tr').forEach(tr => {
+                tr.style.display = !q || tr.textContent.toUpperCase().includes(q) ? '' : 'none';
+            });
+        });
+    }
+    document.querySelectorAll('.tk-search').forEach(inp => inp.addEventListener('input', filterTickets));
+
+    function errorText(data, fallback) {
+        if (!data) return fallback;
+        if (typeof data.error === 'string') return data.error;
+        if (typeof data.detail === 'string') return data.detail;
+        if (Array.isArray(data.detail) && data.detail[0]) return String(data.detail[0].msg || '').replace(/^Value error, /, '');
+        return data.message || fallback;
+    }
+
+    async function csrf() {
+        const res = await fetch('/agent/api/lucky6/csrf-token');
+        return (await res.json()).csrf_token;
+    }
+
+    // ---------- Pari ----------
+    async function submitBet(e) {
+        e.preventDefault();
+        if ($('betBtn').disabled) return;
+        $('betBtn').disabled = true;
+        const payload = {
+            race_id: betting.race_id,
+            bet_type: betType(),
+            selection: tab === 'SIX' ? picks.slice() : [],
+            stake: stakeValue(),
+            player_type: playerType(),
+            identifier: $('identifier').value.trim(),
+        };
+        try {
+            const token = await csrf();
+            const res = await fetch('/agent/api/lucky6/bet', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token }, body: JSON.stringify(payload),
+            });
+            const data = await res.json().catch(() => null);
+            if (!res.ok || !data || !data.success) throw new Error(errorText(data, 'Pari refusé'));
+            showToast('Pari enregistré', 'success');
+            showReceipt(data.bet, payload);
+            // Pari suivant : les boules choisies sont réinitialisées
+            picks = [];
+            renderPicks();
+            lastPreview = '';
+            sendPreview();
+            loadMyBets();
+        } catch (err) {
+            showToast(err.message || 'Erreur', 'error');
+        } finally {
+            updateForm();
+        }
+    }
+
+    function showReceipt(bet, payload) {
+        const done = bet.status && bet.status !== 'PENDING';
+        const sections = bet.bet_type === 'SIX'
+            ? [{ type: 'numbers', label: '6 numéros joués', items: bet.selection, highlight: done ? (bet.matched || []) : [] }]
+            : [{ type: 'text', text: 'Pari : 1re boule ' + (bet.bet_type === 'FIRST_ODD' ? 'IMPAIRE' : 'PAIRE') }];
+        sections.push({ type: 'sep' });
+        sections.push({ type: 'rows', rows: [
+            ['Mise', KPReceipt.money(bet.stake)],
+            [bet.bet_type === 'SIX' ? 'Meilleur multiplicateur' : 'Cote', bet.bet_type === 'SIX' ? mult(bet.odds) : Number(bet.odds).toFixed(2)],
+            ['Gain maximum', KPReceipt.money(bet.potential_payout)],
+        ] });
+        if (done) {
+            if (bet.bet_type === 'SIX') sections.push({ type: 'rows', rows: [['Trouvés', (bet.matched || []).length + ' / 6'], ['6e numéro', bet.sixth_position ? bet.sixth_position + 'e boule' : '—']] });
+            sections.push({ type: 'total', label: 'GAIN', value: KPReceipt.money(bet.winnings) });
+            sections.push({ type: 'stamp', text: bet.status === 'WON' ? 'GAGNANT' : (bet.status === 'REFUNDED' ? 'REMBOURSÉ' : 'PERDANT'), won: bet.status === 'WON' });
+        } else {
+            sections.push({ type: 'total', label: 'TOTAL PAYÉ', value: KPReceipt.money(bet.stake) });
+        }
+        if (bet.bet_type === 'SIX') sections.push({ type: 'text', text: 'Gain selon la position du 6e numéro sorti (35 boules tirées).' });
+        kpShowReceipt({
+            game: 'LUCKY 6', round: `Manche n° ${bet.race_number}`, roundTime: 'Tirage à ' + localTime(bet.scheduled_at),
+            bureau: KP_AGENT.bureau, address: KP_AGENT.address, phone: KP_AGENT.phone, agent: KP_AGENT.name,
+            ticket: bet.ticket_number || (payload && payload.player_type === 'ticket' ? payload.identifier : null),
+            code: bet.bet_id, placedAt: bet.placed_at, sections,
+            hash: bet.server_seed_hash, verifyUrl: location.host + '/lucky6/verifier?manche=' + bet.race_id,
+        });
+    }
+
+    // ---------- Listes ----------
+    function betLabel(b) {
+        if (b.bet_type === 'SIX') return '<div class="l6-balls">' + b.selection.map(n =>
+            L6.ballHtml(n, 'l6-mini' + ((b.matched || []).includes(n) ? ' l6-hit' : ''))).join('') + '</div>';
+        return b.bet_type === 'FIRST_ODD' ? '1re IMPAIRE' : '1re PAIRE';
+    }
+    function betResult(b) {
+        const s = { PENDING: 'En attente', WON: 'Gagné', LOST: 'Perdu', REFUNDED: 'Remboursé', VOID: 'Annulé' }[b.status] || b.status;
+        let extra = '';
+        if (b.bet_type === 'SIX' && b.status !== 'PENDING' && b.status !== 'REFUNDED') extra = ` · ${(b.matched || []).length}/6` + (b.sixth_position ? ` (6e en ${b.sixth_position}e)` : '');
+        return `<b style="color:${b.status === 'WON' ? '#059669' : b.status === 'LOST' ? '#94a3b8' : '#0f172a'}">${s}</b>${extra}${b.winnings > 0 ? '<br>' + money(b.winnings) : ''}`;
+    }
+    async function loadMyBets() {
+        try {
+            const data = await (await fetch('/agent/api/lucky6/my-bets?limit=15')).json();
+            myBets = data.bets || [];
+            $('myBets').innerHTML = myBets.map((b, i) => `<tr${b.status === 'won' || b.status === 'WON' ? ' style="background:#ecfdf5"' : ''}>
+                <td>${localTime(b.placed_at)}</td><td>${b.ticket_number ? '<b style="font-family:monospace">' + esc(b.ticket_number) + '</b>' : '<span class="text-muted">Compte</span>'}</td><td>#${b.race_number || '—'}</td><td>${betLabel(b)}</td>
+                <td>${money(b.stake)}</td><td>${betResult(b)}</td>
+                <td><button class="btn btn-secondary btn-sm" data-reprint="${esc(b.bet_id)}" title="Réimprimer"><i class="fas fa-print"></i></button></td>
+            </tr>`).join('') || '<tr><td colspan="7" class="text-muted">Aucun pari</td></tr>';
+            filterTickets();
+            updateBoardPicks();
+        } catch (e) { /* réessai plus tard */ }
+    }
+    async function loadHistory() {
+        try {
+            const data = await (await fetch('/agent/api/lucky6/history?limit=10')).json();
+            $('history').innerHTML = (data.rounds || []).map(r => `<tr>
+                <td>#${r.race_number}</td><td>${localTime(r.scheduled_at)}</td>
+                <td>${r.balls ? L6.ballHtml(r.balls[0], 'l6-mini') : (r.status === 'CANCELLED' ? 'Annulée' : '—')}</td>
+                <td><div class="l6-balls">${(r.balls || []).map(n => L6.ballHtml(n, 'l6-mini')).join('')}</div></td>
+            </tr>`).join('') || '<tr><td colspan="4" class="text-muted">—</td></tr>';
+        } catch (e) { /* réessai plus tard */ }
+    }
+
+    // Tableau : numéros du dernier pari 6 numéros de l'agent sur la manche affichée
+    function updateBoardPicks() {
+        const b = live && myBets.find(x => x.race_id === live.race_id && x.bet_type === 'SIX');
+        const key = b ? b.selection.join(',') : '';
+        if (key !== board._picksKey) { board._picksKey = key; board.setPicks(b ? b.selection : []); }
+    }
+
+    // ---------- État ----------
+    let lastStatusKey = '';
+    async function loadState() {
+        try {
+            const data = await (await fetch('/agent/api/lucky6/state')).json();
+            clock.sync(data.server_time);
+            cfg = data.config;
+            live = data.race;
+            betting = data.betting_race;
+            renderConfig();
+            board.setRound(live);
+            updateBoardPicks();
+            const key = (live ? live.race_id + live.status : '') + '|' + (betting ? betting.race_id : '');
+            if (key !== lastStatusKey) { lastStatusKey = key; loadHistory(); loadMyBets(); lastPreview = ''; sendPreview(); }
+            updateForm();
+        } catch (e) { /* réessai au prochain cycle */ }
+    }
+
+    function tick() {
+        board.render();
+        const now = clock.now();
+        $('liveNumber').textContent = live ? '#' + live.race_number : '—';
+        $('liveStatus').className = 'l6-status ' + (live ? live.status : '');
+        $('liveStatus').textContent = live ? L6.statusLabel(live.status) : 'Aucune manche';
+        if (live && ['SCHEDULED', 'BETTING_OPEN', 'BETTING_CLOSED'].includes(live.status)) {
+            $('liveCdLabel').textContent = 'Tirage dans';
+            $('liveCd').textContent = L6.formatCountdown(L6.parseUtc(live.scheduled_at) - now);
+        } else { $('liveCdLabel').textContent = ''; $('liveCd').textContent = ''; }
+        if (betting) {
+            const left = L6.parseUtc(betting.betting_closes_at) - now;
+            $('betRound').textContent = 'Manche #' + betting.race_number + ' — tirage ' + localTime(betting.scheduled_at);
+            $('betCd').textContent = 'Fermeture ' + L6.formatCountdown(left);
+            if (left <= 0 && !$('betBtn').disabled) { $('betBtn').disabled = true; loadState(); }
+        } else {
+            $('betRound').textContent = cfg && !cfg.enabled ? 'Lucky6 fermé' : 'Aucune manche ouverte';
+            $('betCd').textContent = '';
+        }
+    }
+
+    // ---------- Événements ----------
+    buildPicker();
+    renderPicks();
+    $('picker').addEventListener('click', e => { const b = e.target.closest('button[data-n]'); if (b) togglePick(Number(b.dataset.n)); });
+    $('randomBtn').addEventListener('click', async () => {
+        try {
+            const data = await (await fetch('/agent/api/lucky6/quick-pick')).json();
+            picks = data.numbers || [];
+            renderPicks();
+            sendPreview();
+        } catch (e) { showToast('Sélection aléatoire indisponible', 'error'); }
+    });
+    $('clearBtn').addEventListener('click', () => { picks = []; renderPicks(); sendPreview(); });
+    $('tabs').addEventListener('click', e => { const b = e.target.closest('.l6-tab'); if (b) setTab(b.dataset.tab === 'SIX' ? 'SIX' : 'PARITY'); });
+    $('parity').addEventListener('click', e => {
+        const b = e.target.closest('button[data-p]');
+        if (!b) return;
+        parity = b.dataset.p;
+        document.querySelectorAll('#parity button').forEach(x => x.classList.toggle('on', x === b));
+        updateForm(); sendPreview();
+    });
+    $('stakes').addEventListener('click', e => { const b = e.target.closest('button[data-v]'); if (b) { $('stake').value = b.dataset.v; updateForm(); sendPreview(); } });
+    $('stake').addEventListener('input', () => { updateForm(); sendPreview(); });
+    $('identifier').addEventListener('input', updateForm);
+    document.querySelectorAll('input[name="player_type"]').forEach(r => r.addEventListener('change', () => { syncPlayerType(); updateForm(); }));
+    $('betForm').addEventListener('submit', submitBet);
+    $('myBets').addEventListener('click', async e => {
+        const b = e.target.closest('[data-reprint]');
+        if (!b) return;
+        try {
+            const data = await (await fetch('/agent/api/lucky6/bets/' + encodeURIComponent(b.dataset.reprint))).json();
+            if (data.bet) showReceipt(data.bet, null);
+        } catch (err) { showToast('Reçu introuvable', 'error'); }
+    });
+    $('counterUrl').textContent = COUNTER_URL;
+    $('counterBtn').addEventListener('click', () => {
+        const w = window.open(COUNTER_URL, 'l6CounterScreen', 'popup,width=1280,height=720');
+        if (!w) showToast("Autorisez les fenêtres pop-up, ou ouvrez l'adresse de l'écran sur la TV", 'warning');
+    });
+
+    L6.connectLive(() => loadState(), online => {
+        $('wsStatus').classList.toggle('on', online);
+        $('wsStatus').lastElementChild.textContent = online ? 'En direct' : 'Reconnexion…';
+    });
+
+    loadState();
+    setInterval(tick, 250);
+    setInterval(loadState, 10000);
+})();
+</script>
+{% endblock %}

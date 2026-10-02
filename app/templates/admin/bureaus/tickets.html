@@ -67,7 +67,7 @@
                             {% endif %}
                         </span>
                     </td>
-                    <td class="text-muted" style="font-size: 12px;">{{ ticket.expires_at.strftime('%d/%m/%Y') if ticket.expires_at else '-' }}</td>
+                    <td class="text-muted" style="font-size: 12px;">{{ (ticket.expires_at|local).strftime('%d/%m/%Y') if ticket.expires_at else '-' }}</td>
                 </tr>
                 {% else %}
                 <tr>

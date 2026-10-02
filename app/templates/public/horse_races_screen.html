@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<!-- app/templates/public/horse_races_screen.html : écran joueurs (TV du bureau), lecture seule -->
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Horse Races — King Paryaj</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png">
+    <link rel="icon" href="/static/img/favicon.ico" sizes="any">
+    <link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { background: #020617; color: #f8fafc; font-family: Inter, system-ui, -apple-system, 'Segoe UI', sans-serif; min-height: 100vh; }
+        .screen { display: grid; grid-template-columns: minmax(0, 3fr) minmax(260px, 1fr); gap: 16px; padding: 16px; min-height: 100vh; }
+        @media (max-width: 900px) { .screen { grid-template-columns: 1fr; padding: 10px; } }
+        .bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+        .title { font-size: clamp(18px, 2.4vw, 32px); font-weight: 900; letter-spacing: .5px; }
+        .title span { color: #fbbf24; }
+        .status { display: inline-block; padding: 4px 12px; border-radius: 999px; font-weight: 800; font-size: clamp(12px, 1.2vw, 16px); background: #334155; }
+        .status.BETTING_OPEN { background: #16a34a; } .status.BETTING_CLOSED, .status.RUNNING { background: #d97706; }
+        .status.CANCELLED { background: #dc2626; }
+        .count { font-size: clamp(26px, 4vw, 54px); font-weight: 900; font-variant-numeric: tabular-nums; color: #fbbf24; text-align: right; line-height: 1; }
+        .count small { display: block; font-size: clamp(11px, 1vw, 14px); color: #94a3b8; font-weight: 600; }
+        canvas { width: 100%; display: block; border-radius: 12px; background: #0f172a; }
+        .panel { background: #0f172a; border-radius: 12px; padding: 14px; margin-bottom: 14px; }
+        .panel h2 { font-size: clamp(14px, 1.3vw, 18px); color: #94a3b8; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 1px; }
+        .odds-row { display: grid; grid-template-columns: 44px 1fr auto; gap: 10px; align-items: center; padding: 7px 0; border-bottom: 1px solid #1e293b; }
+        .shirt { width: 44px; height: 38px; border-radius: 6px 6px 12px 12px; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 18px; }
+        .odds-row .name { font-weight: 800; font-size: clamp(13px, 1.3vw, 18px); }
+        .odds-row .odd { font-weight: 900; font-size: clamp(16px, 1.6vw, 24px); color: #fbbf24; font-variant-numeric: tabular-nums; }
+        .hist { width: 100%; border-collapse: collapse; font-size: clamp(11px, 1vw, 14px); }
+        .hist td { padding: 6px 2px; border-bottom: 1px solid #1e293b; }
+        .live { font-size: 12px; color: #64748b; }
+        .live.on { color: #22c55e; }
+        .foot { font-size: 12px; color: #94a3b8; margin-top: 8px; }
+        .brand { display: flex; align-items: center; gap: 12px; }
+        .brand-logo { width: clamp(52px, 6vw, 96px); height: auto; }
+    </style>
+</head>
+<body>
+<div class="screen">
+    <section>
+        <div class="bar">
+            <div class="brand">
+                <img src="/static/img/logo-192.png" alt="King Paryaj" class="brand-logo">
+                <div>
+                <div class="title">HORSE RACE <span id="raceNumber">—</span></div>
+                <span id="raceStatus" class="status">Chargement…</span>
+                <span id="live" class="live"><i class="fas fa-circle"></i> direct</span>
+                </div>
+            </div>
+            <div class="count"><small id="countLabel">Départ dans</small><span id="count">--:--</span></div>
+        </div>
+        <canvas id="raceCanvas" aria-label="Course en direct" role="img"></canvas>
+        <div class="foot">Les paris se prennent au guichet de l'agent. Suivez votre pari : <b id="lookupUrl"></b></div>
+    </section>
+
+    <aside>
+        <div class="panel">
+            <h2 id="oddsTitle">Cotes</h2>
+            <div id="odds"></div>
+            <div class="foot" id="oddsFoot"></div>
+        </div>
+        <div class="panel">
+            <h2>Derniers résultats</h2>
+            <table class="hist"><tbody id="history"></tbody></table>
+        </div>
+    </aside>
+</div>
+
+<script src="/static/js/horse_races.js" charset="utf-8"></script>
+<script>
+(function () {
+    const HR = window.HorseRaces;
+    const $ = id => document.getElementById(id);
+    const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const localTime = iso => iso ? new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '';
+    const clock = new HR.ServerClock();
+    const renderer = new HR.Renderer($('raceCanvas'), { clock, maxHeight: Math.max(320, window.innerHeight - 140) });
+    let display = null, betting = null;
+
+    $('lookupUrl').textContent = location.host + '/horse-races/mon-pari';
+
+    const live = new HR.LiveState((shown, open) => {
+        if (!shown || !display || shown.race_id !== display.race_id || shown.status !== display.status) renderer.setRace(shown);
+        if (shown && ['FINISHED', 'SETTLED'].includes(shown.status) && (!display || display.status !== shown.status)) loadHistory();
+        display = shown;
+        betting = open;
+        $('raceNumber').textContent = shown ? '#' + shown.race_number : '—';
+        $('raceStatus').textContent = shown ? HR.statusLabel(shown.status) : 'Prochaine course bientôt';
+        $('raceStatus').className = 'status ' + (shown ? shown.status : '');
+        renderOdds();
+    });
+
+    function renderOdds() {
+        const race = betting || display;
+        if (!race) { $('odds').innerHTML = '<p class="foot">En attente…</p>'; $('oddsTitle').textContent = 'Cotes'; return; }
+        $('oddsTitle').textContent = `Cotes — course #${race.race_number}`;
+        $('odds').innerHTML = race.participants.map((p, lane) => {
+            const j = HR.jersey(lane);
+            return `<div class="odds-row"><span class="shirt" style="background:${j.shirt};color:${j.text}">${p.player_number}</span>
+                <span class="name">№${p.player_number} ${esc(p.player_name).toUpperCase()}</span>
+                <span class="odd">${Number(p.odds.WIN).toFixed(2)}</span></div>`;
+        }).join('');
+        $('oddsFoot').textContent = 'Cotes WIN. PLACE, EXACTA et TRIFECTA au guichet.';
+    }
+
+    async function loadCurrent() {
+        try {
+            const res = await fetch('/api/v1/horse-races/races/current');
+            const data = await res.json();
+            clock.sync(data.server_time);
+            live.applySnapshot(data);
+        } catch (e) { /* réessai */ }
+    }
+
+    async function loadHistory() {
+        try {
+            const res = await fetch('/api/v1/horse-races/races/history?limit=8');
+            const data = await res.json();
+            $('history').innerHTML = (data.races || []).map(r => {
+                const top = r.results || [];
+                const podium = top.slice(0, 3).map(x => `№${x.player_number} ${esc(x.player_name)}`).join(' · ');
+                return `<tr><td>#${r.race_number}</td><td>${localTime(r.scheduled_at)}</td><td>${r.status === 'CANCELLED' ? 'Annulée' : podium}</td></tr>`;
+            }).join('');
+        } catch (e) { /* réessai */ }
+    }
+
+    function tick() {
+        live.tick();
+        const now = clock.now();
+        if (display && ['BETTING_OPEN', 'BETTING_CLOSED', 'SCHEDULED'].includes(display.status)) {
+            $('countLabel').textContent = display.status === 'BETTING_OPEN' ? 'Paris fermés dans' : 'Départ dans';
+            const target = display.status === 'BETTING_OPEN' ? display.betting_closes_at : display.scheduled_at;
+            $('count').textContent = HR.formatCountdown(HR.parseUtc(target) - now);
+        } else if (betting) {
+            $('countLabel').textContent = `Course #${betting.race_number} : paris fermés dans`;
+            $('count').textContent = HR.formatCountdown(HR.parseUtc(betting.betting_closes_at) - now);
+        } else {
+            $('countLabel').textContent = display ? HR.statusLabel(display.status) : '';
+            $('count').textContent = '';
+        }
+    }
+
+    HR.connectLive((data, event) => live.applyEvent(data, event), online => $('live').classList.toggle('on', online));
+    loadCurrent();
+    loadHistory();
+    setInterval(tick, 250);
+    setInterval(loadCurrent, 15000);
+})();
+</script>
+</body>
+</html>

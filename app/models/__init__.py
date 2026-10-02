@@ -26,6 +26,7 @@ from app.models.audit import AuditLog
 from app.models.notification import Notification
 from app.models.responsible import SelfExclusion, PlayerLimit
 from app.models.promotion import Promotion, UserPromotion
+from app.models.game import GameRound, GameBet
 
 # Exporter Base pour Alembic (CRITIQUE)
 __all__ = [
@@ -45,4 +46,5 @@ __all__ = [
     "KenoDraw", "KenoBet", "LuckyWheelConfig", "LuckyPlay",
     "Transaction", "AuditLog", "Notification",
     "SelfExclusion", "PlayerLimit", "Promotion", "UserPromotion",
+    "GameRound", "GameBet",
 ]

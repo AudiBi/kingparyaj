@@ -213,36 +213,11 @@ async def websocket_draws(
 
 
 # ==================== FONCTIONS DE DIFFUSION ====================
+# Définies une seule fois dans app.api.websockets.manager (relais Redis,
+# utilisable depuis les workers Celery). Ré-exportées ici pour compatibilité.
 
-async def broadcast_draw_result(draw_result: dict):
-    """
-    Diffuse les résultats d'un tirage à tous les clients connectés.
-    Appelé après chaque tirage.
-    """
-    await manager.broadcast({
-        "type": "draw_completed",
-        "data": draw_result,
-        "timestamp": datetime.utcnow().isoformat()
-    }, draw_id=draw_result.get("draw_id", "all"))
-
-
-async def broadcast_lucky_result(lucky_result: dict):
-    """
-    Diffuse le résultat d'un tour de Lucky Wheel.
-    """
-    await manager.broadcast({
-        "type": "lucky_result",
-        "data": lucky_result,
-        "timestamp": datetime.utcnow().isoformat()
-    }, draw_id="all")
-
-
-async def broadcast_jackpot_alert(jackpot_data: dict):
-    """
-    Diffuse une alerte jackpot.
-    """
-    await manager.broadcast({
-        "type": "jackpot_alert",
-        "data": jackpot_data,
-        "timestamp": datetime.utcnow().isoformat()
-    }, draw_id="all")
+from app.api.websockets.manager import (  # noqa: E402
+    broadcast_draw_result,
+    broadcast_lucky_result,
+    broadcast_jackpot_alert,
+)

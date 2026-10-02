@@ -1,0 +1,501 @@
+<!-- app/templates/agent/horse_races.html -->
+{% extends "agent/base.html" %}
+
+{% block title %}Horse Races - Agent{% endblock %}
+{% block page_title %}Horse Races{% endblock %}
+{% block page_subtitle %}Prise de paris au bureau et course en direct{% endblock %}
+
+{% block extra_css %}
+<style>
+    .hr-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr); gap: 16px; }
+    @media (max-width: 1100px) { .hr-grid { grid-template-columns: 1fr; } }
+    .hr-card { background: #fff; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,.06); padding: 14px; margin-bottom: 16px; }
+    .hr-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; justify-content: space-between; margin-bottom: 10px; }
+    .hr-race-no { font-size: 18px; font-weight: 800; }
+    .hr-status { padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; background: #e2e8f0; color: #1e293b; }
+    .hr-status.BETTING_OPEN { background: #dcfce7; color: #166534; }
+    .hr-status.BETTING_CLOSED, .hr-status.RUNNING { background: #fef3c7; color: #92400e; }
+    .hr-status.CANCELLED { background: #fee2e2; color: #991b1b; }
+    .hr-countdown { font-variant-numeric: tabular-nums; font-size: 26px; font-weight: 800; color: #059669; }
+    #raceCanvas { width: 100%; display: block; border-radius: 8px; background: #0f172a; }
+    .hr-live { font-size: 12px; color: #64748b; display: flex; align-items: center; gap: 6px; }
+    .hr-live .dot { width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; }
+    .hr-live.on .dot { background: #22c55e; }
+    .bet-types { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 10px; }
+    .bet-type { padding: 8px 4px; border: 2px solid #e2e8f0; border-radius: 8px; background: #fff; font-weight: 700; font-size: 12px; cursor: pointer; text-align: center; }
+    .bet-type small { display: block; font-weight: 500; color: #64748b; font-size: 10px; }
+    .bet-type.active { border-color: #059669; background: #ecfdf5; }
+    .runner { display: grid; grid-template-columns: 40px 1fr auto; align-items: center; gap: 10px; padding: 8px 10px; border: 2px solid #e2e8f0; border-radius: 8px; margin-bottom: 6px; cursor: pointer; background: #fff; width: 100%; text-align: left; }
+    .runner:hover { border-color: #94a3b8; }
+    .runner.selected { border-color: #059669; background: #ecfdf5; }
+    .runner:disabled { opacity: .55; cursor: not-allowed; }
+    .runner .shirt { width: 40px; height: 34px; border-radius: 6px 6px 10px 10px; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 15px; border: 2px solid rgba(0,0,0,.15); }
+    .runner .name { font-weight: 700; font-size: 14px; }
+    .runner .order { font-size: 11px; color: #059669; font-weight: 700; }
+    .runner .odds { font-weight: 800; font-size: 15px; font-variant-numeric: tabular-nums; }
+    .selection-line { min-height: 22px; font-weight: 700; color: #0f172a; margin: 6px 0 10px; }
+    .quote-box { display: flex; justify-content: space-between; background: #f8fafc; border-radius: 8px; padding: 10px; margin: 10px 0; font-size: 13px; }
+    .quote-box b { font-size: 16px; }
+    .seg { display: flex; gap: 6px; margin-bottom: 8px; }
+    .seg label { flex: 1; padding: 6px; border: 2px solid #e2e8f0; border-radius: 8px; text-align: center; cursor: pointer; font-size: 13px; font-weight: 600; }
+    .seg input { display: none; }
+    .seg input:checked + span { color: #059669; }
+    .seg label:has(input:checked) { border-color: #059669; background: #ecfdf5; }
+    .hr-input { width: 100%; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px; margin-bottom: 8px; }
+    .small-table { width: 100%; font-size: 12px; border-collapse: collapse; }
+    .small-table td, .small-table th { padding: 6px 4px; border-bottom: 1px solid #f1f5f9; text-align: left; }
+    .receipt { font-family: 'Courier New', monospace; font-size: 13px; line-height: 1.5; }
+    .receipt .code { font-size: 11px; word-break: break-all; }
+    @media print {
+        body * { visibility: hidden !important; }
+        #receiptPrint, #receiptPrint * { visibility: visible !important; }
+        #receiptPrint { position: absolute; left: 0; top: 0; width: 72mm; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<link rel="preload" as="image" href="/static/img/logo-print.png">
+<div class="hr-grid">
+    <!-- ==================== COURSE ==================== -->
+    <div>
+        <div class="hr-card">
+            <div class="hr-head">
+                <div>
+                    <div class="hr-race-no">HORSE RACE <span id="raceNumber">—</span></div>
+                    <span id="raceStatus" class="hr-status">Chargement…</span>
+                </div>
+                <div style="text-align:right;">
+                    <div id="countdownLabel" style="font-size:12px;color:#64748b;">Départ dans</div>
+                    <div id="countdown" class="hr-countdown">--:--</div>
+                </div>
+            </div>
+            <canvas id="raceCanvas" aria-label="Course en direct" role="img"></canvas>
+            <div class="flex-between" style="margin-top:8px;">
+                <div id="liveStatus" class="hr-live"><span class="dot"></span><span>Connexion…</span></div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                    <button type="button" id="counterScreenBtn" class="btn btn-primary btn-sm" title="Écran du joueur à ce guichet (2e moniteur ou TV)"><i class="fas fa-desktop"></i> Écran joueur (guichet)</button>
+                    <a href="/horse-races/ecran" target="_blank" class="btn btn-secondary btn-sm"><i class="fas fa-tv"></i> Écran salle</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="hr-card">
+            <div style="font-size:11px;color:#64748b;margin:-6px 0 10px;word-break:break-all;">Écran joueur (TV) : <span id="counterScreenUrl"></span></div>
+            <div class="hr-head"><strong><i class="fas fa-receipt"></i> Mes paris sur cette course</strong><input type="search" class="tk-search" data-target="myBets" placeholder="Rechercher un n° de ticket…" aria-label="Rechercher un numéro de ticket" style="padding:5px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:12px;min-width:0;max-width:210px;"></div>
+            <div class="table-responsive">
+                <table class="small-table">
+                    <thead><tr><th>Heure</th><th>Ticket</th><th>Type</th><th>Sélection</th><th>Mise</th><th>Cote</th><th>Statut</th><th></th></tr></thead>
+                    <tbody id="myBets"><tr><td colspan="8" class="text-muted">Aucun pari</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="hr-card">
+            <div class="hr-head"><strong><i class="fas fa-flag-checkered"></i> Derniers résultats</strong></div>
+            <table class="small-table">
+                <thead><tr><th>Course</th><th>Heure</th><th>1er</th><th>2e</th><th>3e</th></tr></thead>
+                <tbody id="history"><tr><td colspan="5" class="text-muted">—</td></tr></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- ==================== PARI ==================== -->
+    <div>
+        <div class="hr-card">
+            <div class="hr-head">
+                <strong><i class="fas fa-ticket-alt"></i> Nouveau pari</strong>
+                <div style="text-align:right;font-size:12px;">
+                    <div id="betRaceLabel" class="text-muted">Aucune course ouverte</div>
+                    <div id="betCountdown" class="hr-countdown" style="font-size:18px;"></div>
+                </div>
+            </div>
+
+            <div class="bet-types" id="betTypes">
+                <button type="button" class="bet-type active" data-type="WIN">WIN<small>1er</small></button>
+                <button type="button" class="bet-type" data-type="PLACE">PLACE<small>un des choisis 1er</small></button>
+                <button type="button" class="bet-type" data-type="EXACTA">EXACTA<small>1er + 2e</small></button>
+                <button type="button" class="bet-type" data-type="TRIFECTA">TRIFECTA<small>1er + 2e + 3e</small></button>
+            </div>
+            <div id="betHelp" class="text-muted" style="font-size:12px;margin-bottom:8px;"></div>
+
+            <div id="runners"></div>
+            <div class="selection-line" id="selectionLine"></div>
+
+            <form id="betForm" autocomplete="off">
+                <div class="seg">
+                    <label><input type="radio" name="player_type" value="cash" checked><span><i class="fas fa-money-bill-wave"></i> Espèces</span></label>
+                    <label><input type="radio" name="player_type" value="ticket"><span><i class="fas fa-ticket-alt"></i> Ticket</span></label>
+                    <label><input type="radio" name="player_type" value="account"><span><i class="fas fa-user"></i> Compte</span></label>
+                </div>
+                <input class="hr-input" name="identifier" id="identifier" placeholder="Numéro de ticket existant (KNO-XXXX-XXXX)" style="display:none">
+                <input class="hr-input" name="stake" id="stake" type="number" min="1" step="1" value="100" required>
+                <div class="quote-box">
+                    <div>Cote serveur<br><b id="quoteOdds">—</b></div>
+                    <div style="text-align:right;">Gain potentiel (indicatif)<br><b id="quotePayout">—</b></div>
+                </div>
+                <button type="submit" id="submitBet" class="btn btn-primary btn-block btn-lg" disabled>
+                    <i class="fas fa-check"></i> Valider le pari
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== REÇU ==================== -->
+<div class="modal-overlay" id="receiptModal">
+    <div class="modal" style="max-width:420px;">
+        <div id="receiptPrint" class="receipt" style="max-height:65vh;overflow:auto;background:#f1f5f9;padding:8px;border-radius:8px;"></div>
+        <div class="flex" style="gap:8px;margin-top:12px;">
+            <button class="btn btn-primary" onclick="KPReceipt.print(window.__kpReceipt)"><i class="fas fa-print"></i> Imprimer</button>
+            <select class="kp-paper" aria-label="Largeur du papier" onchange="KPReceipt.setPaper(this.value); window.__kpReceipt && KPReceipt.preview(document.getElementById('receiptPrint'), window.__kpReceipt)" style="padding:6px 8px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;">
+                <option value="80">Papier 80 mm</option><option value="58">Papier 58 mm</option>
+            </select>
+            <button class="btn btn-secondary" onclick="closeModal('receiptModal')">Fermer</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="/static/js/horse_races.js" charset="utf-8"></script>
+<script>
+(function () {
+    const HR = window.HorseRaces;
+    const RULES = {
+        WIN: { min: 1, max: 1, ordered: false, help: 'Choisissez le concurrent qui finira 1er.' },
+        PLACE: { min: 1, max: 5, ordered: false, help: 'Choisissez 1 à 5 concurrents : gagné si l’un d’eux finit 1er.' },
+        EXACTA: { min: 2, max: 2, ordered: true, help: 'Choisissez le 1er puis le 2e, dans l’ordre.' },
+        TRIFECTA: { min: 3, max: 3, ordered: true, help: 'Choisissez le 1er, le 2e puis le 3e, dans l’ordre.' }
+    };
+    const URLS = {
+        current: '/agent/api/horse-races/current',
+        history: '/agent/api/horse-races/history?limit=8',
+        quote: '/agent/api/horse-races/quote',
+        bet: '/agent/api/horse-races/bet',
+        csrf: '/agent/api/horse-races/csrf-token',
+        myBets: id => `/agent/api/horse-races/races/${id}/my-bets`
+    };
+
+    const clock = new HR.ServerClock();
+    const renderer = new HR.Renderer(document.getElementById('raceCanvas'), { clock, maxHeight: 460 });
+    let display = null;          // course affichée (en piste)
+    let race = null;             // course qui prend les paris
+    let betType = 'WIN', selection = [], quoteSeq = 0, currentOdds = null;
+
+    const $ = id => document.getElementById(id);
+    const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const money = n => Number(n || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 }) + ' HTG';
+    const localTime = iso => iso ? new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '';
+    const nameOf = (n, r) => { const src = r || race || display; const p = src && src.participants.find(x => x.player_number === n); return p ? p.player_name : ''; };
+
+    // Recherche d'un numéro de ticket dans l'historique (plusieurs gagnants : retrouver le bon ticket)
+    function filterTickets() {
+        document.querySelectorAll('.tk-search').forEach(inp => {
+            const q = inp.value.trim().toUpperCase();
+            document.querySelectorAll('#' + inp.dataset.target + ' tr').forEach(tr => {
+                tr.style.display = !q || tr.textContent.toUpperCase().includes(q) ? '' : 'none';
+            });
+        });
+    }
+    document.querySelectorAll('.tk-search').forEach(inp => inp.addEventListener('input', filterTickets));
+
+    function errorMessage(data, fallback) {
+        if (!data) return fallback;
+        if (typeof data.detail === 'string') return data.detail;
+        if (Array.isArray(data.detail) && data.detail[0]) return data.detail[0].msg;
+        return data.error || data.message || fallback;
+    }
+
+    const live = new HR.LiveState((shown, betting) => {
+        // ---- course affichée ----
+        if (!shown || !display || shown.race_id !== display.race_id || shown.status !== display.status) {
+            renderer.setRace(shown);
+        }
+        display = shown;
+        $('raceNumber').textContent = shown ? '#' + shown.race_number : '—';
+        $('raceStatus').textContent = shown ? HR.statusLabel(shown.status) : 'Aucune course programmée';
+        $('raceStatus').className = 'hr-status ' + (shown ? shown.status : '');
+        if (shown && ['FINISHED', 'SETTLED'].includes(shown.status)) loadHistory();
+
+        // ---- course qui prend les paris ----
+        const changed = (betting && betting.race_id) !== (race && race.race_id);
+        race = betting;
+        if (changed) { selection = []; loadMyBets(); }
+        $('betRaceLabel').textContent = race ? `Paris ouverts : course #${race.race_number}` : 'Aucune course ouverte';
+        renderRunners();
+        updateForm();
+    });
+
+    function renderRunners() {
+        if (!race) {
+            $('runners').innerHTML = '<p class="text-muted">Les paris rouvrent dès la prochaine course…</p>';
+            return;
+        }
+        const open = race.status === 'BETTING_OPEN';
+        $('runners').innerHTML = race.participants.map((p, lane) => {
+            const j = HR.jersey(lane);
+            const idx = selection.indexOf(p.player_number);
+            const ordered = RULES[betType].ordered && idx >= 0 ? ['1er', '2e', '3e'][idx] : '';
+            return `<button type="button" class="runner ${idx >= 0 ? 'selected' : ''}" data-number="${p.player_number}" ${open ? '' : 'disabled'}>
+                <span class="shirt" style="background:${j.shirt};color:${j.text}">${p.player_number}</span>
+                <span><span class="name">№${p.player_number} ${esc(p.player_name).toUpperCase()}</span>
+                      <span class="order">${ordered}</span></span>
+                <span class="odds">${Number(p.odds.WIN).toFixed(2)}</span>
+            </button>`;
+        }).join('');
+    }
+
+    function toggleRunner(n) {
+        const rule = RULES[betType];
+        const idx = selection.indexOf(n);
+        if (idx >= 0) selection.splice(idx, 1);
+        else if (selection.length < rule.max) selection.push(n);
+        else if (rule.max === 1) selection = [n];
+        else return showToast(`${betType} : ${rule.max} concurrent(s) maximum`, 'warning');
+        renderRunners();
+        updateForm();
+    }
+
+    function selectionText() {
+        if (!selection.length) return '';
+        const parts = selection.map(n => `№${n} ${nameOf(n)}`);
+        return RULES[betType].ordered ? parts.join(' → ') : parts.join(' + ');
+    }
+
+    function updateForm() {
+        const rule = RULES[betType];
+        $('betHelp').textContent = rule.help;
+        $('selectionLine').textContent = selectionText();
+        const ready = race && race.status === 'BETTING_OPEN' && selection.length >= rule.min;
+        $('submitBet').disabled = !ready;
+        refreshQuote(ready);
+        sendScreenPreview();
+    }
+
+    // ---------- Écran du joueur : ticket en cours de saisie, en direct ----------
+    const COUNTER_SCREEN_URL = location.origin + '/horse-races/guichet?c={{ screen_code }}';
+    let screenTimer = null, lastScreen = '';
+    function sendScreenPreview() {
+        if (!race) return;
+        const body = { race_id: race.race_id, bet_type: betType, selection: selection.slice(), stake: $('stake').value };
+        const key = JSON.stringify(body);
+        if (key === lastScreen) return;
+        clearTimeout(screenTimer);
+        screenTimer = setTimeout(async () => {
+            lastScreen = key;
+            try {
+                const token = await freshCsrf();
+                await fetch('/agent/api/horse-races/screen', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token }, body: key,
+                });
+            } catch (e) { /* affichage seulement */ }
+        }, 300);
+    }
+
+    async function refreshQuote(ready) {
+        currentOdds = null;
+        $('quoteOdds').textContent = '—';
+        $('quotePayout').textContent = '—';
+        if (!ready) return;
+        const seq = ++quoteSeq;
+        const params = new URLSearchParams({ race_id: race.race_id, bet_type: betType, selection: selection.join(',') });
+        try {
+            const res = await fetch(`${URLS.quote}?${params}`);
+            const data = await res.json();
+            if (seq !== quoteSeq) return;
+            if (!res.ok) { $('quoteOdds').textContent = errorMessage(data, 'Cote indisponible'); $('submitBet').disabled = true; return; }
+            currentOdds = data.odds;
+            $('quoteOdds').textContent = data.odds.toFixed(2);
+            updatePayout();
+        } catch (e) { /* réseau : la cote sera recalculée à la validation */ }
+    }
+
+    function updatePayout() {
+        const stake = Number($('stake').value || 0);
+        $('quotePayout').textContent = currentOdds ? money(Math.floor(stake * currentOdds * 100) / 100) : '—';
+    }
+
+    // ---------- Pari ----------
+    async function freshCsrf() {
+        const res = await fetch(URLS.csrf);
+        return (await res.json()).csrf_token;
+    }
+
+    async function submitBet(ev) {
+        ev.preventDefault();
+        const form = ev.target;
+        const btn = $('submitBet');
+        btn.disabled = true;
+        const payload = {
+            race_id: race.race_id,
+            bet_type: betType,
+            selection: selection.slice(),
+            stake: String($('stake').value),
+            player_type: form.player_type.value,
+            identifier: $('identifier').value.trim()
+        };
+        try {
+            const token = await freshCsrf();
+            const res = await fetch(URLS.bet, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token },
+                body: JSON.stringify(payload),
+                redirect: 'manual'
+            });
+            const data = await res.json().catch(() => null);
+            if (!res.ok || !data || !data.success) {
+                showToast(errorMessage(data, 'Pari refusé (session expirée ?)'), 'error');
+                return;
+            }
+            showToast('Pari enregistré', 'success');
+            showReceipt(data.bet, payload);
+            // Pari suivant : la sélection est réinitialisée
+            selection = [];
+            renderRunners();
+            sendScreenPreview();
+            loadMyBets();
+            if (typeof refreshCashBalance === 'function') refreshCashBalance();
+        } catch (e) {
+            showToast('Erreur réseau', 'error');
+        } finally {
+            updateForm();
+        }
+    }
+
+    function showReceipt(bet, payload) {
+        const r = [race, display].find(x => x && x.race_id === bet.race_id) || race || display;
+        const labels = { WIN: 'GAGNANT (1er)', PLACE: 'PLACÉ', EXACTA: 'EXACTA (1er + 2e dans l\'ordre)', TRIFECTA: 'TRIFECTA (1er + 2e + 3e dans l\'ordre)' };
+        const names = bet.selection.map(n => `N° ${n} ${nameOf(n, r)}`);
+        const done = bet.status && bet.status !== 'PENDING';
+        const sections = [
+            { type: 'text', text: 'Pari : ' + (labels[bet.bet_type] || bet.bet_type) },
+            { type: 'rows', rows: names.map((n, i) => [RULES[bet.bet_type].ordered ? (i + 1) + 'e' : 'Cheval', esc(n)]) },
+            { type: 'sep' },
+            { type: 'rows', rows: [['Mise', KPReceipt.money(bet.stake)], ['Cote', Number(bet.odds).toFixed(2)], ['Gain potentiel', KPReceipt.money(bet.potential_payout)]] },
+        ];
+        if (done) {
+            sections.push({ type: 'total', label: 'GAIN', value: KPReceipt.money(bet.winnings) });
+            sections.push({ type: 'stamp', text: bet.status === 'WON' ? 'GAGNANT' : (bet.status === 'REFUNDED' ? 'REMBOURSÉ' : 'PERDANT'), won: bet.status === 'WON' });
+        } else {
+            sections.push({ type: 'total', label: 'TOTAL PAYÉ', value: KPReceipt.money(bet.stake) });
+        }
+        kpShowReceipt({
+            game: 'HORSE RACES', round: r ? `Course n° ${r.race_number}` : '', roundTime: r ? 'Départ à ' + localTime(r.scheduled_at) : '',
+            bureau: KP_AGENT.bureau, address: KP_AGENT.address, phone: KP_AGENT.phone, agent: KP_AGENT.name,
+            ticket: bet.ticket_number || (payload && payload.player_type === 'ticket' ? payload.identifier : null),
+            code: bet.bet_id, placedAt: bet.placed_at, sections,
+            verifyUrl: location.host + '/horse-races/mon-pari?code=' + bet.bet_id,
+            footer: 'Suivez votre pari avec le lien ci-dessus. Conservez ce reçu : il est exigé pour tout paiement.',
+        });
+    }
+
+    async function loadMyBets() {
+        const target = race || display;
+        if (!target) return;
+        try {
+            const res = await fetch(URLS.myBets(target.race_id));
+            const data = await res.json();
+            const rows = (data.bets || []).map(b => `<tr${b.status === 'won' || b.status === 'WON' ? ' style="background:#ecfdf5"' : ''}>
+                <td>${localTime(b.placed_at)}</td><td>${b.ticket_number ? '<b style="font-family:monospace">' + esc(b.ticket_number) + '</b>' : '<span class="text-muted">Compte</span>'}</td><td>${b.bet_type}</td>
+                <td>${b.selection.map(n => '№' + n).join(RULES[b.bet_type].ordered ? ' → ' : ' + ')}</td>
+                <td>${money(b.stake)}</td><td>${b.odds.toFixed(2)}</td>
+                <td>${b.status}${b.winnings > 0 ? ' · ' + money(b.winnings) : ''}</td>
+                <td><button class="btn btn-secondary btn-sm" data-receipt='${esc(JSON.stringify(b))}'><i class="fas fa-print"></i></button></td>
+            </tr>`);
+            $('myBets').innerHTML = rows.join('') || '<tr><td colspan="8" class="text-muted">Aucun pari</td></tr>';
+            filterTickets();
+        } catch (e) { /* silencieux */ }
+    }
+
+    async function loadHistory() {
+        try {
+            const res = await fetch(URLS.history);
+            const data = await res.json();
+            const rows = (data.races || []).map(r => {
+                const top = r.results || [];
+                const cell = i => top[i] ? `№${top[i].player_number} ${esc(top[i].player_name)}` : (r.status === 'CANCELLED' ? 'Annulée' : '—');
+                return `<tr><td>#${r.race_number}</td><td>${localTime(r.scheduled_at)}</td><td><b>${cell(0)}</b></td><td>${cell(1)}</td><td>${cell(2)}</td></tr>`;
+            });
+            $('history').innerHTML = rows.join('') || '<tr><td colspan="5" class="text-muted">—</td></tr>';
+        } catch (e) { /* silencieux */ }
+    }
+
+    async function loadCurrent() {
+        try {
+            const res = await fetch(URLS.current);
+            const data = await res.json();
+            clock.sync(data.server_time);
+            live.applySnapshot(data);
+        } catch (e) { /* réessai au prochain cycle */ }
+    }
+
+    // ---------- Comptes à rebours ----------
+    function tick() {
+        live.tick();
+        const now = clock.now();
+        if (display && ['BETTING_OPEN', 'BETTING_CLOSED', 'SCHEDULED'].includes(display.status)) {
+            $('countdownLabel').textContent = 'Départ dans';
+            $('countdown').textContent = HR.formatCountdown(HR.parseUtc(display.scheduled_at) - now);
+        } else {
+            $('countdownLabel').textContent = display ? HR.statusLabel(display.status) : '';
+            $('countdown').textContent = '';
+        }
+        if (race) {
+            const left = HR.parseUtc(race.betting_closes_at) - now;
+            $('betCountdown').textContent = 'Fermeture ' + HR.formatCountdown(left);
+            if (left <= 0 && !$('submitBet').disabled) $('submitBet').disabled = true;
+        } else {
+            $('betCountdown').textContent = '';
+        }
+    }
+
+    // ---------- Événements ----------
+    $('betTypes').addEventListener('click', e => {
+        const btn = e.target.closest('.bet-type');
+        if (!btn) return;
+        document.querySelectorAll('.bet-type').forEach(b => b.classList.toggle('active', b === btn));
+        betType = btn.dataset.type;
+        selection = selection.slice(0, RULES[betType].max);
+        renderRunners();
+        updateForm();
+    });
+    $('runners').addEventListener('click', e => {
+        const btn = e.target.closest('.runner');
+        if (btn && !btn.disabled) toggleRunner(Number(btn.dataset.number));
+    });
+    $('stake').addEventListener('input', () => { updatePayout(); sendScreenPreview(); });
+    $('counterScreenUrl').textContent = COUNTER_SCREEN_URL;
+    $('counterScreenBtn').addEventListener('click', () => {
+        const w = window.open(COUNTER_SCREEN_URL, 'hrCounterScreen', 'popup,width=1280,height=720');
+        if (!w) showToast("Autorisez les fenêtres pop-up, ou ouvrez l'adresse de l'écran sur la TV", 'warning');
+    });
+    $('betForm').addEventListener('submit', submitBet);
+    document.querySelectorAll('input[name="player_type"]').forEach(r => r.addEventListener('change', () => {
+        // Espèces (par défaut) : le numéro de ticket est créé automatiquement par le serveur
+        const t = document.querySelector('input[name="player_type"]:checked').value;
+        $('identifier').style.display = t === 'cash' ? 'none' : '';
+        $('identifier').required = t !== 'cash';
+        $('identifier').placeholder = t === 'ticket' ? 'Numéro de ticket existant (KNO-XXXX-XXXX)' : 'Téléphone du joueur';
+        if (t === 'cash') $('identifier').value = '';
+    }));
+    $('myBets').addEventListener('click', e => {
+        const btn = e.target.closest('[data-receipt]');
+        if (btn) showReceipt(JSON.parse(btn.dataset.receipt), { player_type: 'account' });
+    });
+
+    HR.connectLive((data, event) => {
+        live.applyEvent(data, event);
+        if (event === 'race_settled') loadMyBets();
+    }, online => {
+        $('liveStatus').classList.toggle('on', online);
+        $('liveStatus').lastElementChild.textContent = online ? 'En direct' : 'Reconnexion…';
+    });
+
+    loadCurrent();
+    loadHistory();
+    setInterval(tick, 250);
+    setInterval(loadCurrent, 15000);
+})();
+</script>
+{% endblock %}

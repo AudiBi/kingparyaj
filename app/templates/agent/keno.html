@@ -1,475 +1,525 @@
-<!-- app/templates/agent/keno.html -->
+<!-- app/templates/agent/keno.html : Keno instantané au bureau (un ticket = un tirage) -->
 {% extends "agent/base.html" %}
 
 {% block title %}Keno - Agent{% endblock %}
+{% block page_title %}Keno{% endblock %}
+{% block page_subtitle %}Keno instantané : 20 numéros tirés sur 80, résultat immédiat{% endblock %}
 
-{% block page_title %}Keno - Résultats en direct{% endblock %}
-{% block page_subtitle %}Suivez les tirages et placez des paris{% endblock %}
+{% block extra_css %}
+<style>
+    .kn-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(300px, 1fr); gap: 16px; align-items: start; }
+    @media (max-width: 1100px) { .kn-grid { grid-template-columns: 1fr; } }
+    .kn-card { background: #fff; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,.06); padding: 14px; margin-bottom: 16px; }
+    .kn-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+    .kn-draw-no { font-size: 18px; font-weight: 800; }
+    .kn-hash { font-family: 'Courier New', monospace; font-size: 11px; color: #64748b; word-break: break-all; }
+    .kn-state { padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; background: #e2e8f0; color: #1e293b; }
+    .kn-state.open { background: #dcfce7; color: #166534; }
+    .kn-state.busy { background: #fef3c7; color: #92400e; }
+    .kn-state.error, .kn-state.closed { background: #fee2e2; color: #991b1b; }
+
+    .kn-numbers { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 6px; }
+    .kn-num { aspect-ratio: 1 / 1; min-height: 36px; border: 2px solid #e2e8f0; border-radius: 10px; background: #fff; font-weight: 700; font-size: 15px; color: #0f172a; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; transition: transform .12s, background .12s; font-variant-numeric: tabular-nums; }
+    .kn-num:hover:not(:disabled) { border-color: #94a3b8; }
+    .kn-num:focus-visible { outline: 3px solid #2563eb; outline-offset: 2px; }
+    .kn-num[aria-pressed="true"] { background: #059669; border-color: #047857; color: #fff; }
+    .kn-num.drawn { background: #fef3c7; border-color: #f59e0b; color: #78350f; }
+    .kn-num.hit { background: #f59e0b; border-color: #b45309; color: #fff; transform: scale(1.06); box-shadow: 0 0 0 3px rgba(245,158,11,.35); }
+    .kn-num.picked-miss { background: #ecfdf5; border-color: #059669; color: #065f46; }
+    .kn-num:disabled { cursor: default; }
+    @media (max-width: 560px) {
+        /* téléphone : 8 numéros par ligne pour des boutons faciles à toucher (≥ 40 px) */
+        .kn-numbers { grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 5px; }
+        .kn-num { min-height: 40px; font-size: 15px; border-radius: 8px; border-width: 1.5px; }
+        .kn-balls { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+    }
+
+    .kn-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .kn-actions .btn { flex: 1 1 120px; justify-content: center; }
+    .kn-count { font-size: 13px; color: #475569; margin-top: 8px; }
+
+    .kn-label { font-size: 12px; font-weight: 700; color: #475569; margin: 10px 0 6px; display: block; }
+    .kn-seg { display: flex; gap: 6px; }
+    .kn-seg label { flex: 1; padding: 8px 6px; border: 2px solid #e2e8f0; border-radius: 8px; text-align: center; cursor: pointer; font-size: 13px; font-weight: 600; }
+    .kn-seg input { position: absolute; opacity: 0; pointer-events: none; }
+    .kn-seg label:has(input:checked) { border-color: #059669; background: #ecfdf5; color: #065f46; }
+    .kn-seg label:has(input:focus-visible) { outline: 3px solid #2563eb; }
+    .kn-input { width: 100%; padding: 9px 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 15px; }
+    .kn-stakes { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+    .kn-stake { padding: 7px 12px; border: 2px solid #e2e8f0; border-radius: 999px; background: #fff; font-weight: 700; font-size: 13px; cursor: pointer; }
+    .kn-stake[aria-pressed="true"] { border-color: #059669; background: #ecfdf5; color: #065f46; }
+
+    .kn-summary { background: #f8fafc; border-radius: 10px; padding: 10px 12px; margin: 12px 0; font-size: 13px; }
+    .kn-summary .row { display: flex; justify-content: space-between; gap: 10px; padding: 3px 0; }
+    .kn-summary .row span:first-child { color: #64748b; }
+    .kn-summary b { font-variant-numeric: tabular-nums; }
+    .kn-pay { width: 100%; font-size: 12px; border-collapse: collapse; margin-top: 6px; }
+    .kn-pay td, .kn-pay th { padding: 3px 4px; border-bottom: 1px solid #e2e8f0; text-align: right; font-variant-numeric: tabular-nums; }
+    .kn-pay th:first-child, .kn-pay td:first-child { text-align: left; }
+    .kn-play { width: 100%; padding: 14px; font-size: 17px; font-weight: 800; justify-content: center; }
+
+    .kn-balls { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 6px; min-height: 40px; }
+    .kn-ball { aspect-ratio: 1/1; border-radius: 50%; background: #1e293b; color: #fff; font-weight: 800; display: flex; align-items: center; justify-content: center; font-size: 14px; animation: kn-pop .35s ease-out; }
+    .kn-ball.hit { background: #f59e0b; color: #111827; }
+    .kn-ball.empty { background: #f1f5f9; animation: none; }
+    @keyframes kn-pop { from { transform: scale(.2); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) { .kn-ball, .kn-num { animation: none !important; transition: none !important; } }
+    .kn-big { font-size: 64px; font-weight: 900; text-align: center; color: #059669; line-height: 1; min-height: 70px; font-variant-numeric: tabular-nums; }
+
+    .kn-result { border-radius: 10px; padding: 12px; margin-top: 12px; display: none; }
+    .kn-result.won { display: block; background: #dcfce7; color: #14532d; }
+    .kn-result.lost { display: block; background: #f1f5f9; color: #334155; }
+    .kn-result .amount { font-size: 26px; font-weight: 900; }
+    .kn-hist { width: 100%; font-size: 12px; border-collapse: collapse; }
+    .kn-hist td, .kn-hist th { padding: 6px 4px; border-bottom: 1px solid #f1f5f9; text-align: left; }
+    .kn-hist .won { color: #15803d; font-weight: 700; }
+    .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+</style>
+{% endblock %}
 
 {% block content %}
-<!-- ==================== STATUT CONNEXION ==================== -->
-<div class="table-container">
-    <div class="table-header">
-        <div class="title"><i class="fas fa-wifi"></i> Connexion en direct</div>
-        <div>
-            <span id="liveStatus" class="badge gray">
-                <span id="liveDot" class="inline-block w-2 h-2 rounded-full bg-gray-400 mr-1"></span>
-                Connexion...
-            </span>
-        </div>
-    </div>
-</div>
-
-<!-- ==================== COMPTE À REBOURS ET DERNIER TIRAGE ==================== -->
-<div class="grid-2">
-    <!-- Compte à rebours -->
-    <div class="table-container">
-        <div class="table-header">
-            <div class="title"><i class="fas fa-clock"></i> Prochain tirage</div>
-        </div>
-        <div id="countdownContainer" class="bg-gradient-to-r from-green-500 to-green-700 text-white rounded-lg m-4 p-4 text-center">
-            <p class="text-sm opacity-80">PROCHAIN TIRAGE</p>
-            <p id="countdownDisplay" class="text-5xl font-bold font-mono">--:--:--</p>
-            <p id="nextDrawNumber" class="text-sm opacity-80 mt-2">Tirage #---</p>
-        </div>
-    </div>
-    
-    <!-- Dernier tirage -->
-    <div class="table-container">
-        <div class="table-header">
-            <div class="title"><i class="fas fa-history"></i> Dernier tirage <span id="lastDrawNumber" class="text-gray-500 text-sm font-normal">#---</span></div>
-            <button class="btn btn-sm btn-secondary" onclick="printResults()">
-                <i class="fas fa-print"></i> Imprimer
-            </button>
-        </div>
-        <div style="padding:16px;">
-            <div id="lastDrawNumbers" class="flex flex-wrap gap-2 justify-center min-h-[80px] bg-gray-50 rounded-lg p-4">
-                <span class="text-gray-400">En attente...</span>
-            </div>
-            <div class="grid grid-cols-3 gap-4 mt-4">
-                <div class="text-center">
-                    <p class="text-sm text-gray-500">Paris</p>
-                    <p id="lastDrawBets" class="text-xl font-bold">0</p>
+<link rel="preload" as="image" href="/static/img/logo-print.png">
+<div class="kn-grid">
+    <!-- ==================== GRILLE ==================== -->
+    <div>
+        <div class="kn-card">
+            <div class="kn-head">
+                <div>
+                    <div class="kn-draw-no">Tirage <span id="drawNumber">#{{ prepared.draw_number if prepared else '—' }}</span></div>
+                    <div class="kn-hash" title="Empreinte du tirage : elle est fixée avant votre pari et se vérifie après">
+                        Empreinte : <span id="drawHash">{{ prepared.server_seed_hash if prepared else '—' }}</span>
+                    </div>
                 </div>
-                <div class="text-center">
-                    <p class="text-sm text-gray-500">Gagnants</p>
-                    <p id="lastDrawWinners" class="text-xl font-bold text-green-600">0</p>
-                </div>
-                <div class="text-center">
-                    <p class="text-sm text-gray-500">Payout</p>
-                    <p id="lastDrawPayout" class="text-xl font-bold text-blue-600">0 HTG</p>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- ==================== PLACER UN PARI ==================== -->
-<div class="table-container">
-    <div class="table-header">
-        <div class="title"><i class="fas fa-dice"></i> Placer un pari</div>
-    </div>
-    <div style="padding:16px 20px;">
-        <form id="betForm" onsubmit="return placeBet(event)">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <input type="hidden" name="draw_id" id="drawId" value="{{ next_draw.id if next_draw else '' }}">
-            
-            <div class="grid-2">
-                <div class="form-group">
-                    <label>Type de joueur</label>
-                    <select name="player_type" class="form-control" id="playerType">
-                        <option value="ticket">Ticket</option>
-                        <option value="account">Compte en ligne</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>Identifiant</label>
-                    <input type="text" name="identifier" class="form-control" placeholder="Numéro de ticket ou téléphone" required>
-                </div>
-            </div>
-            
-            <div class="form-group">
-                <label>Choisissez vos numéros (1 à 10) <span class="text-danger">*</span></label>
-                <div class="grid grid-cols-10 gap-1" style="display:grid;grid-template-columns:repeat(10,1fr);gap:4px;">
-                    {% for i in range(1, 81) %}
-                    <button type="button" data-number="{{ i }}" class="number-btn" 
-                            style="padding:4px;border:1px solid #e2e8f0;border-radius:4px;background:white;font-size:12px;cursor:pointer;transition:all 0.15s;hover:background:#f1f5f9;">
-                        {{ i }}
+                <div style="display:flex;gap:8px;align-items:center;">
+                    <button type="button" class="btn btn-sm btn-secondary" id="screenBtn" title="Ouvrir l'écran du joueur (2e moniteur ou TV)">
+                        <i class="fas fa-tv"></i> Écran joueur
                     </button>
-                    {% endfor %}
-                </div>
-                <div class="help-text mt-1">
-                    Sélectionnés: <span id="selectedCount">0</span>/10
-                    &nbsp;|&nbsp; <span id="selectedNumbers"></span>
+                    <span id="state" class="kn-state" role="status">Chargement…</span>
                 </div>
             </div>
-            
-            <div class="grid-2">
-                <div class="form-group">
-                    <label>Mise (HTG) <span class="text-danger">*</span></label>
-                    <input type="number" name="stake" class="form-control" min="10" step="10" value="100" required>
-                </div>
-                <div class="form-group">
-                    <label>Gain potentiel</label>
-                    <div id="potentialWin" class="text-success" style="font-size:20px;font-weight:700;padding-top:4px;">0 HTG</div>
-                </div>
+            <div class="kn-hash" style="margin:-4px 0 10px;">Écran joueur (TV) : <span id="screenUrl"></span></div>
+
+            <div class="kn-numbers" id="grid" role="group" aria-label="Grille de 80 numéros">
+                {% for i in range(1, 81) %}
+                <button type="button" class="kn-num" data-n="{{ i }}" aria-pressed="false" aria-label="Numéro {{ i }}">{{ i }}</button>
+                {% endfor %}
             </div>
-            
-            <button type="submit" class="btn btn-primary btn-block">
-                <i class="fas fa-ticket-alt"></i> Placer le pari
-            </button>
-        </form>
+            <div class="kn-count" aria-live="polite">
+                Sélectionnés : <b id="selCount">0</b> / <span id="maxPicks">{{ keno_config.max_picks }}</span>
+                &nbsp;·&nbsp; <span id="selList">—</span>
+            </div>
+            <div class="kn-actions">
+                <button type="button" class="btn btn-secondary" id="quickPickBtn"><i class="fas fa-magic"></i> Quick Pick</button>
+                <select id="qpCount" class="kn-input" style="flex:0 0 90px;" aria-label="Nombre de numéros pour le Quick Pick"></select>
+                <button type="button" class="btn btn-secondary" id="clearBtn"><i class="fas fa-eraser"></i> Effacer</button>
+            </div>
+        </div>
+
+        <!-- ==================== TIRAGE ==================== -->
+        <div class="kn-card" aria-live="polite">
+            <div class="kn-head">
+                <div style="font-weight:800;">Numéros gagnants</div>
+                <span class="kn-hash" id="drawnCount">0 / 20</span>
+            </div>
+            <div class="kn-big" id="bigBall" aria-hidden="true"></div>
+            <div class="kn-balls" id="balls"></div>
+            <div id="result" class="kn-result" role="status"></div>
+        </div>
+    </div>
+
+    <!-- ==================== TICKET ==================== -->
+    <div>
+        <div class="kn-card">
+            <form id="ticketForm" novalidate>
+                <span class="kn-label">Joueur</span>
+                <div class="kn-seg" role="radiogroup" aria-label="Type de joueur">
+                    <label><input type="radio" name="player_type" value="cash" checked> Espèces</label>
+                    <label><input type="radio" name="player_type" value="ticket"> Ticket</label>
+                    <label><input type="radio" name="player_type" value="account"> Compte joueur</label>
+                </div>
+                <div id="identifierBox" style="display:none">
+                    <label class="kn-label" for="identifier" id="identifierLabel">Numéro du ticket</label>
+                    <input class="kn-input" id="identifier" name="identifier" autocomplete="off" placeholder="KNO-XXXX-XXXX">
+                </div>
+                <p class="kn-help" id="cashHelp" style="font-size:12px;color:#64748b;margin:4px 0 0;">Espèces : le numéro de ticket est créé automatiquement et imprimé sur le reçu.</p>
+
+                <span class="kn-label" id="stakeLabel">Mise (HTG)</span>
+                <div class="kn-stakes" id="stakes" role="group" aria-labelledby="stakeLabel"></div>
+                <input class="kn-input" id="stake" name="stake" type="number" inputmode="decimal" aria-labelledby="stakeLabel"
+                       min="{{ keno_config.min_bet }}" max="{{ keno_config.max_bet }}" step="0.01">
+                <div class="kn-count" id="stakeHelp">Mise : {{ keno_config.min_bet|int }} à {{ keno_config.max_bet|int }} HTG</div>
+
+                <div class="kn-summary" id="summary">
+                    <div class="row"><span>Numéros</span><b id="sumNumbers">—</b></div>
+                    <div class="row"><span>Nombre de numéros</span><b id="sumSpots">0</b></div>
+                    <div class="row"><span>Mise</span><b id="sumStake">—</b></div>
+                    <div class="row"><span>Gain maximum</span><b id="sumMax">—</b></div>
+                    <table class="kn-pay" id="payRows" aria-label="Gains possibles pour cette mise"></table>
+                </div>
+
+                <button type="submit" class="btn btn-primary kn-play" id="playBtn" disabled>
+                    <i class="fas fa-play"></i> JOUER
+                </button>
+                <p class="kn-count">Le serveur vérifie et calcule tout : numéros, mise, solde, tirage et gain.</p>
+            </form>
+            <div id="receiptActions" style="display:none;margin-top:10px;">
+                <button type="button" class="btn btn-secondary btn-block" id="printBtn"><i class="fas fa-print"></i> Imprimer le reçu</button>
+            </div>
+        </div>
+
+        <div class="kn-card">
+            <div class="kn-head"><div style="font-weight:800;">Derniers tickets</div>
+                <input type="search" class="tk-search" data-target="history" placeholder="Rechercher un n° de ticket…" aria-label="Rechercher un numéro de ticket" style="padding:5px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:12px;min-width:0;max-width:210px;">
+                <button type="button" class="btn btn-sm btn-secondary" id="refreshHist" aria-label="Actualiser"><i class="fas fa-sync"></i></button></div>
+            <table class="kn-hist"><thead><tr><th>Tirage</th><th>Ticket</th><th>Numéros</th><th>Mise</th><th>Gain</th><th></th></tr></thead>
+                <tbody id="history"><tr><td colspan="6">Chargement…</td></tr></tbody></table>
+        </div>
     </div>
 </div>
+{% endblock %}
 
-<!-- ==================== HISTORIQUE ==================== -->
-<div class="table-container">
-    <div class="table-header">
-        <div class="title"><i class="fas fa-history"></i> Historique des tirages</div>
-        <button class="btn btn-sm btn-secondary" onclick="refreshHistory()">
-            <i class="fas fa-sync"></i> Rafraîchir
-        </button>
-    </div>
-    <div id="historyContainer" class="max-h-80 overflow-y-auto">
-        <div class="text-center text-gray-400 py-8">Chargement...</div>
-    </div>
-</div>
+{% block extra_js %}
+<script charset="utf-8">
+(function () {
+    'use strict';
+    const CSRF = '{{ csrf_token() }}';
+    const SCREEN_URL = location.origin + '/keno/ecran?c={{ screen_code }}';
+    let config = {{ keno_config|tojson }};
+    let prepared = {{ prepared|tojson }};
+    let selected = [];
+    let stake = null;
+    let busy = false;
+    let lastReceipt = null;
 
-<style>
-    .number-ball {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 44px;
-        height: 44px;
-        border-radius: 50%;
-        font-size: 16px;
-        font-weight: 700;
-        color: white;
-        transition: all 0.3s ease;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-        animation: ballAppear 0.4s ease;
-    }
-    @keyframes ballAppear {
-        0% { transform: scale(0) rotate(-180deg); opacity: 0; }
-        60% { transform: scale(1.2) rotate(10deg); }
-        100% { transform: scale(1) rotate(0deg); opacity: 1; }
-    }
-    .number-ball.highlight {
-        transform: scale(1.15);
-        box-shadow: 0 4px 16px rgba(5,150,105,0.4);
-    }
-    .number-btn.selected {
-        background: #059669 !important;
-        color: white !important;
-        border-color: #059669 !important;
-    }
-    .history-item {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 8px 16px;
-        border-bottom: 1px solid #f1f5f9;
-    }
-    .history-item:hover { background: #f8fafc; }
-    .history-item .nums .number-ball {
-        width: 28px;
-        height: 28px;
-        font-size: 10px;
-    }
-    .history-item .nums { display: flex; gap: 2px; flex-wrap: wrap; }
-    .animate-pulse { animation: pulse 1s ease-in-out infinite; }
-    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
-</style>
+    const $ = id => document.getElementById(id);
+    const money = n => Number(n || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 }) + ' HTG';
+    const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const buttons = Array.from(document.querySelectorAll('.kn-num'));
 
-<script>
-    // ==================== COULEURS DES NUMÉROS ====================
-    function getNumberColor(num) {
-        if (num <= 20) return '#059669';
-        if (num <= 40) return '#3b82f6';
-        if (num <= 60) return '#8b5cf6';
-        return '#ef4444';
+    function errorText(data, fallback) {
+        if (!data) return fallback;
+        if (typeof data.error === 'string') return data.error;
+        if (typeof data.detail === 'string') return data.detail;
+        if (Array.isArray(data.detail)) return data.detail.map(d => (d.msg || '').replace(/^Value error, /, '')).join(' · ');
+        return fallback;
     }
-    
-    // ==================== WEBSOCKET ====================
-    let ws = null;
-    let reconnectAttempts = 0;
-    
-    function connectWebSocket() {
-        const wsUrl = `ws://${window.location.host}/ws/draws/all`;
+
+    // ---------- États ----------
+    function setState(name, text) {
+        const el = $('state');
+        el.className = 'kn-state ' + ({ BETTING_OPEN: 'open', SUBMITTING: 'busy', DRAWING: 'busy', RESULT: 'open', ERROR: 'error', ROUND_CLOSED: 'closed', LOADING: '' }[name] || '');
+        el.textContent = text;
+        el.dataset.state = name;
+    }
+
+    function applyPrepared(p) {
+        prepared = p;
+        $('drawNumber').textContent = p ? '#' + p.draw_number : '—';
+        $('drawHash').textContent = p ? p.server_seed_hash : '—';
+        if (!config.enabled) setState('ROUND_CLOSED', 'Keno fermé');
+        else if (!p) setState('ERROR', 'Tirage indisponible');
+        else if (!busy) setState('BETTING_OPEN', 'Prêt à jouer');
+    }
+
+    // ---------- Configuration ----------
+    function renderConfig() {
+        $('maxPicks').textContent = config.max_picks;
+        const qp = $('qpCount');
+        qp.innerHTML = '';
+        for (let n = config.min_picks; n <= config.max_picks; n++) {
+            qp.insertAdjacentHTML('beforeend', `<option value="${n}" ${n === Math.min(5, config.max_picks) ? 'selected' : ''}>${n} n°</option>`);
+        }
+        $('stakes').innerHTML = (config.stake_options || []).map(v =>
+            `<button type="button" class="kn-stake" data-v="${v}" aria-pressed="false">${Number(v).toLocaleString('fr-FR')}</button>`).join('');
+        $('stake').min = config.min_bet;
+        $('stake').max = config.max_bet;
+        $('stakeHelp').textContent = `Mise : ${Number(config.min_bet).toLocaleString('fr-FR')} à ${Number(config.max_bet).toLocaleString('fr-FR')} HTG · gain maximum par ticket ${money(config.max_payout)}`;
+        if (stake === null && config.stake_options && config.stake_options.length) setStake(config.stake_options[Math.min(2, config.stake_options.length - 1)]);
+        update();
+    }
+
+    function setStake(v) {
+        stake = v === '' || v === null ? null : Number(v);
+        $('stake').value = stake ?? '';
+        document.querySelectorAll('.kn-stake').forEach(b => b.setAttribute('aria-pressed', String(Number(b.dataset.v) === stake)));
+        update();
+    }
+
+    // ---------- Sélection ----------
+    function toggle(n) {
+        if (busy) return;
+        clearDrawDisplay();
+        const i = selected.indexOf(n);
+        if (i >= 0) selected.splice(i, 1);
+        else if (selected.length >= config.max_picks) { showToast(`Maximum ${config.max_picks} numéros`, 'warning'); return; }
+        else selected.push(n);
+        selected.sort((a, b) => a - b);
+        update();
+    }
+
+    function update() {
+        buttons.forEach(b => b.setAttribute('aria-pressed', String(selected.includes(Number(b.dataset.n)))));
+        $('selCount').textContent = selected.length;
+        $('selList').textContent = selected.length ? selected.join(' · ') : '—';
+        $('sumNumbers').textContent = selected.length ? selected.join(' ') : '—';
+        $('sumSpots').textContent = selected.length;
+        $('sumStake').textContent = stake ? money(stake) : '—';
+
+        // Gains indicatifs (le serveur recalcule tout au moment du jeu)
+        const row = config.paytable[String(selected.length)] || {};
+        const entries = Object.entries(row).map(([h, m]) => [Number(h), Number(m)]).sort((a, b) => b[0] - a[0]);
+        const cap = Number(config.max_payout);
+        if (selected.length && stake && entries.length) {
+            $('sumMax').textContent = money(Math.min(cap, stake * entries[0][1]));
+            $('payRows').innerHTML = '<tr><th>Trouvés</th><th>Multiplicateur</th><th>Gain</th></tr>' + entries.map(([h, m]) =>
+                `<tr><td>${h} / ${selected.length}</td><td>x${m.toLocaleString('fr-FR')}</td><td>${money(Math.min(cap, stake * m))}</td></tr>`).join('') +
+                `<tr><td colspan="3" style="text-align:left;color:#64748b">Taux de redistribution : ${config.rtp[String(selected.length)] ?? '—'} %</td></tr>`;
+        } else {
+            $('sumMax').textContent = '—';
+            $('payRows').innerHTML = '';
+        }
+        const ready = config.enabled && prepared && !busy && selected.length >= config.min_picks && selected.length <= config.max_picks
+            && stake >= config.min_bet && stake <= config.max_bet && ($('ticketForm').player_type.value === 'cash' || $('identifier').value.trim() !== '');
+        $('playBtn').disabled = !ready;
+        sendPreview();
+    }
+
+    // ---------- Écran joueur : numéros demandés et mise, en direct ----------
+    let previewTimer = null, lastPreview = '';
+    function sendPreview() {
+        if (busy) return;
+        const key = JSON.stringify([selected, stake]);
+        if (key === lastPreview) return;
+        clearTimeout(previewTimer);
+        previewTimer = setTimeout(() => {
+            lastPreview = key;
+            fetch('/agent/api/keno/screen', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                body: JSON.stringify({ picks: selected, stake: stake }),
+            }).catch(() => {});
+        }, 250);
+    }
+
+    function clearDrawDisplay() {
+        if (busy) return;
+        buttons.forEach(b => b.classList.remove('drawn', 'hit', 'picked-miss'));
+        $('balls').innerHTML = '';
+        $('bigBall').textContent = '';
+        $('drawnCount').textContent = '0 / 20';
+        $('result').className = 'kn-result';
+        $('result').innerHTML = '';
+    }
+
+    // ---------- Quick Pick (générateur du serveur, sans effet sur le tirage) ----------
+    async function quickPick() {
+        if (busy) return;
         try {
-            ws = new WebSocket(wsUrl);
-            
-            ws.onopen = function() {
-                document.getElementById('liveStatus').innerHTML = '<span id="liveDot" class="inline-block w-2 h-2 rounded-full bg-green-500 animate-pulse mr-1"></span> Connecté';
-                document.getElementById('liveStatus').className = 'badge success';
-                reconnectAttempts = 0;
-            };
-            
-            ws.onmessage = function(event) {
-                const msg = JSON.parse(event.data);
-                handleWebSocketMessage(msg);
-            };
-            
-            ws.onclose = function() {
-                document.getElementById('liveStatus').innerHTML = '<span id="liveDot" class="inline-block w-2 h-2 rounded-full bg-red-500 mr-1"></span> Déconnecté';
-                document.getElementById('liveStatus').className = 'badge danger';
-                reconnect();
-            };
-            
-            ws.onerror = function() {
-                document.getElementById('liveStatus').innerHTML = '<span id="liveDot" class="inline-block w-2 h-2 rounded-full bg-red-500 mr-1"></span> Erreur';
-                document.getElementById('liveStatus').className = 'badge danger';
-            };
-        } catch(e) {
-            reconnect();
-        }
+            const res = await fetch('/agent/api/keno/quick-pick?count=' + encodeURIComponent($('qpCount').value));
+            const data = await res.json();
+            if (!res.ok) throw new Error(errorText(data, 'Quick Pick indisponible'));
+            clearDrawDisplay();
+            selected = data.picks.slice().sort((a, b) => a - b);
+            update();
+        } catch (e) { showToast(e.message, 'error'); }
     }
-    
-    function reconnect() {
-        if (reconnectAttempts > 10) return;
-        reconnectAttempts++;
-        setTimeout(connectWebSocket, Math.min(1000 * reconnectAttempts, 30000));
-    }
-    
-    // ==================== TRAITEMENT DES MESSAGES ====================
-    function handleWebSocketMessage(msg) {
-        switch(msg.type) {
-            case 'latest_keno':
-            case 'draw_completed':
-                displayLatestDraw(msg.data);
-                break;
-            case 'next_draw':
-                displayNextDraw(msg.data);
-                break;
-            case 'history':
-                displayHistory(msg.data);
-                break;
-            case 'jackpot_alert':
-                showJackpotAlert(msg.data);
-                break;
-        }
-    }
-    
-    // ==================== AFFICHAGE DES RÉSULTATS ====================
-    function displayLatestDraw(data) {
-        document.getElementById('lastDrawNumber').textContent = `#${data.draw_number}`;
-        document.getElementById('lastDrawBets').textContent = data.total_bets || 0;
-        document.getElementById('lastDrawWinners').textContent = data.winners_count || 0;
-        document.getElementById('lastDrawPayout').textContent = (data.total_payout || 0).toLocaleString() + ' HTG';
-        
-        const container = document.getElementById('lastDrawNumbers');
-        container.innerHTML = '';
-        if (data.numbers && data.numbers.length > 0) {
-            data.numbers.forEach((num, i) => {
-                const ball = document.createElement('span');
-                ball.className = 'number-ball';
-                ball.style.backgroundColor = getNumberColor(num);
-                ball.style.animationDelay = `${i * 0.08}s`;
-                ball.textContent = num;
-                container.appendChild(ball);
-            });
-            setTimeout(() => {
-                container.querySelectorAll('.number-ball').forEach((ball, i) => {
-                    setTimeout(() => {
-                        ball.classList.add('highlight');
-                        setTimeout(() => ball.classList.remove('highlight'), 400);
-                    }, i * 80);
-                });
-            }, 500);
-        }
-    }
-    
-    function displayNextDraw(data) {
-        document.getElementById('nextDrawNumber').textContent = `Tirage #${data.draw_number}`;
-        document.getElementById('drawId').value = data.draw_id;
-        startCountdown(data.draw_time);
-    }
-    
-    // ==================== COMPTE À REBOURS ====================
-    let countdownInterval = null;
-    
-    function startCountdown(targetTime) {
-        if (countdownInterval) clearInterval(countdownInterval);
-        const target = new Date(targetTime);
-        
-        countdownInterval = setInterval(() => {
-            const now = new Date();
-            const diff = target - now;
-            if (diff <= 0) {
-                document.getElementById('countdownDisplay').textContent = '00:00:00';
-                document.getElementById('countdownContainer').className = 'bg-gradient-to-r from-red-500 to-red-700 text-white rounded-lg m-4 p-4 text-center animate-pulse';
-                clearInterval(countdownInterval);
-                return;
-            }
-            const hours = Math.floor(diff / 3600000);
-            const minutes = Math.floor((diff % 3600000) / 60000);
-            const seconds = Math.floor((diff % 60000) / 1000);
-            document.getElementById('countdownDisplay').textContent = 
-                `${String(hours).padStart(2,'0')}:${String(minutes).padStart(2,'0')}:${String(seconds).padStart(2,'0')}`;
-            if (diff < 30000) {
-                document.getElementById('countdownContainer').className = 'bg-gradient-to-r from-red-500 to-red-700 text-white rounded-lg m-4 p-4 text-center animate-pulse';
-            } else if (diff < 60000) {
-                document.getElementById('countdownContainer').className = 'bg-gradient-to-r from-yellow-500 to-yellow-600 text-white rounded-lg m-4 p-4 text-center';
-            } else {
-                document.getElementById('countdownContainer').className = 'bg-gradient-to-r from-green-500 to-green-700 text-white rounded-lg m-4 p-4 text-center';
-            }
-        }, 1000);
-    }
-    
-    // ==================== HISTORIQUE ====================
-    function displayHistory(data) {
-        const container = document.getElementById('historyContainer');
-        if (!data || data.length === 0) {
-            container.innerHTML = '<div class="text-center text-gray-400 py-8">Aucun historique</div>';
-            return;
-        }
-        let html = '';
-        data.forEach(d => {
-            html += `
-                <div class="history-item">
-                    <div><span class="font-bold">#${d.draw_number}</span> <span class="text-sm text-gray-500">${new Date(d.draw_time).toLocaleString()}</span></div>
-                    <div class="nums">${d.numbers.map(n => `<span class="number-ball" style="width:28px;height:28px;font-size:10px;background-color:${getNumberColor(n)};">${n}</span>`).join('')}</div>
-                    <div class="text-sm text-gray-500">${d.total_bets || 0} paris</div>
-                </div>
-            `;
-        });
-        container.innerHTML = html;
-    }
-    
-    // ==================== JACKPOT ALERT ====================
-    function showJackpotAlert(data) {
-        const alertDiv = document.createElement('div');
-        alertDiv.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:linear-gradient(135deg,#f59e0b,#ef4444);color:white;padding:40px 60px;border-radius:20px;text-align:center;z-index:2000;box-shadow:0 20px 60px rgba(0,0,0,0.3);animation:bounce 1s ease-in-out infinite;';
-        alertDiv.innerHTML = `
-            <div style="font-size:64px;">🏆</div>
-            <h2 style="font-size:32px;font-weight:700;">JACKPOT !</h2>
-            <p style="font-size:24px;margin:8px 0;">${data.amount.toLocaleString()} HTG</p>
-            <p style="font-size:14px;opacity:0.8;">Tirage #${data.draw_number}</p>
-            <button onclick="this.parentElement.remove()" style="margin-top:16px;padding:10px 30px;background:white;color:#f59e0b;border:none;border-radius:10px;font-weight:700;cursor:pointer;">🎉 Félicitations !</button>
-        `;
-        document.body.appendChild(alertDiv);
-        setTimeout(() => { if(alertDiv.parentElement) alertDiv.remove(); }, 15000);
-    }
-    
-    // ==================== SÉLECTION NUMÉROS ====================
-    let selectedNumbers = [];
-    const multipliers = {
-        1:{1:2.5},2:{2:6},3:{3:12,2:1.5},4:{4:30,3:3,2:1},
-        5:{5:60,4:6,3:2,2:0.5},6:{6:120,5:15,4:4,3:1.5,2:0.5},
-        7:{7:300,6:30,5:8,4:2,3:1,2:0.5},8:{8:600,7:60,6:15,5:4,4:1.5,3:0.5},
-        9:{9:1200,8:120,7:30,6:8,5:3,4:1},
-        10:{10:5000,9:500,8:60,7:15,6:5,5:2,4:0.5}
-    };
-    
-    document.querySelectorAll('.number-btn').forEach(btn => {
-        btn.addEventListener('click', function() {
-            const num = parseInt(this.dataset.number);
-            if (selectedNumbers.includes(num)) {
-                selectedNumbers = selectedNumbers.filter(n => n !== num);
-                this.classList.remove('selected');
-            } else {
-                if (selectedNumbers.length >= 10) {
-                    showToast('Maximum 10 numéros', 'warning');
-                    return;
-                }
-                selectedNumbers.push(num);
-                this.classList.add('selected');
-            }
-            updateSelected();
-        });
-    });
-    
-    function updateSelected() {
-        document.getElementById('selectedCount').textContent = selectedNumbers.length;
-        document.getElementById('selectedNumbers').textContent = selectedNumbers.sort((a,b)=>a-b).join(', ');
-        updatePotentialWin();
-    }
-    
-    function updatePotentialWin() {
-        const stake = parseFloat(document.querySelector('input[name="stake"]').value) || 0;
-        const maxMultiplier = Math.max(...Object.values(multipliers[selectedNumbers.length] || {0:0}));
-        document.getElementById('potentialWin').textContent = (stake * maxMultiplier).toFixed(0) + ' HTG';
-    }
-    document.querySelector('input[name="stake"]').addEventListener('input', updatePotentialWin);
-    
-    // ==================== PARI ====================
-    function placeBet(e) {
-        e.preventDefault();
-        if (selectedNumbers.length === 0) {
-            showToast('Sélectionnez au moins 1 numéro', 'warning');
-            return;
-        }
-        const form = e.target;
-        const data = new FormData(form);
+
+    // ---------- Jouer ----------
+    async function play(ev) {
+        ev.preventDefault();
+        if (busy || $('playBtn').disabled) return;
+        busy = true;
+        update();
+        setState('SUBMITTING', 'Envoi du ticket…');
+        const form = $('ticketForm');
         const payload = {
-            player_type: data.get('player_type'),
-            identifier: data.get('identifier'),
-            draw_id: data.get('draw_id'),
-            picks: selectedNumbers,
-            stake: parseFloat(data.get('stake'))
+            player_type: form.player_type.value,
+            identifier: $('identifier').value.trim(),
+            draw_id: prepared.draw_id,
+            picks: selected,
+            stake: stake
         };
-        if (!payload.draw_id) {
-            showToast('Aucun tirage disponible', 'error');
+        let data = null;
+        try {
+            const res = await fetch('/agent/api/keno/bet', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                body: JSON.stringify(payload),
+                redirect: 'manual'
+            });
+            data = await res.json().catch(() => null);
+            if (!res.ok || !data || !data.success) throw new Error(errorText(data, 'Ticket refusé (session expirée ?)'));
+        } catch (e) {
+            busy = false;
+            setState('ERROR', 'Ticket refusé');
+            showToast(e.message, 'error');
+            refreshState();
+            update();
             return;
         }
-        fetch('{{ url_for("agent_place_keno_bet") }}', {
-            method: 'POST',
-            headers: {'X-CSRFToken': '{{ csrf_token() }}','Content-Type':'application/json'},
-            body: JSON.stringify(payload)
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                showToast(data.message || 'Pari placé !', 'success');
-                selectedNumbers = [];
-                document.querySelectorAll('.number-btn').forEach(b => b.classList.remove('selected'));
-                updateSelected();
-                form.querySelector('input[name="identifier"]').value = '';
-                form.querySelector('input[name="stake"]').value = '100';
-            } else {
-                showToast(data.error || 'Erreur', 'error');
-            }
-        })
-        .catch(() => showToast('Erreur réseau', 'error'));
+        // Le ticket est joué et réglé côté serveur : l'animation ne fait que montrer ce résultat.
+        lastReceipt = data;
+        $('receiptActions').style.display = 'block';
+        await animateDraw(data);
+        showResult(data);
+        busy = false;
+        applyPrepared(data.next);
+        setState('RESULT', data.payout > 0 ? 'Gagné !' : 'Perdu');
+        if (form.player_type.value === 'ticket') $('identifier').value = data.ticket_number || '';
+        // Ticket suivant : les boules choisies sont réinitialisées (le résultat reste affiché)
+        selected = [];
+        update();
+        loadHistory();
     }
-    
-    // ==================== IMPRESSION ====================
-    function printResults() {
-        const numbers = document.querySelectorAll('#lastDrawNumbers .number-ball');
-        if (numbers.length === 0) { showToast('Aucun résultat à imprimer', 'warning'); return; }
-        const printWindow = window.open('', '', 'width=500,height=400');
-        printWindow.document.write(`
-            <html><head><title>Résultats Keno</title>
-            <style>body{font-family:Arial;text-align:center;padding:20px;}.title{font-size:24px;font-weight:700;}.numbers{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin:20px 0;}.number{display:inline-flex;width:50px;height:50px;border-radius:50%;color:white;font-size:18px;font-weight:700;align-items:center;justify-content:center;}.footer{margin-top:20px;font-size:12px;color:#999;border-top:1px solid #ddd;padding-top:16px;}.stats{display:flex;justify-content:center;gap:40px;margin:16px 0;}.stats .label{font-size:12px;color:#666;}.stats .value{font-size:18px;font-weight:700;}
-</style></head><body>
-            <div class="title">🎲 Résultats Keno</div>
-            <div class="subtitle">${document.getElementById('lastDrawNumber').textContent} - ${new Date().toLocaleString()}</div>
-            <div class="numbers">${Array.from(numbers).map(el => `<span class="number" style="background-color:${el.style.backgroundColor};">${el.textContent}</span>`).join('')}</div>
-            <div class="stats"><div><div class="label">Paris</div><div class="value">${document.getElementById('lastDrawBets').textContent}</div></div>
-            <div><div class="label">Payout</div><div class="value">${document.getElementById('lastDrawPayout').textContent}</div></div></div>
-            <div class="footer">Parier Keno Haïti - ${new Date().toLocaleDateString()}<br>Résultat officiel du tirage</div>
-        </body></html>
-    `);
-    printWindow.document.close();
-    printWindow.focus();
-    printWindow.print();
-}
-    
-    // ==================== RAFRAÎCHIR HISTORIQUE ====================
-    function refreshHistory() {
-        if (ws && ws.readyState === WebSocket.OPEN) ws.send('history');
+
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    async function animateDraw(data) {
+        setState('DRAWING', 'Tirage en cours…');
+        clearDrawDisplayForce();
+        const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const picks = new Set(data.picks);
+        const balls = $('balls');
+        let shown = 0;
+        for (const n of data.draw_order) {
+            shown++;
+            const hit = picks.has(n);
+            $('bigBall').textContent = n;
+            balls.insertAdjacentHTML('beforeend', `<div class="kn-ball ${hit ? 'hit' : ''}" aria-label="${n}${hit ? ' trouvé' : ''}">${n}</div>`);
+            const btn = buttons[n - 1];
+            btn.classList.add(hit ? 'hit' : 'drawn');
+            $('drawnCount').textContent = `${shown} / 20`;
+            if (!reduce) await sleep(220);
+        }
+        buttons.forEach(b => { const n = Number(b.dataset.n); if (picks.has(n) && !data.winning_numbers.includes(n)) b.classList.add('picked-miss'); });
+        $('bigBall').textContent = '';
     }
-    
-    // ==================== INITIALISATION ====================
-    document.addEventListener('DOMContentLoaded', function() {
-        connectWebSocket();
-        // Compte à rebours initial
-        {% if next_draw %}
-        startCountdown('{{ next_draw.draw_time.isoformat() }}');
-        {% endif %}
-        // Demander l'historique
-        setTimeout(refreshHistory, 1000);
+
+    function clearDrawDisplayForce() {
+        buttons.forEach(b => b.classList.remove('drawn', 'hit', 'picked-miss'));
+        $('balls').innerHTML = '';
+        $('result').className = 'kn-result';
+        $('result').innerHTML = '';
+    }
+
+    function showResult(d) {
+        const won = d.payout > 0;
+        const el = $('result');
+        el.className = 'kn-result ' + (won ? 'won' : 'lost');
+        el.innerHTML = `
+            <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;">
+                <div><div style="font-weight:800;">${won ? 'GAGNÉ' : 'Perdu'} — ${d.match_count} / ${d.spots} trouvé(s)</div>
+                <div style="font-size:12px;">Trouvés : ${d.matches.length ? d.matches.join(' · ') : 'aucun'}${won ? ' · x' + d.multiplier.toLocaleString('fr-FR') : ''}</div></div>
+                <div class="amount">${money(d.payout)}</div>
+            </div>
+            <div style="font-size:12px;margin-top:6px;">Ticket : ${esc(d.ticket_number || d.player_name)}${d.ticket_balance != null ? ' · nouveau solde ' + money(d.ticket_balance) : ''}</div>`;
+    }
+
+    // ---------- Reçu ----------
+    function printReceipt(d) {
+        if (!d) return;
+        const won = d.payout > 0;
+        KPReceipt.print({
+            game: 'KENO', round: `Tirage n° ${d.draw_number}`, roundTime: 'Tirage instantané',
+            bureau: KP_AGENT.bureau, address: KP_AGENT.address, phone: KP_AGENT.phone, agent: d.agent_name || KP_AGENT.name,
+            ticket: d.ticket_number, code: d.bet_id, placedAt: d.drawn_at,
+            sections: [
+                { type: 'numbers', label: `Numéros joués (${d.spots})`, items: d.picks, highlight: d.matches },
+                { type: 'numbers', label: 'Numéros tirés (20)', items: d.winning_numbers, highlight: d.matches },
+                { type: 'sep' },
+                { type: 'rows', rows: [['Mise', KPReceipt.money(d.stake)], ['Trouvés', `${d.match_count} / ${d.spots}`], ['Multiplicateur', 'x' + Number(d.multiplier).toLocaleString('fr-FR')]] },
+                { type: 'total', label: 'GAIN', value: KPReceipt.money(d.payout) },
+                { type: 'stamp', text: won ? 'GAGNANT' : 'PERDANT', won },
+            ],
+            hash: d.server_seed_hash, seed: d.server_seed,
+            verifyUrl: location.host + '/keno/verifier?tirage=' + d.draw_id,
+            footer: won ? (d.ticket_number ? 'Gain crédité sur le ticket : présentez ce reçu au guichet.' : 'Gain crédité sur le compte du joueur.') : 'Conservez ce reçu.',
+        });
+    }
+
+    async function reprint(betId) {
+        try {
+            const res = await fetch('/agent/api/keno/bets/' + encodeURIComponent(betId));
+            const data = await res.json();
+            if (!res.ok) throw new Error(errorText(data, 'Reçu introuvable'));
+            printReceipt(data);
+        } catch (e) { showToast(e.message, 'error'); }
+    }
+
+    // Recherche d'un numéro de ticket dans l'historique (plusieurs gagnants : retrouver le bon ticket)
+    function filterTickets() {
+        document.querySelectorAll('.tk-search').forEach(inp => {
+            const q = inp.value.trim().toUpperCase();
+            document.querySelectorAll('#' + inp.dataset.target + ' tr').forEach(tr => {
+                tr.style.display = !q || tr.textContent.toUpperCase().includes(q) ? '' : 'none';
+            });
+        });
+    }
+    document.querySelectorAll('.tk-search').forEach(inp => inp.addEventListener('input', filterTickets));
+
+    // ---------- Historique ----------
+    async function loadHistory() {
+        try {
+            const res = await fetch('/agent/api/keno/history?limit=15');
+            const data = await res.json();
+            if (!res.ok) throw new Error();
+            $('history').innerHTML = data.items.length ? data.items.map(i => `
+                <tr${i.payout > 0 ? ' style="background:#ecfdf5"' : ''}><td>#${i.draw_number}<br><span style="color:#94a3b8">${new Date(i.placed_at).toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'})}</span></td>
+                <td>${i.ticket_number ? '<b style="font-family:monospace">' + esc(i.ticket_number) + '</b>' : '<span style="color:#94a3b8">Compte</span>'}</td>
+                <td>${i.picks.join(' ')}</td><td>${money(i.stake)}</td>
+                <td class="${i.payout > 0 ? 'won' : ''}">${i.status === 'refunded' ? 'Remboursé' : (i.status === 'pending' ? 'En attente' : money(i.payout) + ' (' + i.match_count + ')')}</td>
+                <td><button type="button" class="btn btn-sm btn-secondary" data-reprint="${esc(i.bet_id)}" aria-label="Réimprimer le reçu du tirage ${i.draw_number}"><i class="fas fa-print"></i></button></td></tr>`).join('')
+                : '<tr><td colspan="6">Aucun ticket pour le moment</td></tr>';
+            filterTickets();
+        } catch (e) {
+            $('history').innerHTML = '<tr><td colspan="6">Historique indisponible</td></tr>';
+        }
+    }
+
+    async function refreshState() {
+        try {
+            const res = await fetch('/agent/api/keno/state');
+            const data = await res.json();
+            if (!res.ok) throw new Error(errorText(data, 'Keno indisponible'));
+            config = data.config;
+            renderConfig();
+            applyPrepared(data.prepared);
+        } catch (e) {
+            setState('ERROR', 'Erreur réseau');
+        }
+    }
+
+    // ---------- Événements ----------
+    $('grid').addEventListener('click', e => { const b = e.target.closest('.kn-num'); if (b) toggle(Number(b.dataset.n)); });
+    $('stakes').addEventListener('click', e => { const b = e.target.closest('.kn-stake'); if (b) setStake(b.dataset.v); });
+    $('stake').addEventListener('input', e => setStake(e.target.value));
+    $('identifier').addEventListener('input', update);
+    document.querySelectorAll('input[name=player_type]').forEach(r => r.addEventListener('change', () => {
+        const type = $('ticketForm').player_type.value, ticket = type === 'ticket';
+        $('identifierBox').style.display = type === 'cash' ? 'none' : '';
+        $('cashHelp').style.display = type === 'cash' ? '' : 'none';
+        $('identifierLabel').textContent = ticket ? 'Numéro du ticket' : 'Téléphone du joueur';
+        $('identifier').placeholder = ticket ? 'KNO-XXXX-XXXX' : '34XX-XXXX';
+        $('identifier').value = '';
+        update();
+    }));
+    $('quickPickBtn').addEventListener('click', quickPick);
+    $('clearBtn').addEventListener('click', () => { if (busy) return; selected = []; clearDrawDisplay(); update(); });
+    $('ticketForm').addEventListener('submit', play);
+    $('printBtn').addEventListener('click', () => printReceipt(lastReceipt));
+    $('history').addEventListener('click', e => { const b = e.target.closest('[data-reprint]'); if (b) reprint(b.dataset.reprint); });
+    $('refreshHist').addEventListener('click', loadHistory);
+    $('screenUrl').textContent = SCREEN_URL;
+    $('screenBtn').addEventListener('click', () => {
+        const w = window.open(SCREEN_URL, 'kenoPlayerScreen', 'popup,width=1280,height=720');
+        if (!w) showToast("Autorisez les fenêtres pop-up, ou ouvrez l'adresse de l'écran sur la TV", 'warning');
     });
+
+    renderConfig();
+    applyPrepared(prepared);
+    loadHistory();
+    // la configuration peut changer à tout moment : relue régulièrement (hors tirage)
+    setInterval(() => { if (!busy) refreshState(); }, 60000);
+})();
 </script>
 {% endblock %}

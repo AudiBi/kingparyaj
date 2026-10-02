@@ -208,7 +208,7 @@
                         </span>
                     </td>
                     <td class="text-muted" style="font-size: 12px;">
-                        {{ ticket.expires_at.strftime('%d/%m/%Y') }}
+                        {{ (ticket.expires_at|local).strftime('%d/%m/%Y') }}
                         {% if ticket.status == 'active' %}
                             {% set days = (ticket.expires_at - now).days %}
                             {% if days <= 2 %}
@@ -403,6 +403,7 @@
         </div>
     </div>
 </div>
+{% endblock %}
 
 {% block extra_js %}
 <script>
@@ -523,6 +524,7 @@
                 </head>
                 <body>
                     <div class="container">
+                        ${kpLogoHtml(120)}
                         <h2>Ticket ${currentTicketNumber}</h2>
                         <div>${document.getElementById('qrCodeContainer').innerHTML}</div>
                         <div class="ticket-number">${currentTicketNumber}</div>
@@ -532,8 +534,7 @@
             </html>
         `);
         win.document.close();
-        win.focus();
-        win.print();
+        kpPrint(win);
     }
     
     function downloadQR() {
@@ -769,5 +770,4 @@
         });
     });
 </script>
-{% endblock %}
 {% endblock %}

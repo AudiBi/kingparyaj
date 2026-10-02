@@ -212,7 +212,7 @@
                     </td>
                     <td class="text-muted" style="font-size: 12px;">
                         {{ tx.created_at|timeago }}
-                        <br><span style="font-size: 10px;">{{ tx.created_at.strftime('%H:%M') }}</span>
+                        <br><span style="font-size: 10px;">{{ (tx.created_at|local).strftime('%H:%M') }}</span>
                     </td>
                     <td>
                         <div class="flex" style="gap: 4px;">
@@ -328,6 +328,7 @@
         </div>
     </div>
 </div>
+{% endblock %}
 
 {% block extra_js %}
 <script>
@@ -483,5 +484,4 @@
         });
     });
 </script>
-{% endblock %}
 {% endblock %}

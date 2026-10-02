@@ -4,7 +4,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Agent - Parier Keno Haïti{% endblock %}</title>
+    <title>{% block title %}Agent - King Paryaj{% endblock %}</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png">
+    <link rel="icon" href="/static/img/favicon.ico" sizes="any">
+    <link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -80,6 +83,7 @@
             font-size: 18px;
             font-weight: 700;
         }
+        .sidebar-brand .logo-img { width: 44px; height: 44px; object-fit: contain; flex-shrink: 0; }
         .sidebar-brand .brand-text {
             color: white;
             font-size: 16px;
@@ -504,8 +508,8 @@
 <!-- ==================== SIDEBAR ==================== -->
 <aside class="sidebar" id="sidebar">
     <div class="sidebar-brand">
-        <div class="logo">K</div>
-        <div class="brand-text">Parier<span>Keno</span></div>
+        <img src="/static/img/logo-64.png" srcset="/static/img/logo-64.png 1x, /static/img/logo-192.png 3x" alt="King Paryaj" class="logo-img">
+        <div class="brand-text">King<span>Paryaj</span></div>
         <span class="bureau">{{ agent.bureau_name or 'Bureau' }}</span>
     </div>
     
@@ -529,6 +533,12 @@
         </a>
         <a href="{{ url_for('agent_lucky') }}" class="nav-item {% if active == 'lucky' %}active{% endif %}">
             <i class="fas fa-gift"></i> Lucky Wheel
+        </a>
+        <a href="/agent/horse-races" class="nav-item {% if active == 'horse_races' %}active{% endif %}">
+            <i class="fas fa-horse"></i> Horse Races
+        </a>
+        <a href="/agent/lucky6" class="nav-item {% if active == 'lucky6' %}active{% endif %}">
+            <i class="fas fa-circle-dot"></i> Lucky6
         </a>
         
         <div class="nav-label">Rapports</div>
@@ -593,6 +603,7 @@
 <div id="toast-container" style="position:fixed;bottom:20px;right:20px;z-index:3000;display:flex;flex-direction:column;gap:8px;"></div>
 
 <!-- ==================== SCRIPTS ==================== -->
+<script src="/static/js/thermal_receipt.js"></script>
 <script>
     // ==================== SIDEBAR ====================
     function toggleSidebar() {
@@ -692,6 +703,39 @@
             .catch(() => {});
     }
     
+
+    // ==================== IMPRESSION AVEC LOGO ====================
+    // Les fenêtres d'impression attendent le chargement du logo avant
+    // d'imprimer (sinon le reçu sortait sans logo).
+    const KP_LOGO_PRINT = location.origin + '/static/img/logo-print.png';
+    // Informations imprimées sur les reçus (imprimante thermique)
+    window.KP_AGENT = {
+        name: {{ ((agent.full_name or agent.phone) if agent is defined and agent else '')|tojson }},
+        bureau: {{ (agent.bureau_name if agent is defined and agent else '')|tojson }},
+        address: {{ (agent.bureau_address if agent is defined and agent and agent.bureau_address else '')|tojson }},
+        phone: {{ (agent.bureau_phone if agent is defined and agent and agent.bureau_phone else '')|tojson }},
+    };
+    // Reçu affiché dans la fenêtre « Reçu » : imprimé tel quel sur l'imprimante thermique
+    window.kpShowReceipt = function (spec, containerId, modalId) {
+        window.__kpReceipt = spec;
+        document.querySelectorAll('.kp-paper').forEach(s => { s.value = String(KPReceipt.paper()); });
+        KPReceipt.preview(document.getElementById(containerId || 'receiptPrint'), spec);
+        if (modalId !== false) openModal(modalId || 'receiptModal');
+    };
+    function kpLogoHtml(width) {
+        return `<img src="${KP_LOGO_PRINT}" alt="King Paryaj" style="width:${width || 110}px;height:auto;display:block;margin:0 auto 6px;">`;
+    }
+    function kpPrint(win) {
+        const imgs = Array.from(win.document.images || []);
+        let done = false;
+        const go = () => { if (done) return; done = true; win.focus(); win.print(); };
+        const pending = imgs.filter(i => !i.complete);
+        if (!pending.length) return go();
+        let left = pending.length;
+        pending.forEach(i => { i.onload = i.onerror = () => { if (--left === 0) go(); }; });
+        setTimeout(go, 2500);
+    }
+
     // ==================== FORMAT NUMBER ====================
     function formatNumber(num) {
         return (num || 0).toLocaleString();

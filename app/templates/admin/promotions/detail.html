@@ -171,7 +171,7 @@
                 </tr>
                 <tr>
                     <td style="padding: 8px 0; color: #94a3b8;">Créé le</td>
-                    <td style="padding: 8px 0;">{{ promotion.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
+                    <td style="padding: 8px 0;">{{ (promotion.created_at|local).strftime('%d/%m/%Y %H:%M') }}</td>
                 </tr>
             </table>
         </div>
@@ -254,6 +254,7 @@
         </div>
     </div>
 </div>
+{% endblock %}
 
 {% block extra_js %}
 <script>
@@ -313,5 +314,4 @@
         });
     });
 </script>
-{% endblock %}
 {% endblock %}

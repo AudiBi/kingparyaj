@@ -6,6 +6,9 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, File
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_, desc, asc, text, update
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.orm import selectinload
+from sqlalchemy.orm.attributes import set_committed_value
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 from decimal import Decimal
@@ -20,9 +23,13 @@ from app.core.database import get_db
 from app.core.redis_client import get_redis
 from app.core.security import get_current_admin, hash_password, verify_password
 from app.core.logger import logger
-from app.core.exceptions import NotFoundException, ValidationException
+from app.core.exceptions import GameException, NotFoundException, ValidationException
 from app.config import settings
 from app.core.csrf import register_csrf_globals  # enregistre aussi la config CsrfProtect à l'import
+from app.core.timezone import (
+    now_utc, now_haiti, today_haiti, today_bounds_utc, to_haiti,
+    local_date_start_utc, local_date_end_utc, local_day,
+)
 from app.models.user import User, UserRole, KYCStatus
 from app.models.wallet import Wallet
 from app.models.bureau import Bureau, CashierSession
@@ -53,29 +60,6 @@ import redis.asyncio as redis
 # Table de paiement Keno par défaut (utilisée tant qu'aucune valeur n'a été
 # poussée dans Redis via /api/keno/paytable) : {nombre de picks: {nombre de
 # hits: multiplicateur}}.
-DEFAULT_KENO_PAYTABLE = {
-    "1": {"1": 2.5},
-    "2": {"2": 6},
-    "3": {"3": 12, "2": 1.5},
-    "4": {"4": 30, "3": 3, "2": 1},
-    "5": {"5": 60, "4": 6, "3": 2, "2": 0.5},
-    "6": {"6": 120, "5": 15, "4": 4, "3": 1.5, "2": 0.5},
-    "7": {"7": 300, "6": 30, "5": 8, "4": 2, "3": 1, "2": 0.5},
-    "8": {"8": 600, "7": 60, "6": 15, "5": 4, "4": 1.5, "3": 0.5},
-    "9": {"9": 1200, "8": 120, "7": 30, "6": 8, "5": 3, "4": 1},
-    "10": {"10": 5000, "9": 500, "8": 60, "7": 15, "6": 5, "5": 2, "4": 0.5}
-}
-
-
-# ✅ AJOUTER LA FONCTION ICI
-def generate_draw_numbers() -> List[int]:
-    """Génère 20 numéros uniques entre 1 et 80 pour le tirage Keno"""
-    import secrets
-    numbers = list(range(1, 81))
-    for i in range(len(numbers) - 1, 0, -1):
-        j = secrets.randbelow(i + 1)
-        numbers[i], numbers[j] = numbers[j], numbers[i]
-    return sorted(numbers[:20])
 
 # Router et templates
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -103,27 +87,45 @@ def format_number(value):
 
 
 def timeago(value):
-    """Convertit une date en format 'il y a X'"""
+    """Convertit une date (UTC naive en base) en format relatif, passé ou futur."""
     if not value:
         return ""
-    now = datetime.utcnow()
-    diff = now - value
-    if diff.days > 30:
+    if not isinstance(value, datetime):
         return value.strftime("%d/%m/%Y")
-    if diff.days > 0:
-        return f"il y a {diff.days}j"
-    if diff.seconds > 3600:
-        return f"il y a {diff.seconds // 3600}h"
-    if diff.seconds > 60:
-        return f"il y a {diff.seconds // 60}min"
-    return "à l'instant"
+    if value.tzinfo is not None:
+        value = value.astimezone(timezone.utc).replace(tzinfo=None)
+    diff = now_utc() - value
+    future = diff.total_seconds() < 0
+    seconds = int(abs(diff.total_seconds()))
+    days = seconds // 86400
+    if days > 30:
+        return to_haiti(value).strftime("%d/%m/%Y")
+    if days > 0:
+        amount = f"{days}j"
+    elif seconds >= 3600:
+        amount = f"{seconds // 3600}h"
+    elif seconds >= 60:
+        amount = f"{seconds // 60}min"
+    else:
+        return "à l'instant"
+    return f"dans {amount}" if future else f"il y a {amount}"
+
+
+def local_dt(value):
+    """Filtre Jinja : convertit un datetime UTC stocké en heure d'Haïti."""
+    return to_haiti(value)
 
 
 def tojson(value, indent=None):
     """Convertit en JSON (accepte `indent`, comme le filtre `tojson`
     intégré de Jinja, utilisé par plusieurs templates pour un affichage
-    formaté dans un <pre>)."""
-    return json.dumps(value, indent=indent, default=str)
+    formaté dans un <pre>).
+
+    Renvoie du Markup « sûr » (comme le filtre d'origine) : sinon l'auto-échappement
+    transforme les guillemets en &#34; et casse le JavaScript (`const x = {{ y|tojson }}`).
+    Les caractères < > & ' sont encodés en \\uXXXX : sûr dans <script> et dans un attribut."""
+    from jinja2.utils import htmlsafe_json_dumps
+    return htmlsafe_json_dumps(value, dumps=lambda v, **kw: json.dumps(v, indent=indent, default=str, **kw))
 
 
 def qs(request: Request, **overrides) -> str:
@@ -151,6 +153,7 @@ def qs(request: Request, **overrides) -> str:
 # ✅ Ajouter les filtres à l'environnement Jinja2
 templates.env.filters["format_number"] = format_number
 templates.env.filters["timeago"] = timeago
+templates.env.filters["local"] = local_dt
 templates.env.filters["tojson"] = tojson
 templates.env.globals["qs"] = qs
 
@@ -225,7 +228,7 @@ async def admin_login(
     await redis_client.setex(f"admin:refresh:{user.id}", expire, refresh_token)
     
     # Mettre à jour la dernière connexion
-    user.last_login = datetime.utcnow()
+    user.last_login = now_utc()
     user.last_ip = request.client.host if request.client else None
     await db.commit()
     
@@ -306,28 +309,22 @@ async def admin_dashboard(
     db: AsyncSession = Depends(get_db),
     redis_client: redis.Redis = Depends(get_redis)
 ):
+    """Tableau de bord administrateur (page HTML).
+
+    Cette route avait été remplacée par la version JSON ci-dessous, qui
+    s'affichait brute après la connexion. La version JSON reste disponible
+    sur /admin/api/dashboard/summary.
     """
-    Tableau de bord administrateur
-    """
-    # Statistiques
     stats = await _get_dashboard_stats(db)
-    
-    # Dernières transactions
     recent_transactions = await _get_recent_transactions(db, limit=10)
-    
-    # Nouveaux utilisateurs
     recent_users = await _get_recent_users(db, limit=10)
-    
-    # Alertes système
     alerts = await _get_system_alerts(db, redis_client)
-    
-    # Utilisateurs en attente KYC
     pending_kyc = await _get_pending_kyc_count(db)
-    
+
     return templates.TemplateResponse(request, "admin/dashboard.html", {
         "active": "dashboard",
         "admin_name": admin.full_name or admin.email,
-        "admin_role": admin.role,
+        "admin_role": getattr(admin.role, "value", admin.role),
         "version": "1.0.0",
         "stats": stats,
         "recent_transactions": recent_transactions,
@@ -335,6 +332,202 @@ async def admin_dashboard(
         "alerts": alerts,
         "pending_kyc": pending_kyc,
     })
+
+
+@router.get("/api/dashboard/summary")
+async def admin_dashboard_summary_api(
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    """Résumé JSON du tableau de bord (utilisateurs, finances, jeux, tickets)."""
+
+    # ============================================================
+    # PÉRIODE DU JOUR
+    # ============================================================
+
+    today_start, tomorrow_start = today_bounds_utc()
+
+    # ============================================================
+    # UTILISATEURS
+    # ============================================================
+
+    users_result = await db.execute(
+        select(
+            func.count(User.id).label("total"),
+
+            func.count().filter(
+                User.role == UserRole.PLAYER
+            ).label("players"),
+
+            func.count().filter(
+                User.role == UserRole.AGENT
+            ).label("agents"),
+
+            func.count().filter(
+                and_(
+                    User.created_at >= today_start,
+                    User.created_at < tomorrow_start,
+                )
+            ).label("new_today"),
+        ).where(
+            User.is_deleted == False
+        )
+    )
+
+    users_stats = users_result.one()
+
+    # ============================================================
+    # FINANCES
+    # ============================================================
+
+    from app.models.transaction import (
+        Transaction,
+        TransactionType,
+        TransactionStatus,
+    )
+
+    finance_result = await db.execute(
+        select(
+            func.coalesce(
+                func.sum(Transaction.amount).filter(
+                    Transaction.transaction_type
+                    == TransactionType.DEPOSIT
+                ),
+                0,
+            ).label("total_deposits"),
+
+            func.coalesce(
+                func.sum(Transaction.amount).filter(
+                    Transaction.transaction_type
+                    == TransactionType.WITHDRAWAL
+                ),
+                0,
+            ).label("total_withdrawals"),
+
+            func.coalesce(
+                func.sum(Transaction.amount).filter(
+                    Transaction.transaction_type
+                    == TransactionType.BET
+                ),
+                0,
+            ).label("total_bets"),
+
+            func.coalesce(
+                func.sum(Transaction.amount).filter(
+                    Transaction.transaction_type
+                    == TransactionType.WIN
+                ),
+                0,
+            ).label("total_wins"),
+        ).where(
+            Transaction.status == TransactionStatus.COMPLETED
+        )
+    )
+
+    finance_stats = finance_result.one()
+
+    total_deposits = Decimal(
+        str(finance_stats.total_deposits or 0)
+    )
+
+    total_withdrawals = Decimal(
+        str(finance_stats.total_withdrawals or 0)
+    )
+
+    total_bets = Decimal(
+        str(finance_stats.total_bets or 0)
+    )
+
+    total_wins = Decimal(
+        str(finance_stats.total_wins or 0)
+    )
+
+    # Revenu brut des jeux
+    game_revenue = total_bets - total_wins
+
+    # Flux financier net
+    net_cash_flow = total_deposits - total_withdrawals
+
+    # ============================================================
+    # JEUX KENO
+    # ============================================================
+
+    games_result = await db.execute(
+        select(
+            func.count(KenoDraw.id).filter(
+                KenoDraw.status == KenoDrawStatus.PENDING
+            ).label("pending_draws"),
+
+            func.count(KenoDraw.id).filter(
+                KenoDraw.status == KenoDrawStatus.COMPLETED
+            ).label("completed_draws"),
+        )
+    )
+
+    games_stats = games_result.one()
+
+    # ============================================================
+    # TICKETS
+    # ============================================================
+
+    from app.models.ticket import Ticket, TicketStatus
+
+    tickets_result = await db.execute(
+        select(
+            func.count(Ticket.id).label("active_tickets"),
+
+            func.coalesce(
+                func.sum(Ticket.balance),
+                0,
+            ).label("total_balance"),
+        ).where(
+            and_(
+                Ticket.status == TicketStatus.ACTIVE,
+                Ticket.is_deleted == False,
+            )
+        )
+    )
+
+    tickets_stats = tickets_result.one()
+
+    # ============================================================
+    # RESPONSE
+    # ============================================================
+
+    return {
+        "users": {
+            "total": users_stats.total or 0,
+            "players": users_stats.players or 0,
+            "agents": users_stats.agents or 0,
+            "new_today": users_stats.new_today or 0,
+        },
+
+        "finance": {
+            "total_deposits": float(total_deposits),
+            "total_withdrawals": float(total_withdrawals),
+            "total_bets": float(total_bets),
+            "total_wins": float(total_wins),
+
+            # Revenu brut du jeu
+            "net_revenue": float(game_revenue),
+
+            # Flux financier
+            "net_cash_flow": float(net_cash_flow),
+        },
+
+        "games": {
+            "pending_draws": games_stats.pending_draws or 0,
+            "completed_draws": games_stats.completed_draws or 0,
+        },
+
+        "tickets": {
+            "active_tickets": tickets_stats.active_tickets or 0,
+            "total_balance": float(
+                tickets_stats.total_balance or 0
+            ),
+        },
+    }
 
 
 @router.get("/api/dashboard/stats")
@@ -368,13 +561,13 @@ async def admin_dashboard_charts_api(
     par jour sur la période choisie, et répartition Keno / Lucky Wheel sur
     la même période.
     """
-    today = datetime.utcnow().date()
+    today = today_haiti()
     start_date = today - timedelta(days=period - 1)
-    start_datetime = datetime.combine(start_date, datetime.min.time())
+    start_datetime = local_date_start_utc(start_date)
 
     tx_result = await db.execute(
         select(
-            func.date(Transaction.created_at).label("day"),
+            local_day(Transaction.created_at).label("day"),
             Transaction.transaction_type,
             func.coalesce(func.sum(Transaction.amount), 0).label("total")
         )
@@ -387,7 +580,7 @@ async def admin_dashboard_charts_api(
                 )
             )
         )
-        .group_by(func.date(Transaction.created_at), Transaction.transaction_type)
+        .group_by(local_day(Transaction.created_at), Transaction.transaction_type)
     )
 
     by_day = {}
@@ -653,6 +846,15 @@ async def admin_user_detail(
         raise HTTPException(404, "Utilisateur non trouvé")
     
     user, wallet = row
+    if wallet is None:
+        # Les comptes admin (et anciens comptes) n'ont pas de portefeuille :
+        # on affiche des montants à zéro au lieu de planter la page.
+        from types import SimpleNamespace
+        wallet = SimpleNamespace(
+            balance=0, total_deposited=0, total_withdrawn=0, total_won=0,
+            total_bonus_received=0, pending_withdrawals=0, bonus_balance=0,
+            total_bet=0, is_frozen=False, currency="HTG", id=None,
+        )
     
     # Statistiques des paris
     bets_count = await db.execute(
@@ -845,7 +1047,7 @@ async def admin_user_block(
     user.is_locked = True
     user.lock_reason = reason
     user.is_active = False
-    user.locked_at = datetime.utcnow()
+    user.locked_at = now_utc()
     
     await db.commit()
     
@@ -904,8 +1106,8 @@ async def admin_agents(
     db: AsyncSession = Depends(get_db)
 ):
     """Liste des agents"""
-    
-    query = select(User).where(
+
+    query = select(User).options(selectinload(User.bureau)).where(
         User.role.in_([UserRole.AGENT, UserRole.MANAGER]),
         User.is_deleted == False
     )
@@ -928,62 +1130,137 @@ async def admin_agents(
     elif status == "inactive":
         query = query.where(User.is_active == False)
 
+    # ============================================================
     # Pagination
-    total_result = await db.execute(select(func.count()).select_from(query.subquery()))
+    # ============================================================
+
+    total_result = await db.execute(
+        select(func.count()).select_from(query.subquery())
+    )
     total = total_result.scalar() or 0
 
     query = query.order_by(User.created_at.desc())
     query = query.offset((page - 1) * per_page).limit(per_page)
 
     result = await db.execute(query)
-    agents = result.scalars().all()
+    agents = list(result.scalars().all())
 
+    # ============================================================
+    # Total encaissé aujourd'hui par agent
+    # ============================================================
+
+    today = today_haiti()
+    today_start = local_date_start_utc(today)
+    today_end = local_date_end_utc(today)
+
+    agent_ids = [agent.id for agent in agents]
+
+    cash_in_by_agent = {}
+
+    if agent_ids:
+        cash_result = await db.execute(
+            select(
+                CashierSession.agent_id,
+                func.coalesce(
+                    func.sum(CashierSession.cash_in_amount),
+                    0
+                ).label("total_cash_in_today")
+            )
+            .where(
+                CashierSession.agent_id.in_(agent_ids),
+                CashierSession.opened_at >= today_start,
+                CashierSession.opened_at < today_end
+            )
+            .group_by(CashierSession.agent_id)
+        )
+
+        cash_in_by_agent = {
+            row.agent_id: row.total_cash_in_today or Decimal("0")
+            for row in cash_result.all()
+        }
+
+    # Ajouter l'attribut attendu par le template
+    for agent in agents:
+        agent.total_cash_in_today = cash_in_by_agent.get(
+            agent.id,
+            Decimal("0")
+        )
+
+    # ============================================================
     # Bureaux pour le filtre
+    # ============================================================
+
     bureaus_result = await db.execute(
-        select(Bureau).where(Bureau.is_deleted == False)
+        select(Bureau).where(
+            Bureau.is_deleted == False
+        )
     )
     bureaus = bureaus_result.scalars().all()
 
-    # Statistiques rapides (cartes en haut de la page)
+    # ============================================================
+    # Statistiques rapides
+    # ============================================================
+
     stats_result = await db.execute(
         select(
             func.count(User.id).label("total"),
-            func.count(User.id).filter(User.is_active == True).label("active"),
-            func.count(User.id).filter(User.is_active == False).label("pending"),
+            func.count(User.id).filter(
+                User.is_active == True
+            ).label("active"),
+            func.count(User.id).filter(
+                User.is_active == False
+            ).label("pending"),
         ).where(
-            User.role.in_([UserRole.AGENT, UserRole.MANAGER]),
+            User.role.in_([
+                UserRole.AGENT,
+                UserRole.MANAGER
+            ]),
             User.is_deleted == False
         )
     )
+
     stats_row = stats_result.one()
 
-    return templates.TemplateResponse(request, "admin/agents/index.html", {
-        "active": "agents",
-        "stats": {
-            "total": stats_row.total or 0,
-            "active": stats_row.active or 0,
-            "pending": stats_row.pending or 0,
-            "bureaus": len(bureaus),
-        },
-        "filters": {
-            "search": search,
-            "bureau_id": bureau_id,
-            "status": status,
-        },
-        "agents": agents,
-        "bureaus": bureaus,
-        "pagination": {
-            "page": page,
-            "per_page": per_page,
-            "total": total,
-            "pages": (total + per_page - 1) // per_page,
-            "has_prev": page > 1,
-            "has_next": page * per_page < total
-        },
-        "admin_name": admin.full_name or admin.email,
-        "admin_role": admin.role,
-        "version": "1.0.0"
-    })
+    # ============================================================
+    # Template
+    # ============================================================
+
+    return templates.TemplateResponse(
+        request,
+        "admin/agents/index.html",
+        {
+            "active": "agents",
+
+            "stats": {
+                "total": stats_row.total or 0,
+                "active": stats_row.active or 0,
+                "pending": stats_row.pending or 0,
+                "bureaus": len(bureaus),
+            },
+
+            "filters": {
+                "search": search,
+                "bureau_id": bureau_id,
+                "status": status,
+            },
+
+            "agents": agents,
+            "bureaus": bureaus,
+
+            "pagination": {
+                "page": page,
+                "per_page": per_page,
+                "total": total,
+                "pages": (total + per_page - 1) // per_page,
+                "has_prev": page > 1,
+                "has_next": page * per_page < total
+            },
+
+            "admin_name": admin.full_name or admin.email,
+            "admin_role": admin.role,
+            "version": "1.0.0"
+        }
+    )
 
 
 @router.post("/api/agents")
@@ -1187,7 +1464,7 @@ async def admin_agent_create_page(
 async def _get_agent_today_stats(db: AsyncSession, agent_id: str) -> dict:
     """Statistiques du jour pour un agent (paris facilités, tickets créés,
     encaissements/paiements via ses sessions de caisse ouvertes aujourd'hui)."""
-    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = today_bounds_utc()[0]
 
     bets_result = await db.execute(
         select(func.count(KenoBet.id)).where(
@@ -1263,7 +1540,9 @@ async def admin_agent_detail(
 ):
     """Détails d'un agent"""
     result = await db.execute(
-        select(User).where(User.id == agent_id, User.is_deleted == False)
+        select(User)
+        .options(selectinload(User.bureau))  # le template lit agent.bureau (pas de lazy-load en async)
+        .where(User.id == agent_id, User.is_deleted == False)
     )
     agent = result.scalar_one_or_none()
 
@@ -1557,7 +1836,7 @@ async def admin_bureau_create_page(
 
 async def _get_bureau_stats(db: AsyncSession, bureau_id: str) -> dict:
     """Statistiques d'un bureau : agents rattachés, tickets actifs, paris du jour."""
-    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = today_bounds_utc()[0]
 
     agents_result = await db.execute(
         select(func.count(User.id)).where(
@@ -1668,71 +1947,70 @@ async def admin_keno_config(
     db: AsyncSession = Depends(get_db),
     redis_client: redis.Redis = Depends(get_redis)
 ):
-    """Configuration du jeu Keno"""
-    
-    # Récupérer la configuration
-    config = {
-        "draw_interval": await redis_client.get("config:keno:draw_interval") or 5,
-        "start_hour": await redis_client.get("config:keno:start_hour") or 8,
-        "end_hour": await redis_client.get("config:keno:end_hour") or 23,
-        "min_bet": await redis_client.get("config:keno:min_bet") or 10,
-        "max_bet": await redis_client.get("config:keno:max_bet") or 100000,
-        "rtp": await redis_client.get("config:keno:rtp") or 88.4
-    }
-    
-    # Statistiques Keno
-    stats = await _get_keno_stats(db)
+    """Configuration du Keno (modifiable à tout moment, appliquée au ticket suivant)."""
+    from app.services import keno_engine
 
-    # Jackpot
-    jackpot = {
-        "current": await redis_client.get("config:keno:jackpot") or 0,
-        "threshold": await redis_client.get("config:keno:jackpot_threshold") or 50000,
-        "updated_at": datetime.utcnow()
-    }
-
-    # Table de paiement
-    raw_paytable = await redis_client.get("config:keno:paytable")
-    paytable = json.loads(raw_paytable) if raw_paytable else DEFAULT_KENO_PAYTABLE
-
+    config = await KenoService(db, redis_client).get_config()
     return templates.TemplateResponse(request, "admin/games/keno/config.html", {
         "active": "keno",
         "config": config,
-        "stats": stats,
-        "jackpot": jackpot,
-        "paytable": paytable,
+        "public": keno_engine.public_config(config),
+        "default_paytable": keno_engine.DEFAULT_CONFIG["paytable"],
+        "stats": await _get_keno_stats(db),
         "admin_name": admin.full_name or admin.email,
         "admin_role": admin.role,
         "version": "1.0.0"
     })
 
 
-@router.post("/api/keno/config")
+@router.get("/api/keno/config")
+async def admin_keno_config_get(
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis)
+):
+    from app.services import keno_engine
+
+    config = await KenoService(db, redis_client).get_config()
+    return {"config": config, "public": keno_engine.public_config(config)}
+
+
+@router.put("/api/keno/config")
 async def admin_keno_config_save(
-    config: AdminKenoConfig,
+    payload: Dict = Body(...),
     admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
     redis_client: redis.Redis = Depends(get_redis)
 ):
-    """Sauvegarde de la configuration Keno"""
-    
-    await redis_client.setex("config:keno:draw_interval", 86400, config.draw_interval)
-    await redis_client.setex("config:keno:start_hour", 86400, config.start_hour)
-    await redis_client.setex("config:keno:end_hour", 86400, config.end_hour)
-    await redis_client.setex("config:keno:min_bet", 86400, config.min_bet)
-    await redis_client.setex("config:keno:max_bet", 86400, config.max_bet)
-    
-    return {"success": True, "message": "Configuration Keno sauvegardée"}
+    """Enregistre la configuration (validée par le serveur : limites, mises,
+    table de paiement, taux de redistribution maximum). S'applique au ticket suivant."""
+    from app.services import keno_engine
+
+    config = await KenoService(db, redis_client).save_config(payload, admin_id=admin.id)
+    await db.commit()
+    return {"success": True, "message": "Configuration Keno enregistrée", "config": config,
+            "public": keno_engine.public_config(config)}
 
 
-@router.post("/api/keno/jackpot/reset")
-async def admin_keno_jackpot_reset(
+@router.post("/api/keno/paytable/preview")
+async def admin_keno_paytable_preview(
+    payload: Dict = Body(...),
     admin: User = Depends(get_current_admin),
-    redis_client: redis.Redis = Depends(get_redis)
 ):
-    """Réinitialisation du jackpot Keno"""
-    
-    await redis_client.setex("config:keno:jackpot", 86400, 0)
+    """Calcule le taux de redistribution d'une table (sans l'enregistrer) ou
+    l'ajuste à un taux cible (`target_rtp`, en %)."""
+    from app.services import keno_engine
 
-    return {"success": True, "message": "Jackpot réinitialisé"}
+    try:
+        table = keno_engine.parse_paytable(payload.get("paytable"))
+        if payload.get("target_rtp") not in (None, ""):
+            table = keno_engine.scale_paytable(table, float(payload["target_rtp"]))
+    except (keno_engine.KenoConfigError, ValueError, TypeError) as e:
+        raise ValidationException(str(e) or "Table de paiement invalide")
+    return {
+        "paytable": {str(sp): {str(h): str(m) for h, m in sorted(row.items())} for sp, row in sorted(table.items())},
+        "rtp": {str(k): v for k, v in keno_engine.rtp_table(table).items()},
+    }
 
 
 @router.get("/games/keno/draws", response_class=HTMLResponse)
@@ -1743,7 +2021,8 @@ async def admin_keno_draws_page(
     status: Optional[str] = None,
     period: Optional[str] = None,
     admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
 ):
     """Liste des tirages Keno"""
     query = select(KenoDraw)
@@ -1751,9 +2030,9 @@ async def admin_keno_draws_page(
     if status:
         query = query.where(KenoDraw.status == status)
     if period:
-        now = datetime.utcnow()
+        now = now_utc()
         if period == "today":
-            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            start = today_bounds_utc()[0]
         elif period == "week":
             start = now - timedelta(days=7)
         elif period == "month":
@@ -1770,7 +2049,16 @@ async def admin_keno_draws_page(
     result = await db.execute(query)
     draws = result.scalars().all()
 
-    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    # Tirages en attente : les totaux ne sont écrits qu'au règlement -> valeurs en direct
+    pending_ids = [d.id for d in draws if d.status == KenoDrawStatus.PENDING]
+    if pending_ids:
+        live = await KenoService(db, redis_client).live_totals(pending_ids)
+        for d in draws:
+            if d.id in live:
+                set_committed_value(d, "total_bets", live[d.id]["total_bets"])
+                set_committed_value(d, "total_amount", live[d.id]["total_amount"])
+
+    today_start = today_bounds_utc()[0]
     stats_result = await db.execute(
         select(
             func.count(KenoDraw.id).filter(KenoDraw.status == KenoDrawStatus.PENDING).label("pending"),
@@ -1782,7 +2070,7 @@ async def admin_keno_draws_page(
 
     next_draw_result = await db.execute(
         select(KenoDraw.draw_time)
-        .where(KenoDraw.status == KenoDrawStatus.PENDING, KenoDraw.draw_time >= datetime.utcnow())
+        .where(KenoDraw.status == KenoDrawStatus.PENDING, KenoDraw.mode == "scheduled", KenoDraw.draw_time >= now_utc())
         .order_by(KenoDraw.draw_time.asc())
         .limit(1)
     )
@@ -1822,12 +2110,12 @@ async def admin_keno_statistics_page(
 ):
     """Statistiques détaillées du jeu Keno"""
     if not end_date:
-        end_date = datetime.utcnow().date().isoformat()
+        end_date = today_haiti().isoformat()
     if not start_date:
-        start_date = (datetime.utcnow() - timedelta(days=30)).date().isoformat()
+        start_date = (today_haiti() - timedelta(days=30)).isoformat()
 
-    start = datetime.strptime(start_date, "%Y-%m-%d")
-    end = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+    start = local_date_start_utc(start_date)
+    end = local_date_end_utc(end_date)
 
     stats_result = await db.execute(
         select(
@@ -1879,15 +2167,15 @@ async def admin_keno_statistics_page(
     # Évolution quotidienne
     daily_result = await db.execute(
         select(
-            func.date_trunc('day', KenoBet.placed_at).label("day"),
+            local_day(KenoBet.placed_at).label("day"),
             func.count(func.distinct(KenoBet.draw_id)).label("draws"),
             func.count(KenoBet.id).label("bets"),
             func.coalesce(func.sum(KenoBet.stake), 0).label("volume"),
             func.coalesce(func.sum(KenoBet.winnings), 0).label("payout"),
         )
         .where(KenoBet.placed_at >= start, KenoBet.placed_at < end)
-        .group_by(func.date_trunc('day', KenoBet.placed_at))
-        .order_by(func.date_trunc('day', KenoBet.placed_at))
+        .group_by(local_day(KenoBet.placed_at))
+        .order_by(local_day(KenoBet.placed_at))
     )
     daily_rows = daily_result.all()
     daily_data = []
@@ -1974,12 +2262,12 @@ async def admin_lucky_statistics_page(
 ):
     """Statistiques détaillées du jeu Lucky Wheel"""
     if not end_date:
-        end_date = datetime.utcnow().date().isoformat()
+        end_date = today_haiti().isoformat()
     if not start_date:
-        start_date = (datetime.utcnow() - timedelta(days=30)).date().isoformat()
+        start_date = (today_haiti() - timedelta(days=30)).isoformat()
 
-    start = datetime.strptime(start_date, "%Y-%m-%d")
-    end = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+    start = local_date_start_utc(start_date)
+    end = local_date_end_utc(end_date)
 
     stats_result = await db.execute(
         select(
@@ -2047,15 +2335,15 @@ async def admin_lucky_statistics_page(
     # Évolution quotidienne
     daily_result = await db.execute(
         select(
-            func.date_trunc('day', LuckyPlay.played_at).label("day"),
+            local_day(LuckyPlay.played_at).label("day"),
             func.count(LuckyPlay.id).label("plays"),
             func.coalesce(func.sum(LuckyPlay.stake), 0).label("stake"),
             func.coalesce(func.sum(LuckyPlay.winnings), 0).label("wins"),
             func.coalesce(func.max(LuckyPlay.multiplier), 0).label("max_multiplier"),
         )
         .where(LuckyPlay.played_at >= start, LuckyPlay.played_at < end)
-        .group_by(func.date_trunc('day', LuckyPlay.played_at))
-        .order_by(func.date_trunc('day', LuckyPlay.played_at))
+        .group_by(local_day(LuckyPlay.played_at))
+        .order_by(local_day(LuckyPlay.played_at))
     )
     daily_rows = daily_result.all()
     daily_data = []
@@ -2186,10 +2474,10 @@ async def admin_transactions(
     if max_amount is not None:
         query = query.where(Transaction.amount <= max_amount)
     if start_date:
-        start = datetime.strptime(start_date, "%Y-%m-%d")
+        start = local_date_start_utc(start_date)
         query = query.where(Transaction.created_at >= start)
     if end_date:
-        end = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+        end = local_date_end_utc(end_date)
         query = query.where(Transaction.created_at < end)
 
     # Pagination
@@ -2212,7 +2500,7 @@ async def admin_transactions(
             tx.user_name = user.full_name if user else None
 
     # Statistiques rapides
-    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = today_bounds_utc()[0]
     stats_result = await db.execute(
         select(
             func.coalesce(func.sum(Transaction.amount).filter(Transaction.status == TransactionStatus.COMPLETED), 0).label("total_volume"),
@@ -2319,7 +2607,7 @@ async def admin_tickets(
 ):
     """Gestion des tickets"""
 
-    query = select(Ticket)
+    query = select(Ticket).options(selectinload(Ticket.bureau), selectinload(Ticket.agent))
 
     if status:
         query = query.where(Ticket.status == status)
@@ -2340,10 +2628,10 @@ async def admin_tickets(
     if max_amount is not None:
         query = query.where(Ticket.initial_amount <= max_amount)
     if start_date:
-        start = datetime.strptime(start_date, "%Y-%m-%d")
+        start = local_date_start_utc(start_date)
         query = query.where(Ticket.created_at >= start)
     if end_date:
-        end = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+        end = local_date_end_utc(end_date)
         query = query.where(Ticket.created_at < end)
 
     # Pagination
@@ -2365,7 +2653,7 @@ async def admin_tickets(
     agents = agents_result.scalars().all()
 
     # Statistiques rapides
-    soon = datetime.utcnow() + timedelta(days=2)
+    soon = now_utc() + timedelta(days=2)
     stats_result = await db.execute(
         select(
             func.count(Ticket.id).label("total"),
@@ -2414,7 +2702,7 @@ async def admin_tickets(
         "admin_name": admin.full_name or admin.email,
         "admin_role": admin.role,
         "version": "1.0.0",
-        "now": datetime.utcnow(),
+        "now": now_utc(),
     })
 
 
@@ -2427,7 +2715,7 @@ async def admin_ticket_detail_page(
 ):
     """Détails d'un ticket"""
     result = await db.execute(
-        select(Ticket).where(Ticket.id == ticket_id)
+        select(Ticket).options(selectinload(Ticket.bureau), selectinload(Ticket.agent)).where(Ticket.id == ticket_id)
     )
     ticket = result.scalar_one_or_none()
 
@@ -2459,7 +2747,7 @@ async def admin_ticket_detail_page(
         "ticket": ticket,
         "transactions": transactions,
         "bets": bets,
-        "now": datetime.utcnow(),
+        "now": now_utc(),
         "admin_name": admin.full_name or admin.email,
         "admin_role": admin.role,
         "version": "1.0.0"
@@ -2480,12 +2768,12 @@ async def admin_reports_financial(
     
     # Période par défaut : 30 jours
     if not end_date:
-        end_date = datetime.utcnow().date().isoformat()
+        end_date = today_haiti().isoformat()
     if not start_date:
-        start_date = (datetime.utcnow() - timedelta(days=30)).date().isoformat()
+        start_date = (today_haiti() - timedelta(days=30)).isoformat()
     
-    start = datetime.strptime(start_date, "%Y-%m-%d")
-    end = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+    start = local_date_start_utc(start_date)
+    end = local_date_end_utc(end_date)
     
     # Statistiques
     stats = await _get_financial_stats(db, start, end)
@@ -2534,7 +2822,7 @@ async def admin_audit_logs(
 ):
     """Logs d'audit pour la conformité LEH"""
 
-    query = select(AuditLog).order_by(AuditLog.created_at.desc())
+    query = select(AuditLog).options(selectinload(AuditLog.user)).order_by(AuditLog.created_at.desc())
 
     if search:
         query = query.where(
@@ -2554,10 +2842,10 @@ async def admin_audit_logs(
     if leh_exported in ("true", "false"):
         query = query.where(AuditLog.leh_exported == (leh_exported == "true"))
     if start_date:
-        start = datetime.strptime(start_date, "%Y-%m-%d")
+        start = local_date_start_utc(start_date)
         query = query.where(AuditLog.created_at >= start)
     if end_date:
-        end = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+        end = local_date_end_utc(end_date)
         query = query.where(AuditLog.created_at < end)
 
     # Pagination
@@ -2570,7 +2858,7 @@ async def admin_audit_logs(
     logs = result.scalars().all()
 
     # Statistiques rapides
-    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = today_bounds_utc()[0]
     stats_result = await db.execute(
         select(
             func.count(AuditLog.id).label("total"),
@@ -2630,8 +2918,8 @@ async def admin_audit_export(
 ):
     """Export des logs d'audit pour la LEH"""
     
-    start = datetime.strptime(start_date, "%Y-%m-%d")
-    end = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+    start = local_date_start_utc(start_date)
+    end = local_date_end_utc(end_date)
     
     result = await db.execute(
         select(AuditLog)
@@ -2648,7 +2936,7 @@ async def admin_audit_export(
     # Marquer comme exportés
     for log in logs:
         log.leh_exported = True
-        log.leh_exported_at = datetime.utcnow()
+        log.leh_exported_at = now_utc()
     
     await db.commit()
     
@@ -2952,7 +3240,7 @@ async def admin_user_kyc_verify(
         raise HTTPException(404, "Utilisateur non trouvé")
     
     user.kyc_status = KYCStatus.VERIFIED
-    user.kyc_verified_at = datetime.utcnow()
+    user.kyc_verified_at = now_utc()
     user.kyc_verified_by = admin.id
 
     audit = AuditLog(
@@ -3106,7 +3394,7 @@ async def admin_user_credit(
         amount=Decimal(str(amount)),
         transaction_type="ADJUSTMENT",
         payment_method="cash",
-        reference=f"ADJ-CREDIT-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
+        reference=f"ADJ-CREDIT-{now_utc().strftime('%Y%m%d%H%M%S')}",
     )
     transaction.created_by = admin.id
 
@@ -3145,7 +3433,7 @@ async def admin_user_debit(
             amount=Decimal(str(amount)),
             transaction_type="ADJUSTMENT",
             payment_method="cash",
-            reference=f"ADJ-DEBIT-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
+            reference=f"ADJ-DEBIT-{now_utc().strftime('%Y%m%d%H%M%S')}",
         )
     except InsufficientBalanceException:
         raise HTTPException(400, "Solde insuffisant")
@@ -3302,6 +3590,7 @@ async def admin_bureau_tickets(
     """Voir les tickets d'un bureau"""
     result = await db.execute(
         select(Ticket)
+        .options(selectinload(Ticket.agent))  # lu par le template
         .where(Ticket.bureau_id == bureau_id)
         .order_by(Ticket.created_at.desc())
         .limit(100)
@@ -3602,8 +3891,8 @@ async def _get_active_sessions(redis_client: redis.Redis, db: AsyncSession) -> l
             "id": key.replace("session:", "", 1) if isinstance(key, str) else key,
             "user_name": user_name or "Utilisateur inconnu",
             "ip_address": data.get("ip_address", "-"),
-            "created_at": datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.utcnow(),
-            "last_activity": datetime.fromisoformat(data["last_activity"]) if data.get("last_activity") else datetime.utcnow(),
+            "created_at": datetime.fromisoformat(data["created_at"]) if data.get("created_at") else now_utc(),
+            "last_activity": datetime.fromisoformat(data["last_activity"]) if data.get("last_activity") else now_utc(),
         })
     return sessions
 
@@ -3756,7 +4045,7 @@ async def admin_keno_trigger_draw(
     result = await keno_service.settle_bets_for_draw(draw.id)
     
     # Diffuser via WebSocket
-    await broadcast_draw_result(result)
+    await broadcast_draw_result({"type": "keno_draw", **{k: v for k, v in result.items() if k != "winner_bet_ids"}})
     
     return {"success": True, "message": f"Tirage #{draw.draw_number} déclenché", "draw_id": draw.id}
 
@@ -3768,38 +4057,20 @@ async def admin_keno_trigger_specific_draw(
     db: AsyncSession = Depends(get_db),
     redis_client: redis.Redis = Depends(get_redis)
 ):
-    """Déclenche un tirage Keno spécifique"""
+    """Tire maintenant un tirage en attente et règle ses paris (même
+    règlement que le worker : verrou, paiement unique par pari)."""
     from app.services.keno_service import KenoService
     from app.api.websockets.manager import broadcast_draw_result
-    
-    result = await db.execute(
-        select(KenoDraw).where(KenoDraw.id == draw_id)
-    )
-    draw = result.scalar_one_or_none()
-    
-    if not draw:
+
+    try:
+        result = await KenoService(db, redis_client).execute_draw(draw_id)
+    except NotFoundException:
         raise HTTPException(404, "Tirage non trouvé")
-    
-    if draw.status != KenoDrawStatus.PENDING:
+    except GameException:
         raise HTTPException(400, "Ce tirage n'est plus en attente")
-    
-    keno_service = KenoService(db, redis_client)
-    
-    # Générer les numéros
-    drawn_numbers = generate_draw_numbers()
-    draw.numbers = drawn_numbers
-    draw.status = KenoDrawStatus.COMPLETED
-    draw.closed_at = datetime.utcnow()
-    
-    await db.flush()
-    
-    # Régler les paris
-    result = await keno_service.settle_bets_for_draw(draw.id)
-    
-    # Diffuser via WebSocket
-    await broadcast_draw_result(result)
-    
-    return {"success": True, "message": f"Tirage #{draw.draw_number} déclenché"}
+
+    await broadcast_draw_result({"type": "keno_draw", **{k: v for k, v in result.items() if k != "winner_bet_ids"}})
+    return {"success": True, "message": f"Tirage #{result['draw_number']} déclenché"}
 
 
 @router.post("/api/keno/draws/schedule")
@@ -3809,86 +4080,45 @@ async def admin_keno_schedule_draws(
     redis_client: redis.Redis = Depends(get_redis)
 ):
     """Planifie les tirages Keno pour les prochaines 24h"""
-    from app.services.draw_scheduler import schedule_draws
-    
-    await schedule_draws()
-    
-    return {"success": True, "message": "Tirages planifiés avec succès"}
+    from app.services.keno_service import KenoService
+
+    created = await KenoService(db, redis_client).schedule_draws(hours=24)
+    await db.commit()
+    return {"success": True, "message": f"{created} tirage(s) planifié(s)"}
 
 
 @router.post("/api/keno/draws/cancel-pending")
 async def admin_keno_cancel_pending_draws(
     admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis)
 ):
-    """Annule tous les tirages Keno en attente"""
-    result = await db.execute(
-        update(KenoDraw)
-        .where(KenoDraw.status == KenoDrawStatus.PENDING)
-        .values(status=KenoDrawStatus.CANCELLED, closed_at=datetime.utcnow(), closed_by="system")
-    )
+    """Annule les tirages Keno en attente qui n'ont AUCUN pari (les autres
+    doivent être tirés : les mises ne seraient pas rendues)."""
+    from app.services.keno_service import KenoService
+
+    count = await KenoService(db, redis_client).cancel_pending_draws_without_bets(by=admin.id)
     await db.commit()
-    
-    return {"success": True, "message": f"{result.rowcount} tirages annulés"}
+    return {"success": True, "message": f"{count} tirage(s) sans pari annulé(s)"}
 
 
 @router.post("/api/keno/draws/{draw_id}/cancel")
 async def admin_keno_cancel_draw(
     draw_id: str,
     admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis)
 ):
-    """Annule un tirage Keno spécifique"""
-    result = await db.execute(
-        select(KenoDraw).where(KenoDraw.id == draw_id)
-    )
-    draw = result.scalar_one_or_none()
-    
-    if not draw:
+    """Annule un tirage Keno en attente et rembourse ses paris."""
+    try:
+        result = await KenoService(db, redis_client).cancel_draw(draw_id, by=admin.id, reason="Annulation admin")
+    except NotFoundException:
         raise HTTPException(404, "Tirage non trouvé")
-    
-    if draw.status != KenoDrawStatus.PENDING:
-        raise HTTPException(400, "Ce tirage ne peut pas être annulé")
-    
-    draw.status = KenoDrawStatus.CANCELLED
-    draw.closed_at = datetime.utcnow()
-    draw.closed_by = admin.id
-    
+    except GameException as e:
+        raise HTTPException(400, e.detail)
     await db.commit()
-    
-    return {"success": True, "message": f"Tirage #{draw.draw_number} annulé"}
-
-
-@router.post("/api/keno/paytable")
-async def admin_keno_paytable_update(
-    paytable: Dict = Body(...),
-    admin: User = Depends(get_current_admin),
-    redis_client: redis.Redis = Depends(get_redis)
-):
-    """Met à jour la table de paiement Keno"""
-    await redis_client.setex("config:keno:paytable", 86400, json.dumps(paytable))
-    return {"success": True, "message": "Table de paiement mise à jour"}
-
-
-@router.post("/api/keno/paytable/reset")
-async def admin_keno_paytable_reset(
-    admin: User = Depends(get_current_admin),
-    redis_client: redis.Redis = Depends(get_redis)
-):
-    """Réinitialise la table de paiement Keno"""
-    await redis_client.setex("config:keno:paytable", 86400, json.dumps(DEFAULT_KENO_PAYTABLE))
-    return {"success": True, "message": "Table de paiement réinitialisée"}
-
-
-@router.post("/api/keno/jackpot/threshold")
-async def admin_keno_jackpot_threshold(
-    threshold: int = Body(...),
-    admin: User = Depends(get_current_admin),
-    redis_client: redis.Redis = Depends(get_redis)
-):
-    """Met à jour le seuil du jackpot Keno"""
-    await redis_client.setex("config:keno:jackpot_threshold", 86400, threshold)
-    return {"success": True, "message": "Seuil du jackpot mis à jour"}
+    return {"success": True, "message": f"Tirage #{result['draw_number']} annulé : {result['refunded_bets']} pari(s) remboursé(s)",
+            **result}
 
 
 # ==================== LUCKY ====================
@@ -3970,8 +4200,8 @@ async def admin_promotions_statistics(
         select(func.count(Promotion.id))
         .where(
             Promotion.status == PromotionStatus.ACTIVE,
-            Promotion.start_date <= datetime.utcnow(),
-            Promotion.end_date >= datetime.utcnow()
+            Promotion.start_date <= now_utc(),
+            Promotion.end_date >= now_utc()
         )
     )
     active = active_result.scalar() or 0
@@ -3981,7 +4211,7 @@ async def admin_promotions_statistics(
         select(func.count(Promotion.id))
         .where(
             Promotion.status == PromotionStatus.ACTIVE,
-            Promotion.start_date > datetime.utcnow()
+            Promotion.start_date > now_utc()
         )
     )
     pending = pending_result.scalar() or 0
@@ -3992,7 +4222,7 @@ async def admin_promotions_statistics(
         .where(
             or_(
                 Promotion.status == PromotionStatus.EXPIRED,
-                Promotion.end_date < datetime.utcnow()
+                Promotion.end_date < now_utc()
             )
         )
     )
@@ -4081,8 +4311,8 @@ async def admin_audit_statistics(
     db: AsyncSession = Depends(get_db)
 ):
     """Statistiques des logs d'audit"""
-    today = datetime.utcnow().date()
-    today_start = datetime.combine(today, datetime.min.time())
+    today = today_haiti()
+    today_start = local_date_start_utc(today)
     
     # Total
     total_result = await db.execute(
@@ -4137,7 +4367,7 @@ async def admin_audit_log_detail(
 ):
     """Détails d'un log d'audit"""
     result = await db.execute(
-        select(AuditLog).where(AuditLog.id == log_id)
+        select(AuditLog).options(selectinload(AuditLog.user)).where(AuditLog.id == log_id)
     )
     log = result.scalar_one_or_none()
     
@@ -4175,7 +4405,7 @@ async def admin_audit_log_leh_export(
 ):
     """Marque un log comme exporté vers la LEH"""
     result = await db.execute(
-        select(AuditLog).where(AuditLog.id == log_id)
+        select(AuditLog).options(selectinload(AuditLog.user)).where(AuditLog.id == log_id)
     )
     log = result.scalar_one_or_none()
     
@@ -4183,7 +4413,7 @@ async def admin_audit_log_leh_export(
         raise HTTPException(404, "Log non trouvé")
     
     log.leh_exported = True
-    log.leh_exported_at = datetime.utcnow()
+    log.leh_exported_at = now_utc()
     
     await db.commit()
     
@@ -4200,7 +4430,7 @@ async def admin_audit_logs_bulk_leh_export(
     result = await db.execute(
         update(AuditLog)
         .where(AuditLog.id.in_(log_ids))
-        .values(leh_exported=True, leh_exported_at=datetime.utcnow())
+        .values(leh_exported=True, leh_exported_at=now_utc())
     )
     await db.commit()
     
@@ -4226,10 +4456,10 @@ async def admin_audit_export_csv(
     if params.get('action'):
         query = query.where(AuditLog.action == params['action'])
     if params.get('start_date'):
-        start = datetime.strptime(params['start_date'], "%Y-%m-%d")
+        start = local_date_start_utc(params['start_date'])
         query = query.where(AuditLog.created_at >= start)
     if params.get('end_date'):
-        end = datetime.strptime(params['end_date'], "%Y-%m-%d") + timedelta(days=1)
+        end = local_date_end_utc(params['end_date'])
         query = query.where(AuditLog.created_at < end)
     
     result = await db.execute(query.limit(10000))
@@ -4261,7 +4491,7 @@ async def admin_audit_export_csv(
         content=output.getvalue(),
         media_type="text/csv",
         headers={
-            "Content-Disposition": f"attachment; filename=audit_logs_{datetime.utcnow().strftime('%Y%m%d')}.csv"
+            "Content-Disposition": f"attachment; filename=audit_logs_{now_haiti().strftime('%Y%m%d')}.csv"
         }
     )
 
@@ -4307,19 +4537,16 @@ async def admin_reports_leh_generate(
     db: AsyncSession = Depends(get_db)
 ):
     """Génère un rapport LEH"""
-    import json
-    from datetime import datetime
-    
     params = dict(request.query_params)
-    start_date = params.get('start_date', datetime.utcnow().strftime('%Y-%m-%d'))
-    end_date = params.get('end_date', datetime.utcnow().strftime('%Y-%m-%d'))
+    start_date = params.get('start_date', today_haiti().strftime('%Y-%m-%d'))
+    end_date = params.get('end_date', today_haiti().strftime('%Y-%m-%d'))
     
     # Générer le rapport
     report = {
         "header": {
             "operator": "Parier Keno Haïti",
             "period": {"start": start_date, "end": end_date},
-            "generated_at": datetime.utcnow().isoformat()
+            "generated_at": now_utc().isoformat()
         },
         "summary": {
             "total_users": 0,
@@ -4388,7 +4615,7 @@ async def admin_tickets_statistics(
     db: AsyncSession = Depends(get_db)
 ):
     """Statistiques des tickets"""
-    now = datetime.utcnow()
+    now = now_utc()
     
     # Total
     total_result = await db.execute(
@@ -4557,7 +4784,7 @@ async def admin_ticket_payout(
     # Marquer comme payé
     amount = ticket.balance
     ticket.status = TicketStatus.PAID
-    ticket.paid_at = datetime.utcnow()
+    ticket.paid_at = now_utc()
     ticket.paid_by_agent = admin.id
     ticket.balance = 0
     
@@ -4642,7 +4869,7 @@ async def admin_tickets_bulk_payout(
         if ticket.balance > 0:
             total_amount += ticket.balance
             ticket.status = TicketStatus.PAID
-            ticket.paid_at = datetime.utcnow()
+            ticket.paid_at = now_utc()
             ticket.paid_by_agent = admin.id
             ticket.balance = 0
             
@@ -4713,10 +4940,10 @@ async def admin_tickets_export(
     if params.get('status'):
         query = query.where(Ticket.status == params['status'])
     if params.get('start_date'):
-        start = datetime.strptime(params['start_date'], "%Y-%m-%d")
+        start = local_date_start_utc(params['start_date'])
         query = query.where(Ticket.created_at >= start)
     if params.get('end_date'):
-        end = datetime.strptime(params['end_date'], "%Y-%m-%d") + timedelta(days=1)
+        end = local_date_end_utc(params['end_date'])
         query = query.where(Ticket.created_at < end)
     
     result = await db.execute(query.limit(10000))
@@ -4748,7 +4975,7 @@ async def admin_tickets_export(
         content=output.getvalue(),
         media_type="text/csv",
         headers={
-            "Content-Disposition": f"attachment; filename=tickets_{datetime.utcnow().strftime('%Y%m%d')}.csv"
+            "Content-Disposition": f"attachment; filename=tickets_{now_haiti().strftime('%Y%m%d')}.csv"
         }
     )
 
@@ -4882,8 +5109,8 @@ async def admin_transactions_statistics(
     db: AsyncSession = Depends(get_db)
 ):
     """Statistiques des transactions"""
-    today = datetime.utcnow().date()
-    today_start = datetime.combine(today, datetime.min.time())
+    today = today_haiti()
+    today_start = local_date_start_utc(today)
     
     # Total par type
     result = await db.execute(
@@ -4940,10 +5167,10 @@ async def admin_transactions_export(
     if params.get('status'):
         query = query.where(Transaction.status == params['status'])
     if params.get('start_date'):
-        start = datetime.strptime(params['start_date'], "%Y-%m-%d")
+        start = local_date_start_utc(params['start_date'])
         query = query.where(Transaction.created_at >= start)
     if params.get('end_date'):
-        end = datetime.strptime(params['end_date'], "%Y-%m-%d") + timedelta(days=1)
+        end = local_date_end_utc(params['end_date'])
         query = query.where(Transaction.created_at < end)
     
     result = await db.execute(query.limit(10000))
@@ -4974,17 +5201,16 @@ async def admin_transactions_export(
         content=output.getvalue(),
         media_type="text/csv",
         headers={
-            "Content-Disposition": f"attachment; filename=transactions_{datetime.utcnow().strftime('%Y%m%d')}.csv"
+            "Content-Disposition": f"attachment; filename=transactions_{now_haiti().strftime('%Y%m%d')}.csv"
         }
     )
 
 # ==================== FONCTIONS AUXILIAIRES ====================
 
 async def _get_dashboard_stats(db: AsyncSession) -> dict:
-    """Récupère les statistiques du dashboard"""
-    today = datetime.utcnow().date()
-    today_start = datetime.combine(today, datetime.min.time())
-    
+    """Statistiques du tableau de bord (journée = jour civil d'Haïti)."""
+    today_start, tomorrow_start = today_bounds_utc()
+
     # Utilisateurs
     users_result = await db.execute(
         select(
@@ -4993,32 +5219,47 @@ async def _get_dashboard_stats(db: AsyncSession) -> dict:
         ).where(User.is_deleted == False)
     )
     users = users_result.one()
-    
-    # Transactions
+
+    # Transactions (total et du jour)
+    is_today = and_(Transaction.created_at >= today_start, Transaction.created_at < tomorrow_start)
+    volume_types = [TransactionType.DEPOSIT, TransactionType.WITHDRAWAL, TransactionType.WIN]
     tx_result = await db.execute(
         select(
-            func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type == TransactionType.DEPOSIT), 0).label("deposits"),
-            func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type == TransactionType.WITHDRAWAL), 0).label("withdrawals"),
-            func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type == TransactionType.WIN), 0).label("wins")
+            func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type.in_(volume_types)), 0).label("volume"),
+            func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type == TransactionType.WIN), 0).label("wins"),
+            func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type.in_(volume_types), is_today), 0).label("today_volume"),
+            func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type == TransactionType.WIN, is_today), 0).label("today_wins"),
         )
         .where(Transaction.status == TransactionStatus.COMPLETED)
     )
     tx = tx_result.one()
-    
-    # Paris aujourd'hui
-    bets_result = await db.execute(
-        select(func.count(KenoBet.id))
-        .where(KenoBet.placed_at >= today_start)
-    )
-    today_bets = bets_result.scalar() or 0
-    
-    # Tickets actifs
+
+    # Paris du jour, tous jeux confondus (Keno, Lucky Wheel, Horse Races)
+    from app.models.game import GameBet
+
+    today_bets = 0
+    for model, column in ((KenoBet, KenoBet.placed_at), (LuckyPlay, LuckyPlay.played_at), (GameBet, GameBet.placed_at)):
+        try:
+            # SAVEPOINT : si une table manque (ex. migration Horse Races pas
+            # encore appliquée), seul ce comptage est ignoré, la page s'affiche.
+            async with db.begin_nested():
+                result = await db.execute(
+                    select(func.count(model.id)).where(column >= today_start, column < tomorrow_start)
+                )
+                today_bets += result.scalar() or 0
+        except DBAPIError as e:  # table absente (Postgres : ProgrammingError, SQLite : OperationalError)
+            logger.warning(f"Tableau de bord : table {model.__tablename__} indisponible ({e.orig.__class__.__name__})")
+
+    # Tickets actifs et tickets qui expirent dans les 48 h
+    now = now_utc()
     tickets_result = await db.execute(
-        select(func.count(Ticket.id))
-        .where(Ticket.status == TicketStatus.ACTIVE)
+        select(
+            func.count(Ticket.id).label("active"),
+            func.count(Ticket.id).filter(Ticket.expires_at <= now + timedelta(hours=48)).label("expiring_soon"),
+        ).where(Ticket.status == TicketStatus.ACTIVE, Ticket.expires_at > now)
     )
-    active_tickets = tickets_result.scalar() or 0
-    
+    tickets = tickets_result.one()
+
     # Bureaux
     bureaus_result = await db.execute(
         select(
@@ -5027,24 +5268,24 @@ async def _get_dashboard_stats(db: AsyncSession) -> dict:
         ).where(Bureau.is_deleted == False)
     )
     bureaus = bureaus_result.one()
-    
+
     return {
         "users": {
             "total": users.total or 0,
             "new_today": users.new_today or 0
         },
         "transactions": {
-            "total_volume": float((tx.deposits or 0) + (tx.withdrawals or 0) + (tx.wins or 0)),
-            "today_volume": 0,
+            "total_volume": float(tx.volume or 0),
+            "today_volume": float(tx.today_volume or 0),
             "total_wins": float(tx.wins or 0),
-            "today_wins": 0
+            "today_wins": float(tx.today_wins or 0)
         },
         "games": {
             "today_bets": today_bets
         },
         "tickets": {
-            "active": active_tickets,
-            "expiring_soon": 0
+            "active": tickets.active or 0,
+            "expiring_soon": tickets.expiring_soon or 0
         },
         "bureaus": {
             "total": bureaus.total or 0,
@@ -5054,13 +5295,25 @@ async def _get_dashboard_stats(db: AsyncSession) -> dict:
 
 
 async def _get_recent_transactions(db: AsyncSession, limit: int = 10) -> list:
-    """Récupère les dernières transactions"""
+    """Dernières transactions, au format attendu par admin/dashboard.html
+    (type et statut en minuscules, nom du joueur)."""
     result = await db.execute(
-        select(Transaction)
+        select(Transaction, User)
+        .outerjoin(User, User.id == Transaction.user_id)
         .order_by(Transaction.created_at.desc())
         .limit(limit)
     )
-    return result.scalars().all()
+    rows = []
+    for tx, user in result.all():
+        rows.append({
+            "user_id": tx.user_id or "",
+            "user_name": (user.full_name or user.phone) if user else None,
+            "type": getattr(tx.transaction_type, "value", str(tx.transaction_type)).lower(),
+            "status": getattr(tx.status, "value", str(tx.status)).lower(),
+            "amount": float(tx.amount or 0),
+            "created_at": tx.created_at,
+        })
+    return rows
 
 
 async def _get_recent_users(db: AsyncSession, limit: int = 10) -> list:
@@ -5079,14 +5332,14 @@ async def _get_system_alerts(db: AsyncSession, redis_client: redis.Redis) -> lis
     alerts = []
     
     # Tickets expirant dans 24h
-    tomorrow = datetime.utcnow() + timedelta(days=1)
+    tomorrow = now_utc() + timedelta(days=1)
     tickets_result = await db.execute(
         select(func.count(Ticket.id))
         .where(
             and_(
                 Ticket.status == TicketStatus.ACTIVE,
                 Ticket.expires_at <= tomorrow,
-                Ticket.expires_at > datetime.utcnow()
+                Ticket.expires_at > now_utc()
             )
         )
     )
@@ -5096,7 +5349,7 @@ async def _get_system_alerts(db: AsyncSession, redis_client: redis.Redis) -> lis
         alerts.append({
             "level": "warning",
             "message": f"{expiring_tickets} tickets expirent dans les prochaines 24h",
-            "created_at": datetime.utcnow()
+            "created_at": now_utc()
         })
     
     # Sessions de caisse ouvertes depuis plus de 12h
@@ -5105,7 +5358,7 @@ async def _get_system_alerts(db: AsyncSession, redis_client: redis.Redis) -> lis
         .where(
             and_(
                 CashierSession.status == "OPEN",
-                CashierSession.opened_at < datetime.utcnow() - timedelta(hours=12)
+                CashierSession.opened_at < now_utc() - timedelta(hours=12)
             )
         )
     )
@@ -5115,7 +5368,7 @@ async def _get_system_alerts(db: AsyncSession, redis_client: redis.Redis) -> lis
         alerts.append({
             "level": "warning",
             "message": f"{open_sessions} sessions de caisse ouvertes depuis plus de 12h",
-            "created_at": datetime.utcnow()
+            "created_at": now_utc()
         })
     
     return alerts
@@ -5132,13 +5385,13 @@ async def _get_pending_kyc_count(db: AsyncSession) -> int:
 
 async def _get_chart_data(db: AsyncSession, period: int) -> dict:
     """Récupère les données pour les graphiques"""
-    end_date = datetime.utcnow()
-    start_date = end_date - timedelta(days=period)
+    end_date = now_utc()
+    start_date = local_date_start_utc(today_haiti() - timedelta(days=period - 1))
     
     # Transactions par jour
     result = await db.execute(
         select(
-            func.date_trunc('day', Transaction.created_at).label("day"),
+            local_day(Transaction.created_at).label("day"),
             func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type == TransactionType.DEPOSIT), 0).label("deposits"),
             func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type == TransactionType.WITHDRAWAL), 0).label("withdrawals"),
             func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type == TransactionType.WIN), 0).label("wins")
@@ -5150,8 +5403,8 @@ async def _get_chart_data(db: AsyncSession, period: int) -> dict:
                 Transaction.status == TransactionStatus.COMPLETED
             )
         )
-        .group_by(func.date_trunc('day', Transaction.created_at))
-        .order_by(func.date_trunc('day', Transaction.created_at))
+        .group_by(local_day(Transaction.created_at))
+        .order_by(local_day(Transaction.created_at))
     )
     rows = result.all()
     
@@ -5212,7 +5465,7 @@ async def _get_keno_stats(db: AsyncSession) -> dict:
             func.count(KenoBet.id).label("total_bets"),
             func.coalesce(func.sum(KenoBet.stake), 0).label("total_volume"),
             func.coalesce(func.sum(KenoBet.winnings), 0).label("total_payout")
-        )
+        ).where(KenoBet.status != KenoBetStatus.REFUNDED)
     )
     bets = bets_result.one()
     
@@ -5290,41 +5543,123 @@ async def _get_financial_stats(db: AsyncSession, start_date: datetime, end_date:
     }
 
 
-async def _get_daily_financial_data(db: AsyncSession, start_date: datetime, end_date: datetime) -> list:
-    """Récupère les données financières journalières"""
+# async def _get_daily_financial_data(db: AsyncSession, start_date: datetime, end_date: datetime) -> list:
+#     """Récupère les données financières journalières"""
     
+#     result = await db.execute(
+#         select(
+#             local_day(Transaction.created_at).label("day"),
+#             func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type == TransactionType.DEPOSIT), 0).label("deposits"),
+#             func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type == TransactionType.WITHDRAWAL), 0).label("withdrawals"),
+#             func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type == TransactionType.BET), 0).label("bets"),
+#             func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type == TransactionType.WIN), 0).label("wins")
+#         )
+#         .where(
+#             and_(
+#                 Transaction.created_at >= start_date,
+#                 Transaction.created_at < end_date,
+#                 Transaction.status == TransactionStatus.COMPLETED
+#             )
+#         )
+#         .group_by(local_day(Transaction.created_at))
+#         .order_by(local_day(Transaction.created_at))
+#     )
+#     rows = result.all()
+    
+#     return [
+#         {
+#             "date": row.day.strftime("%d/%m/%Y"),
+#             "deposits": float(row.deposits),
+#             "withdrawals": float(row.withdrawals),
+#             "bets": float(row.bets),
+#             "wins": float(row.wins),
+#             "net": float(row.deposits + row.wins - row.withdrawals - row.bets),
+#             "edge": round((float(row.deposits + row.wins - row.withdrawals - row.bets) / (float(row.deposits + row.wins) or 1) * 100), 2)
+#         }
+#         for row in rows
+#     ]
+async def _get_daily_financial_data(
+    db: AsyncSession,
+    start: datetime,
+    end: datetime
+):
+    """Récupère les données financières regroupées par jour."""
+
+    # IMPORTANT :
+    # On construit l'expression une seule fois et on la réutilise
+    # dans SELECT, GROUP BY et ORDER BY.
+    day = local_day(Transaction.created_at).label("day")
+
     result = await db.execute(
         select(
-            func.date_trunc('day', Transaction.created_at).label("day"),
-            func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type == TransactionType.DEPOSIT), 0).label("deposits"),
-            func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type == TransactionType.WITHDRAWAL), 0).label("withdrawals"),
-            func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type == TransactionType.BET), 0).label("bets"),
-            func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type == TransactionType.WIN), 0).label("wins")
+            day,
+
+            func.coalesce(
+                func.sum(
+                    Transaction.amount
+                ).filter(
+                    Transaction.transaction_type == TransactionType.DEPOSIT
+                ),
+                0
+            ).label("deposits"),
+
+            func.coalesce(
+                func.sum(
+                    Transaction.amount
+                ).filter(
+                    Transaction.transaction_type == TransactionType.WITHDRAWAL
+                ),
+                0
+            ).label("withdrawals"),
+
+            func.coalesce(
+                func.sum(
+                    Transaction.amount
+                ).filter(
+                    Transaction.transaction_type == TransactionType.BET
+                ),
+                0
+            ).label("bets"),
+
+            func.coalesce(
+                func.sum(
+                    Transaction.amount
+                ).filter(
+                    Transaction.transaction_type == TransactionType.WIN
+                ),
+                0
+            ).label("wins"),
         )
         .where(
-            and_(
-                Transaction.created_at >= start_date,
-                Transaction.created_at < end_date,
-                Transaction.status == TransactionStatus.COMPLETED
-            )
+            Transaction.created_at >= start,
+            Transaction.created_at < end,
+            Transaction.status == TransactionStatus.COMPLETED,
         )
-        .group_by(func.date_trunc('day', Transaction.created_at))
-        .order_by(func.date_trunc('day', Transaction.created_at))
+        .group_by(day)
+        .order_by(day)
     )
+
     rows = result.all()
-    
-    return [
-        {
+
+    daily = []
+    for row in rows:
+        deposits = float(row.deposits or 0)
+        withdrawals = float(row.withdrawals or 0)
+        bets = float(row.bets or 0)
+        wins = float(row.wins or 0)
+        net = deposits + wins - withdrawals - bets
+        daily.append({
+            "day": row.day,
+            # clés attendues par la route et par admin/reports/financial.html
             "date": row.day.strftime("%d/%m/%Y"),
-            "deposits": float(row.deposits),
-            "withdrawals": float(row.withdrawals),
-            "bets": float(row.bets),
-            "wins": float(row.wins),
-            "net": float(row.deposits + row.wins - row.withdrawals - row.bets),
-            "edge": round((float(row.deposits + row.wins - row.withdrawals - row.bets) / (float(row.deposits + row.wins) or 1) * 100), 2)
-        }
-        for row in rows
-    ]
+            "deposits": deposits,
+            "withdrawals": withdrawals,
+            "bets": bets,
+            "wins": wins,
+            "net": net,
+            "edge": round(net / ((deposits + wins) or 1) * 100, 2),
+        })
+    return daily
 
 
 async def _send_welcome_sms(phone: str, name: str):

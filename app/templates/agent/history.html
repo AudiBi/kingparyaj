@@ -85,7 +85,7 @@
             <tbody>
                 {% for item in items %}
                 <tr>
-                    <td class="text-muted" style="font-size:12px;">{{ item.date.strftime('%d/%m/%Y %H:%M') }}</td>
+                    <td class="text-muted" style="font-size:12px;">{{ (item.date|local).strftime('%d/%m/%Y %H:%M') }}</td>
                     <td>
                         <span class="badge {% if item.type == 'deposit' %}success{% elif item.type == 'payout' %}danger{% elif item.type == 'bet' %}gray{% elif item.type == 'win' %}success{% else %}info{% endif %}">
                             {{ item.type }}

@@ -14,6 +14,8 @@ import json
 from app.config import settings
 from app.core.redis_client import redis_client
 from app.core.logger import get_logger
+from app.core.exceptions import GameException
+from app.core.timezone import now_haiti, now_utc, today_haiti, local_date_start_utc, local_date_end_utc
 from app.workers.celery import celery_app
 from app.models.keno import KenoDraw, KenoBet, KenoDrawStatus, KenoBetStatus
 from app.models.lucky import LuckyPlay
@@ -82,236 +84,77 @@ def process_draw(self):
         return loop.run_until_complete(_process_draw_async())
 
 
-async def _process_draw_async():
-    """Logique asynchrone du tirage Keno - COMPLÈTE"""
-    logger.info("🔄 Début du traitement des tirages Keno...")
-    
+async def _process_draw_async(now: Optional[datetime] = None) -> Dict[str, int]:
+    """Keno partagé : tire et règle les tirages arrivés à l'heure, garde les
+    prochains tirages créés, puis diffuse l'état aux écrans.
+
+    Tout le règlement passe par KenoService (tirage verrouillé, seuls les paris
+    en attente sont réglés, gains à référence unique WIN-KENO-<pari>) : un
+    tirage ne peut pas être payé deux fois, même si deux workers tournent.
+    Un tirage échu est TOUJOURS tiré, même après la fermeture : ses paris ont
+    été acceptés et doivent être réglés."""
+    from app.services.keno_service import KenoService
+
+    counts = {"settled": 0, "created": 0}
+    async with AsyncSessionLocal() as db:
+        service = KenoService(db, redis_client)
+        try:
+            outcome = await service.tick(now)
+        except Exception:
+            await db.rollback()
+            raise
+        counts["settled"] = len(outcome["settled"])
+        counts["created"] = outcome["created"]
+        for result in outcome["settled"]:
+            await _after_draw(db, result)
+        if counts["settled"]:
+            await service.publish_live("draw_started")
+        elif counts["created"]:
+            await service.publish_live("betting_opened")
+    if any(counts.values()):
+        logger.info(f"🎱 Keno : {counts}")
+    return counts
+
+
+async def _after_draw(db: AsyncSession, result: Dict) -> None:
+    """Après le règlement (déjà validé en base) : cache, diffusion, export LEH,
+    notifications. Une erreur ici n'annule jamais le règlement."""
+    from app.api.websockets.manager import broadcast_draw_result
+
+    payload = {
+        "draw_id": result["draw_id"],
+        "draw_number": result["draw_number"],
+        "numbers": result["numbers"],
+        "total_bets": result["total_bets"],
+        "winners_count": result["winners_count"],
+        "total_payout": result["total_payout"],
+    }
     try:
-        async with AsyncSessionLocal() as db:
-            # 1. Vérifier les horaires d'ouverture (8h-23h)
-            now = datetime.utcnow()
-            local_hour = (now + timedelta(hours=-4)).hour  # UTC-4 pour Haïti
-            
-            if local_hour < 8 or local_hour >= 23:
-                logger.info(f"⏰ Hors horaires d'ouverture ({local_hour}h). Pas de tirage.")
-                return
-            
-            # 2. Vérifier les tirages en attente
-            result = await db.execute(
-                select(KenoDraw)
-                .where(
-                    and_(
-                        KenoDraw.status == KenoDrawStatus.PENDING,
-                        KenoDraw.draw_time <= now
-                    )
-                )
-                .order_by(KenoDraw.draw_time)
-                .limit(1)
-            )
-            pending_draw = result.scalar_one_or_none()
-            
-            if not pending_draw:
-                next_time = now + timedelta(minutes=settings.KENO_DRAW_INTERVAL_MINUTES)
-                next_draw = KenoDraw(
-                    draw_number=await _get_next_draw_number(db),
-                    draw_time=next_time,
-                    status=KenoDrawStatus.PENDING
-                )
-                db.add(next_draw)
-                await db.commit()
-                logger.info("📅 Prochain tirage planifié")
-                return
-            
-            logger.info(f"📊 Tirage Keno #{pending_draw.draw_number} en cours...")
-            
-            # 3. Générer les numéros gagnants
-            drawn_numbers = generate_draw_numbers()
-            pending_draw.numbers = drawn_numbers
-            pending_draw.status = KenoDrawStatus.COMPLETED
-            pending_draw.closed_at = datetime.utcnow()
-            
-            await db.flush()
-            
-            # 4. Récupérer tous les paris pour ce tirage
-            bets_result = await db.execute(
-                select(KenoBet)
-                .where(
-                    and_(
-                        KenoBet.draw_id == pending_draw.id,
-                        KenoBet.status == KenoBetStatus.PENDING
-                    )
-                )
-            )
-            bets = bets_result.scalars().all()
-            
-            logger.info(f"🎯 {len(bets)} paris Keno à régler...")
-            
-            # 5. Régler chaque pari
-            total_payout = 0
-            winners_count = 0
-            jackpot_won = False
-            
-            paytable = {
-                1: {1: 2.5},
-                2: {2: 6},
-                3: {3: 12, 2: 1.5},
-                4: {4: 30, 3: 3, 2: 1},
-                5: {5: 60, 4: 6, 3: 2, 2: 0.5},
-                6: {6: 120, 5: 15, 4: 4, 3: 1.5, 2: 0.5},
-                7: {7: 300, 6: 30, 5: 8, 4: 2, 3: 1, 2: 0.5},
-                8: {8: 600, 7: 60, 6: 15, 5: 4, 4: 1.5, 3: 0.5},
-                9: {9: 1200, 8: 120, 7: 30, 6: 8, 5: 3, 4: 1},
-                10: {10: 5000, 9: 500, 8: 60, 7: 15, 6: 5, 5: 2, 4: 0.5}
-            }
-            
-            for bet in bets:
-                hits = len(set(bet.picks) & set(drawn_numbers))
-                picks_count = len(bet.picks)
-                multiplier = paytable.get(picks_count, {}).get(hits, 0)
-                winnings = bet.stake * multiplier
-                
-                bet.hits = hits
-                bet.multiplier = multiplier
-                bet.winnings = winnings
-                bet.status = KenoBetStatus.WON if winnings > 0 else KenoBetStatus.LOST
-                bet.settled_at = datetime.utcnow()
-                
-                if winnings > 0:
-                    winners_count += 1
-                    total_payout += winnings
-                    
-                    if bet.user_id:
-                        await _credit_user_wallet(db, bet.user_id, winnings, bet.id)
-                    elif bet.ticket_id:
-                        await _credit_ticket(db, bet.ticket_id, winnings)
-            
-            # 6. Vérifier le jackpot
-            if total_payout > 50000 and not jackpot_won:
-                jackpot_won = True
-                pending_draw.jackpot_won = True
-                pending_draw.jackpot_amount = total_payout
-                
-                for bet in bets:
-                    if bet.winnings > 0:
-                        pending_draw.jackpot_winner_id = bet.user_id or bet.ticket_id
-                        break
-            
-            # 7. Mettre à jour les statistiques
-            pending_draw.total_payout = total_payout
-            
-            # 8. Mettre en cache Redis
-            await redis_client.setex(
-                f"keno:draw:{pending_draw.id}",
-                3600,
-                str(drawn_numbers)
-            )
-            await redis_client.setex(
-                f"keno:draw:latest",
-                3600,
-                json.dumps({
-                    "draw_id": pending_draw.id,
-                    "draw_number": pending_draw.draw_number,
-                    "numbers": drawn_numbers,
-                    "total_bets": len(bets),
-                    "winners_count": winners_count,
-                    "total_payout": float(total_payout)
-                })
-            )
-            
-            # 9. Diffuser les résultats via WebSocket
-            from app.api.websockets.manager import broadcast_draw_result
-            await broadcast_draw_result({
-                "type": "keno_draw",
-                "draw_id": pending_draw.id,
-                "draw_number": pending_draw.draw_number,
-                "numbers": drawn_numbers,
-                "total_bets": len(bets),
-                "winners_count": winners_count,
-                "total_payout": float(total_payout),
-                "jackpot_won": jackpot_won,
-                "jackpot_amount": float(total_payout) if jackpot_won else 0
-            })
-            
-            # 10. Export vers LEH (conformité)
-            await _export_keno_to_leh(db, pending_draw)
-            
-            # 11. Planifier le prochain tirage
-            next_draw_time = now + timedelta(minutes=settings.KENO_DRAW_INTERVAL_MINUTES)
-            next_draw = KenoDraw(
-                draw_number=pending_draw.draw_number + 1,
-                draw_time=next_draw_time,
-                status=KenoDrawStatus.PENDING
-            )
-            db.add(next_draw)
-            
-            await db.commit()
-            
-            logger.info(f"✅ Tirage Keno #{pending_draw.draw_number} terminé. "
-                       f"Gagnants: {winners_count}/{len(bets)}, "
-                       f"Payout: {total_payout} HTG")
-            
-            # 12. Notifications pour les gros gains
-            if total_payout > 5000:
-                await _notify_keno_big_winners(db, bets)
-            
+        await redis_client.setex(f"keno:draw:{result['draw_id']}", 3600, json.dumps(result["numbers"]))
+        await redis_client.setex("keno:draw:latest", 3600, json.dumps(payload))
+        await broadcast_draw_result({"type": "keno_draw", **payload})
     except Exception as e:
-        logger.error(f"❌ Erreur lors du tirage Keno: {e}", exc_info=True)
-        raise
+        logger.error(f"⚠️ Diffusion du tirage Keno #{result['draw_number']} : {e}")
 
+    try:
+        draw = await db.get(KenoDraw, result["draw_id"])
+        await _export_keno_to_leh(db, draw)
+        await db.commit()
+        if result["winner_bet_ids"]:
+            winners = await db.execute(
+                select(KenoBet).where(KenoBet.id.in_(result["winner_bet_ids"]), KenoBet.winnings >= 5000)
+            )
+            big = winners.scalars().all()
+            if big:
+                await _notify_keno_big_winners(db, big)
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"⚠️ Export / notifications du tirage Keno #{result['draw_number']} : {e}")
 
-# ==================== KENO - FONCTIONS AUXILIAIRES ====================
-
-async def _get_next_draw_number(db: AsyncSession) -> int:
-    """Récupère le prochain numéro de tirage"""
-    result = await db.execute(
-        select(func.max(KenoDraw.draw_number))
+    logger.info(
+        f"✅ Tirage Keno #{result['draw_number']} terminé. "
+        f"Gagnants: {result['winners_count']}/{result['total_bets']}, Payout: {result['total_payout']} HTG"
     )
-    max_number = result.scalar() or 0
-    return max_number + 1
-
-
-def generate_draw_numbers() -> List[int]:
-    """Génère 20 numéros uniques entre 1 et 80"""
-    numbers = list(range(1, 81))
-    for i in range(len(numbers) - 1, 0, -1):
-        j = secrets.randbelow(i + 1)
-        numbers[i], numbers[j] = numbers[j], numbers[i]
-    return sorted(numbers[:20])
-
-
-async def _credit_user_wallet(db: AsyncSession, user_id: str, amount: float, bet_id: str):
-    """Crédite le wallet d'un utilisateur"""
-    wallet_result = await db.execute(
-        select(Wallet).where(Wallet.user_id == user_id)
-    )
-    wallet = wallet_result.scalar_one()
-    
-    old_balance = wallet.balance
-    wallet.balance += amount
-    wallet.total_won += amount
-    
-    transaction = Transaction(
-        reference=f"WIN-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
-        user_id=user_id,
-        wallet_id=wallet.id,
-        transaction_type=TransactionType.WIN,
-        amount=amount,
-        bet_id=bet_id,
-        balance_before=old_balance,
-        balance_after=wallet.balance,
-        status=TransactionStatus.COMPLETED,
-        completed_at=datetime.utcnow()
-    )
-    db.add(transaction)
-
-
-async def _credit_ticket(db: AsyncSession, ticket_id: str, amount: float):
-    """Crédite un ticket"""
-    ticket_result = await db.execute(
-        select(Ticket).where(Ticket.id == ticket_id)
-    )
-    ticket = ticket_result.scalar_one()
-    ticket.balance += amount
 
 
 async def _export_keno_to_leh(db: AsyncSession, draw: KenoDraw):
@@ -400,52 +243,14 @@ def schedule_draws():
 
 
 async def _schedule_draws_async():
-    """Planifie les tirages Keno pour les prochaines 24h"""
-    logger.info("📅 Planification des tirages Keno...")
-    
-    try:
-        async with AsyncSessionLocal() as db:
-            now = datetime.utcnow()
-            end_time = now + timedelta(hours=24)
-            
-            existing_result = await db.execute(
-                select(KenoDraw)
-                .where(
-                    and_(
-                        KenoDraw.status == KenoDrawStatus.PENDING,
-                        KenoDraw.draw_time >= now,
-                        KenoDraw.draw_time <= end_time
-                    )
-                )
-            )
-            existing_draws = existing_result.scalars().all()
-            
-            existing_times = {d.draw_time for d in existing_draws}
-            
-            current = now
-            current = current.replace(second=0, microsecond=0)
-            current = current + timedelta(minutes=(settings.KENO_DRAW_INTERVAL_MINUTES - current.minute % settings.KENO_DRAW_INTERVAL_MINUTES))
-            
-            last_draw_number = await _get_next_draw_number(db) - 1
-            
-            while current <= end_time:
-                if current not in existing_times and current.hour >= 8 and current.hour < 23:
-                    last_draw_number += 1
-                    draw = KenoDraw(
-                        draw_number=last_draw_number,
-                        draw_time=current,
-                        status=KenoDrawStatus.PENDING
-                    )
-                    db.add(draw)
-                
-                current += timedelta(minutes=settings.KENO_DRAW_INTERVAL_MINUTES)
-            
-            await db.commit()
-            logger.info(f"✅ {last_draw_number} tirages Keno planifiés")
-            
-    except Exception as e:
-        logger.error(f"❌ Erreur planification Keno: {e}")
-        raise
+    """Planifie les tirages Keno des prochaines 24h (heures d'ouverture, heure d'Haïti)."""
+    from app.services.keno_service import KenoService
+
+    async with AsyncSessionLocal() as db:
+        created = await KenoService(db, redis_client).schedule_draws(hours=24)
+        await db.commit()
+    logger.info(f"✅ {created} tirages Keno planifiés")
+    return created
 
 
 @celery_app.task(
@@ -462,35 +267,65 @@ def cancel_stale_draws():
 
 
 async def _cancel_stale_draws_async():
-    """Annule les tirages Keno en attente depuis plus de 1h"""
-    logger.info("⏰ Vérification des tirages Keno en attente...")
-    
+    """Annule les tirages Keno en attente depuis plus d'1h, SEULEMENT s'ils
+    n'ont aucun pari. Un tirage avec des paris est tiré par process_draw
+    (avant, il était annulé et les mises étaient perdues)."""
+    from app.services.keno_service import KenoService
+
+    async with AsyncSessionLocal() as db:
+        count = await KenoService(db, redis_client).cancel_pending_draws_without_bets(
+            older_than=now_utc() - timedelta(hours=1)
+        )
+        await db.commit()
+    if count:
+        logger.info(f"❌ {count} tirages Keno sans pari annulés (trop vieux)")
+    return count
+
+
+@celery_app.task(
+    name="app.workers.draw_worker.export_draw_results_to_leh",
+    max_retries=3
+)
+def export_draw_results_to_leh(date_str: Optional[str] = None):
+    """
+    Exporte vers la LEH tous les tirages Keno terminés d'une journée
+    (heure d'Haïti). Sans argument : la veille (tâche planifiée à 01:00).
+    """
+    loop = asyncio.get_event_loop()
+    if loop.is_running():
+        return loop.create_task(_export_draw_results_to_leh_async(date_str))
+    else:
+        return loop.run_until_complete(_export_draw_results_to_leh_async(date_str))
+
+
+async def _export_draw_results_to_leh_async(date_str: Optional[str] = None):
+    """Exporte les tirages Keno terminés d'une journée locale vers la LEH"""
+    day = date_str or (today_haiti() - timedelta(days=1)).isoformat()
+    start = local_date_start_utc(day)
+    end = local_date_end_utc(day)  # exclusive
+    logger.info(f"📤 Export LEH des tirages Keno du {day}...")
+
     try:
         async with AsyncSessionLocal() as db:
-            stale_time = datetime.utcnow() - timedelta(hours=1)
-            
             result = await db.execute(
-                select(KenoDraw)
-                .where(
+                select(KenoDraw).where(
                     and_(
-                        KenoDraw.status == KenoDrawStatus.PENDING,
-                        KenoDraw.draw_time < stale_time
+                        KenoDraw.status == KenoDrawStatus.COMPLETED,
+                        KenoDraw.draw_time >= start,
+                        KenoDraw.draw_time < end,
                     )
                 )
             )
-            stale_draws = result.scalars().all()
-            
-            if stale_draws:
-                for draw in stale_draws:
-                    draw.status = KenoDrawStatus.CANCELLED
-                    draw.closed_at = datetime.utcnow()
-                    draw.closed_by = "system"
-                
-                await db.commit()
-                logger.info(f"❌ {len(stale_draws)} tirages Keno annulés (trop vieux)")
-            
+            draws = result.scalars().all()
+            for draw in draws:
+                await _export_keno_to_leh(db, draw)
+            await db.commit()
+
+        logger.info(f"✅ {len(draws)} tirage(s) Keno exporté(s) vers LEH pour le {day}")
+        return {"date": day, "exported": len(draws)}
+
     except Exception as e:
-        logger.error(f"❌ Erreur annulation tirages Keno: {e}")
+        logger.error(f"❌ Erreur export LEH des tirages Keno: {e}")
         raise
 
 
@@ -518,15 +353,15 @@ async def _export_lucky_results_to_leh_async(start_date: str, end_date: str):
     
     try:
         async with AsyncSessionLocal() as db:
-            start = datetime.strptime(start_date, "%Y-%m-%d")
-            end = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+            start = local_date_start_utc(start_date)
+            end = local_date_end_utc(end_date)  # exclusive
             
             result = await db.execute(
                 select(LuckyPlay)
                 .where(
                     and_(
                         LuckyPlay.played_at >= start,
-                        LuckyPlay.played_at <= end,
+                        LuckyPlay.played_at < end,
                         LuckyPlay.is_deleted == False
                     )
                 )
@@ -585,9 +420,13 @@ async def _export_lucky_results_to_leh_async(start_date: str, end_date: str):
     name="app.workers.draw_worker.export_lucky_daily_to_leh"
 )
 def export_lucky_daily_to_leh():
-    """Export quotidien des parties Lucky vers la LEH"""
-    today = datetime.utcnow().date()
+    """Export quotidien des parties Lucky vers la LEH (journée d'hier, heure d'Haïti).
+
+    Planifiée à 01:30 heure d'Haïti : on exporte la journée complète de la
+    veille, et non la journée en cours (quasi vide à cette heure-là).
+    """
+    yesterday = today_haiti() - timedelta(days=1)
     return export_lucky_results_to_leh.delay(
-        today.isoformat(),
-        today.isoformat()
+        yesterday.isoformat(),
+        yesterday.isoformat()
     )

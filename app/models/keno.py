@@ -6,11 +6,15 @@ from decimal import Decimal
 
 from sqlalchemy import (
     Column, String, Numeric, Integer, DateTime, ForeignKey, 
-    Enum, ARRAY, Boolean, CheckConstraint, Index
+    Enum, ARRAY, JSON, Boolean, CheckConstraint, Index
 )
 from sqlalchemy.orm import relationship
 from app.models.base import BaseModel
 from app.models.enums import KenoDrawStatus, KenoBetStatus
+
+# Liste d'entiers : ARRAY sous PostgreSQL (inchangé en production), JSON sous
+# SQLite (base des tests automatiques uniquement). Aucune migration.
+IntList = ARRAY(Integer).with_variant(JSON(), "sqlite")
 
 
 class KenoDraw(BaseModel):
@@ -23,6 +27,7 @@ class KenoDraw(BaseModel):
         Index("idx_keno_draws_draw_number", "draw_number", unique=True),
         Index("idx_keno_draws_draw_time", "draw_time"),
         Index("idx_keno_draws_status", "status"),
+        CheckConstraint("mode IN ('scheduled', 'instant')", name="ck_keno_draws_mode"),
     )
     
     # ========== Identification ==========
@@ -32,10 +37,21 @@ class KenoDraw(BaseModel):
     draw_time = Column(DateTime, nullable=False)
     
     # ========== Résultat ==========
-    numbers = Column(ARRAY(Integer), nullable=True)  # Les 20 numéros tirés
+    numbers = Column(IntList, nullable=True)  # Les 20 numéros tirés
     
     # ========== Statut ==========
     status = Column(Enum(KenoDrawStatus), default=KenoDrawStatus.PENDING, nullable=False)
+
+    # ========== Mode et équité vérifiable ==========
+    # 'scheduled' : tirage PARTAGÉ par tous les bureaux, toutes les N minutes
+    # 'instant'   : un tirage par ticket, au bureau
+    mode = Column(String(16), default="scheduled", server_default="scheduled", nullable=False)
+    # Empreinte publiée AVANT le pari ; seed révélé avec le résultat
+    server_seed = Column(String(64), nullable=True)
+    server_seed_hash = Column(String(64), nullable=True)
+    # Tirage partagé : réglages figés à la création (table de paiement, mises,
+    # gain max, rythme des écrans). NULL : tirages instantanés et anciens tirages.
+    config = Column(JSON, nullable=True)
     
     # ========== Métriques ==========
     total_bets = Column(Integer, default=0, nullable=False)
@@ -75,8 +91,9 @@ class KenoBet(BaseModel):
     __table_args__ = (
         CheckConstraint("stake > 0", name="ck_keno_bet_stake_positive"),
         CheckConstraint("stake <= 100000", name="ck_keno_bet_stake_max"),
-        CheckConstraint("array_length(picks, 1) >= 1", name="ck_keno_bet_picks_min"),
-        CheckConstraint("array_length(picks, 1) <= 10", name="ck_keno_bet_picks_max"),
+            # cardinality() n'existe que sous PostgreSQL : contraintes créées seulement là
+        CheckConstraint("cardinality(picks) >= 1", name="ck_keno_bet_picks_min").ddl_if(dialect="postgresql"),
+        CheckConstraint("cardinality(picks) <= 10", name="ck_keno_bet_picks_max").ddl_if(dialect="postgresql"),
         Index("idx_keno_bets_user_id", "user_id"),
         Index("idx_keno_bets_draw_id", "draw_id"),
         Index("idx_keno_bets_ticket_id", "ticket_id"),
@@ -92,12 +109,12 @@ class KenoBet(BaseModel):
     agent_id = Column(String(36), ForeignKey("users.id"), nullable=True)
     
     # ========== Contenu du pari ==========
-    picks = Column(ARRAY(Integer), nullable=False)  # Numéros choisis (1-80)
+    picks = Column(IntList, nullable=False)  # Numéros choisis (1-80)
     stake = Column(Numeric(10, 2), nullable=False)
     
     # ========== Résultat ==========
     hits = Column(Integer, default=0, nullable=False)
-    multiplier = Column(Numeric(5, 2), default=0, nullable=False)
+    multiplier = Column(Numeric(10, 2), default=0, nullable=False)
     winnings = Column(Numeric(10, 2), default=0, nullable=False)
     
     # ========== Jackpot ==========
@@ -121,29 +138,5 @@ class KenoBet(BaseModel):
     agent = relationship("User", foreign_keys=[agent_id])
     
     # ========== Méthodes ==========
-    def calculate_winnings(self, draw_numbers: list) -> tuple:
-        """Calcule les gains basés sur les numéros tirés"""
-        self.hits = len(set(self.picks) & set(draw_numbers))
-        
-        # Table de paiement standard
-        paytable = {
-            1: {1: 2.5},
-            2: {2: 6},
-            3: {3: 12, 2: 1.5},
-            4: {4: 30, 3: 3, 2: 1},
-            5: {5: 60, 4: 6, 3: 2, 2: 0.5},
-            6: {6: 120, 5: 15, 4: 4, 3: 1.5, 2: 0.5},
-            7: {7: 300, 6: 30, 5: 8, 4: 2, 3: 1, 2: 0.5},
-            8: {8: 600, 7: 60, 6: 15, 5: 4, 4: 1.5, 3: 0.5},
-            9: {9: 1200, 8: 120, 7: 30, 6: 8, 5: 3, 4: 1},
-            10: {10: 5000, 9: 500, 8: 60, 7: 15, 6: 5, 5: 2, 4: 0.5}
-        }
-        
-        picks_count = len(self.picks)
-        self.multiplier = paytable.get(picks_count, {}).get(self.hits, 0)
-        self.winnings = self.stake * Decimal(str(self.multiplier)) * self.bonus_multiplier
-        
-        return self.winnings, self.hits
-    
     def __repr__(self) -> str:
         return f"<KenoBet {self.id} stake={self.stake} status={self.status}>"

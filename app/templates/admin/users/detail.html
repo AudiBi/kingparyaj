@@ -57,7 +57,7 @@
     </div>
     <div class="stat-card" style="padding: 16px; border-left: 3px solid #ef4444;">
         <div class="stat-label">Inscrit le</div>
-        <div class="stat-value" style="font-size: 18px;">{{ user.created_at.strftime('%d/%m/%Y') }}</div>
+        <div class="stat-value" style="font-size: 18px;">{{ (user.created_at|local).strftime('%d/%m/%Y') }}</div>
     </div>
 </div>
 
@@ -324,6 +324,7 @@
         </form>
     </div>
 </div>
+{% endblock %}
 
 {% block extra_js %}
 <script>
@@ -403,5 +404,4 @@
         });
     }
 </script>
-{% endblock %}
 {% endblock %}

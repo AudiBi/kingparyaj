@@ -13,6 +13,7 @@ import logging
 from app.config import settings
 from app.core.redis_client import redis_client
 from app.core.logger import get_logger
+from app.core.timezone import today_haiti, local_date_start_utc, to_haiti
 from app.workers.celery import celery_app
 from app.models.notification import Notification, NotificationChannel, NotificationType, NotificationStatus
 from app.models.user import User
@@ -486,9 +487,9 @@ async def _send_daily_summary_async():
     
     try:
         async with AsyncSessionLocal() as db:
-            today = datetime.utcnow().date()
-            today_start = datetime.combine(today, datetime.min.time())
-            today_end = datetime.combine(today, datetime.max.time())
+            # Journée en cours, heure d'Haïti
+            today = today_haiti()
+            today_start = local_date_start_utc(today)
             
             from app.models.keno import KenoDraw, KenoBet
             from app.models.lucky import LuckyPlay
@@ -599,3 +600,56 @@ async def _send_agent_alert_async(agent_id: str, message: str, alert_type: str):
             
     except Exception as e:
         logger.error(f"Erreur envoi alerte agent: {e}")
+
+
+# ==================== TICKETS - EXPIRATION ====================
+
+@celery_app.task(
+    name="app.workers.notification_worker.notify_expiring_tickets",
+    max_retries=2
+)
+def notify_expiring_tickets(hours: int = 48):
+    """Prévient par SMS les porteurs de tickets actifs qui expirent bientôt"""
+    loop = asyncio.get_event_loop()
+    if loop.is_running():
+        return loop.create_task(_notify_expiring_tickets_async(hours))
+    else:
+        return loop.run_until_complete(_notify_expiring_tickets_async(hours))
+
+
+async def _notify_expiring_tickets_async(hours: int = 48):
+    """Envoie un SMS pour chaque ticket actif avec solde qui expire dans `hours` heures"""
+    from app.models.enums import TicketStatus
+
+    logger.info("⏳ Notification des tickets bientôt expirés...")
+    try:
+        async with AsyncSessionLocal() as db:
+            now = datetime.utcnow()
+            result = await db.execute(
+                select(Ticket).where(
+                    and_(
+                        Ticket.status == TicketStatus.ACTIVE,
+                        Ticket.balance > 0,
+                        Ticket.player_phone.isnot(None),
+                        Ticket.expires_at > now,
+                        Ticket.expires_at <= now + timedelta(hours=hours),
+                    )
+                )
+            )
+            tickets = result.scalars().all()
+
+        for ticket in tickets:
+            expires_local = to_haiti(ticket.expires_at).strftime("%d/%m/%Y à %H:%M")
+            message = (
+                f"⏳ Votre ticket {ticket.ticket_number} expire le {expires_local}.\n"
+                f"Solde restant: {float(ticket.balance):,.0f} HTG\n"
+                f"Parier Keno Haïti"
+            )
+            send_sms_notification.delay(ticket.player_phone, message)
+
+        logger.info(f"✅ {len(tickets)} notification(s) d'expiration envoyée(s)")
+        return {"notified": len(tickets)}
+
+    except Exception as e:
+        logger.error(f"❌ Erreur notification tickets expirants: {e}")
+        raise

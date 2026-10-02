@@ -55,7 +55,7 @@
                 </tr>
                 <tr>
                     <td style="padding: 8px 0; color: #94a3b8;">Date d'inscription</td>
-                    <td style="padding: 8px 0;">{{ user.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
+                    <td style="padding: 8px 0;">{{ (user.created_at|local).strftime('%d/%m/%Y %H:%M') }}</td>
                 </tr>
                 <tr>
                     <td style="padding: 8px 0; color: #94a3b8;">Statut KYC</td>
@@ -68,7 +68,7 @@
                 {% if user.kyc_verified_at %}
                 <tr>
                     <td style="padding: 8px 0; color: #94a3b8;">Vérifié le</td>
-                    <td style="padding: 8px 0;">{{ user.kyc_verified_at.strftime('%d/%m/%Y %H:%M') }}</td>
+                    <td style="padding: 8px 0;">{{ (user.kyc_verified_at|local).strftime('%d/%m/%Y %H:%M') }}</td>
                 </tr>
                 <tr>
                     <td style="padding: 8px 0; color: #94a3b8;">Vérifié par</td>
@@ -173,7 +173,7 @@
             <tbody>
                 {% for event in kyc_history %}
                 <tr>
-                    <td class="text-muted" style="font-size: 12px;">{{ event.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
+                    <td class="text-muted" style="font-size: 12px;">{{ (event.created_at|local).strftime('%d/%m/%Y %H:%M') }}</td>
                     <td>{{ event.action }}</td>
                     <td>
                         <span class="badge {% if event.status == 'verified' %}success{% elif event.status == 'pending' %}warning{% else %}danger{% endif %}">
@@ -231,6 +231,7 @@
         </form>
     </div>
 </div>
+{% endblock %}
 
 {% block extra_js %}
 <script>
@@ -383,5 +384,4 @@
         });
     }
 </script>
-{% endblock %}
 {% endblock %}

@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<!-- app/templates/public/keno_verify.html : vérification d'un tirage Keno par le joueur -->
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vérifier un tirage Keno — King Paryaj</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png">
+    <link rel="icon" href="/static/img/favicon.ico" sizes="any">
+    <link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { background: #f1f5f9; color: #0f172a; font-family: Inter, system-ui, -apple-system, 'Segoe UI', sans-serif; padding: 16px; }
+        .wrap { max-width: 640px; margin: 0 auto; }
+        h1 { font-size: 22px; margin: 8px 0 4px; }
+        p.lead { color: #475569; font-size: 14px; margin-bottom: 14px; }
+        form { display: flex; gap: 8px; margin-bottom: 16px; }
+        input { flex: 1; min-width: 0; padding: 12px; border: 1px solid #cbd5e1; border-radius: 10px; font-size: 15px; }
+        button { padding: 12px 16px; border: 0; border-radius: 10px; background: #059669; color: #fff; font-weight: 700; font-size: 15px; cursor: pointer; }
+        button:focus-visible, input:focus-visible { outline: 3px solid #2563eb; outline-offset: 2px; }
+        .card { background: #fff; border-radius: 12px; padding: 14px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+        .row { display: flex; justify-content: space-between; gap: 10px; font-size: 14px; padding: 4px 0; }
+        .row span:first-child { color: #64748b; flex-shrink: 0; }
+        .mono { font-family: 'Courier New', monospace; font-size: 12px; word-break: break-all; text-align: right; }
+        .balls { display: grid; grid-template-columns: repeat(10, 1fr); gap: 6px; margin-top: 8px; }
+        .ball { aspect-ratio: 1/1; border-radius: 50%; background: #1e293b; color: #fff; font-weight: 800; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+        .ok { color: #15803d; font-weight: 800; } .ko { color: #b91c1c; font-weight: 800; }
+        .muted { color: #64748b; font-size: 13px; line-height: 1.5; }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <img src="/static/img/logo-192.png" alt="King Paryaj" style="width:110px;height:auto;display:block;margin:0 auto 4px;">
+    <h1>Vérifier un tirage Keno</h1>
+    <p class="lead">Chaque tirage est fixé par un code secret (seed) dont l'empreinte est affichée au bureau <b>avant</b> votre pari.
+        Après le tirage, le seed est révélé : cette page vérifie qu'il correspond à l'empreinte et recalcule les 20 numéros.</p>
+    <form id="f">
+        <label for="draw" style="position:absolute;left:-9999px;">Identifiant du tirage</label>
+        <input id="draw" value="{{ draw_id|e }}" placeholder="Identifiant du tirage (sur le reçu)" required autocomplete="off">
+        <button type="submit">Vérifier</button>
+    </form>
+    <div id="out" aria-live="polite"></div>
+    <p class="muted">Méthode : empreinte = SHA-256(seed). Pour i = 79 à 60, j = ⌊u × (i+1)⌋ avec
+        u = HMAC-SHA256(seed, « keno:&lt;n° de tirage&gt;:&lt;i&gt; ») (7 premiers octets / 2<sup>56</sup>),
+        puis échange des cases i et j d'une liste 1…80 : les cases 79 à 60 donnent les 20 numéros.</p>
+</div>
+<script charset="utf-8">
+(function () {
+    const out = document.getElementById('out');
+    const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const enc = new TextEncoder();
+    const hex = buf => Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+    async function recompute(seed, drawNumber) {
+        const key = await crypto.subtle.importKey('raw', enc.encode(seed), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+        const numbers = Array.from({ length: 80 }, (_, i) => i + 1);
+        const drawn = [];
+        for (let i = 79; i >= 60; i--) {
+            const d = new Uint8Array(await crypto.subtle.sign('HMAC', key, enc.encode(`keno:${drawNumber}:${i}`)));
+            let v = 0n;
+            for (let k = 0; k < 7; k++) v = (v << 8n) | BigInt(d[k]);
+            const u = Number(v) / 2 ** 56;
+            const j = Math.floor(u * (i + 1));
+            [numbers[i], numbers[j]] = [numbers[j], numbers[i]];
+            drawn.push(numbers[i]);
+        }
+        return { hash: hex(await crypto.subtle.digest('SHA-256', enc.encode(seed))), numbers: drawn.sort((a, b) => a - b) };
+    }
+
+    async function verify(id) {
+        out.innerHTML = '<div class="card">Vérification…</div>';
+        let data;
+        try {
+            const res = await fetch('/api/v1/keno/draws/' + encodeURIComponent(id) + '/verify');
+            data = await res.json();
+            if (!res.ok) { out.innerHTML = '<div class="card">Tirage introuvable.</div>'; return; }
+        } catch (e) { out.innerHTML = '<div class="card">Erreur réseau, réessayez.</div>'; return; }
+
+        let html = `<div class="card">
+            <div class="row"><span>Tirage</span><b>#${data.draw_number}</b></div>
+            <div class="row"><span>Empreinte publiée</span><span class="mono">${esc(data.server_seed_hash || '—')}</span></div>`;
+        if (!data.verifiable) {
+            out.innerHTML = html + `<p class="muted" style="margin-top:8px">${esc(data.reason)}</p></div>`;
+            return;
+        }
+        html += `<div class="row"><span>Seed révélé</span><span class="mono">${esc(data.server_seed)}</span></div>
+            <div class="balls">${(data.numbers || []).map(n => `<div class="ball">${n}</div>`).join('')}</div>
+            <div class="row" style="margin-top:10px"><span>Serveur : empreinte</span><span class="${data.seed_hash_valid ? 'ok' : 'ko'}">${data.seed_hash_valid ? 'conforme' : 'NON conforme'}</span></div>
+            <div class="row"><span>Serveur : numéros</span><span class="${data.result_valid ? 'ok' : 'ko'}">${data.result_valid ? 'conformes' : 'NON conformes'}</span></div>`;
+        try {
+            if (!window.crypto || !crypto.subtle) throw new Error('indisponible');
+            const local = await recompute(data.server_seed, data.draw_number);
+            const hashOk = local.hash === data.server_seed_hash;
+            const numsOk = JSON.stringify(local.numbers) === JSON.stringify([...(data.numbers || [])].sort((a, b) => a - b));
+            html += `<div class="row"><span>Votre navigateur : empreinte</span><span class="${hashOk ? 'ok' : 'ko'}">${hashOk ? 'conforme' : 'NON conforme'}</span></div>
+                <div class="row"><span>Votre navigateur : numéros</span><span class="${numsOk ? 'ok' : 'ko'}">${numsOk ? 'conformes' : 'NON conformes'}</span></div>`;
+        } catch (e) {
+            html += `<p class="muted" style="margin-top:6px">Le recalcul dans le navigateur demande une connexion sécurisée (https).</p>`;
+        }
+        out.innerHTML = html + '</div>';
+    }
+
+    document.getElementById('f').addEventListener('submit', e => {
+        e.preventDefault();
+        const id = document.getElementById('draw').value.trim();
+        history.replaceState(null, '', '?tirage=' + encodeURIComponent(id));
+        verify(id);
+    });
+    const initial = document.getElementById('draw').value.trim();
+    if (initial) verify(initial);
+})();
+</script>
+</body>
+</html>

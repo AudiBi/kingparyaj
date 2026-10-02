@@ -68,6 +68,7 @@ class KenoBetStatus(str, enum.Enum):
     PENDING = "pending"
     WON = "won"
     LOST = "lost"
+    REFUNDED = "refunded"   # tirage annulé : mise rendue
 
 
 class LuckyGameType(str, enum.Enum):

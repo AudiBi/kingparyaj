@@ -29,7 +29,7 @@ router = APIRouter(prefix="/admin", tags=["Admin"])
 
 # ==================== TABLEAU DE BORD ====================
 
-@router.get("/dashboard")
+@router.get("/dashboard", name="api_admin_dashboard")  # nom distinct : url_for("admin_dashboard") = page HTML
 async def admin_dashboard(
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
@@ -262,11 +262,8 @@ async def update_keno_draws_config(
     await redis_client.setex("config:keno:start_hour", 86400, start_hour)
     await redis_client.setex("config:keno:end_hour", 86400, end_hour)
     
-    # Redémarrer le scheduler
-    if background_tasks:
-        from app.services.draw_scheduler import restart_scheduler
-        background_tasks.add_task(restart_scheduler)
-    
+    # (restart_scheduler n'existe pas : l'appel faisait échouer la requête.
+    #  Le worker Celery relit ces réglages à chaque passage.)
     return SuccessResponse(message="Configuration des tirages mise à jour")
 
 

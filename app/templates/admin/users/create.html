@@ -1,0 +1,157 @@
+<!-- app/templates/admin/users/create.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Créer un utilisateur - Administration{% endblock %}
+
+{% block page_title %}Créer un utilisateur{% endblock %}
+{% block page_subtitle %}Ajouter un joueur ou un compte de l'équipe{% endblock %}
+
+{% block content %}
+<div class="grid-2">
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-user-plus"></i> Informations de l'utilisateur</div>
+        </div>
+        <div style="padding: 24px;">
+            <form id="createForm">
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Prénom</label>
+                        <input type="text" name="first_name" class="form-control" maxlength="50">
+                    </div>
+                    <div class="form-group">
+                        <label>Nom</label>
+                        <input type="text" name="last_name" class="form-control" maxlength="50">
+                    </div>
+                </div>
+
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Téléphone <span class="text-danger">*</span></label>
+                        <input type="tel" name="phone" class="form-control" placeholder="34XX-XXXX" required>
+                        <div class="help-text">Format : 3X-XX-XXXX ou 4X-XX-XXXX</div>
+                    </div>
+                    <div class="form-group">
+                        <label>Email</label>
+                        <input type="email" name="email" class="form-control" placeholder="email@exemple.com">
+                    </div>
+                </div>
+
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Carte d'identité (NIF)</label>
+                        <input type="text" name="national_id" class="form-control" maxlength="20">
+                    </div>
+                    <div class="form-group">
+                        <label>Rôle</label>
+                        <select name="role" class="form-control">
+                            {% for role in roles %}
+                            <option value="{{ role }}" {% if role == 'player' %}selected{% endif %}>{{ role }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Mot de passe <span class="text-danger">*</span></label>
+                        <input type="password" name="password" class="form-control" required minlength="8" autocomplete="new-password">
+                        <div class="help-text">Min 8 caractères, une majuscule, une minuscule et un chiffre</div>
+                    </div>
+                    <div class="form-group">
+                        <label>Confirmer le mot de passe <span class="text-danger">*</span></label>
+                        <input type="password" name="password_confirm" class="form-control" required autocomplete="new-password">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label><input type="checkbox" name="kyc_verified"> KYC déjà vérifié</label>
+                </div>
+
+                <div class="modal-footer" style="margin-top: 24px; border-top: 1px solid #e2e8f0; padding-top: 16px;">
+                    <a href="{{ url_for('admin_users') }}" class="btn btn-secondary">Annuler</a>
+                    <button type="submit" class="btn btn-success" id="submitBtn">
+                        <i class="fas fa-plus"></i> Créer l'utilisateur
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-info-circle"></i> Informations</div>
+        </div>
+        <div style="padding: 20px;">
+            <div style="background: #f0fdf4; border-radius: 8px; padding: 16px; border-left: 4px solid #22c55e; margin-bottom: 16px;">
+                <h4 style="margin: 0 0 8px 0; color: #065f46;"><i class="fas fa-lightbulb"></i> À savoir</h4>
+                <p style="margin: 0; color: #065f46; font-size: 14px;">
+                    Un portefeuille (solde 0 HTG) est créé automatiquement avec le compte.
+                    Pour un agent de bureau, utilisez plutôt <a href="{{ url_for('admin_agent_create_page') }}">Créer un agent</a>
+                    (affectation à un bureau).
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    const form = document.getElementById('createForm');
+    const btn = document.getElementById('submitBtn');
+
+    function errorText(data, fallback) {
+        if (!data) return fallback;
+        if (typeof data.error === 'string') return data.error;
+        if (Array.isArray(data.detail)) return data.detail.map(d => (d.msg || '').replace(/^Value error, /, '')).join(' · ');
+        if (typeof data.detail === 'string') return data.detail;
+        return fallback;
+    }
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const data = new FormData(form);
+        const password = data.get('password');
+        if (password !== data.get('password_confirm')) {
+            showToast('Les mots de passe ne correspondent pas', 'error');
+            return;
+        }
+        if (password.length < 8 || !/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/\d/.test(password)) {
+            showToast('Le mot de passe doit contenir 8 caractères, une majuscule, une minuscule et un chiffre', 'error');
+            return;
+        }
+        const payload = {
+            first_name: data.get('first_name') || null,
+            last_name: data.get('last_name') || null,
+            phone: (data.get('phone') || '').replace(/[^0-9]/g, ''),
+            email: data.get('email') || null,
+            national_id: data.get('national_id') || null,
+            role: data.get('role'),
+            password: password,
+            kyc_verified: data.get('kyc_verified') === 'on'
+        };
+        btn.disabled = true;
+        try {
+            const res = await fetch('{{ url_for("admin_user_create") }}', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token() }}' },
+                body: JSON.stringify(payload)
+            });
+            if (res.ok) {
+                showToast('Utilisateur créé', 'success');
+                // le serveur redirige vers la fiche du nouvel utilisateur
+                setTimeout(() => { window.location.href = res.redirected ? res.url : '{{ url_for("admin_users") }}'; }, 600);
+                return;
+            }
+            const body = await res.json().catch(() => null);
+            showToast(errorText(body, 'Erreur lors de la création'), 'error');
+        } catch (err) {
+            showToast('Erreur réseau', 'error');
+        }
+        btn.disabled = false;
+    });
+})();
+</script>
+{% endblock %}

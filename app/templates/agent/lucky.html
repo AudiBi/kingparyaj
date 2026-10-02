@@ -92,14 +92,15 @@
                     <div class="form-group">
                         <label>Type de joueur</label>
                         <select name="player_type" class="form-control" id="playerType">
-                            <option value="ticket">Ticket</option>
+                            <option value="cash" selected>Espèces (ticket créé automatiquement)</option>
+                            <option value="ticket">Ticket existant</option>
                             <option value="account">Compte en ligne</option>
                         </select>
                     </div>
                     
-                    <div class="form-group">
-                        <label>Identifiant</label>
-                        <input type="text" name="identifier" class="form-control" placeholder="Numéro de ticket ou téléphone" required>
+                    <div class="form-group" id="identifierGroup" style="display:none">
+                        <label id="identifierLabel">Numéro du ticket</label>
+                        <input type="text" name="identifier" class="form-control" id="identifierInput" placeholder="KNO-XXXX-XXXX">
                     </div>
                     
                     <div class="form-group">
@@ -493,6 +494,10 @@
         
         const form = e.target;
         const data = new FormData(form);
+        if (data.get('player_type') !== 'cash' && !String(data.get('identifier') || '').trim()) {
+            showToast(data.get('player_type') === 'ticket' ? 'Numéro de ticket requis' : 'Téléphone du joueur requis', 'warning');
+            return false;
+        }
         const payload = {
             player_type: data.get('player_type'),
             identifier: data.get('identifier'),
@@ -549,7 +554,9 @@
                         isSpinning = false;
                         document.getElementById('spinBtn').disabled = false;
                         document.getElementById('spinBtn').innerHTML = '<i class="fas fa-play"></i> Tourner';
-                        showToast(data.message || 'Tour terminé !', data.winnings > 0 ? 'success' : 'info');
+                        showToast((data.message || 'Tour terminé !') + (data.ticket_number ? ' — ticket ' + data.ticket_number : ''), data.winnings > 0 ? 'success' : 'info');
+                        lastSpin = data;
+                        printLuckyResult();
                     }
                 }
                 animate();
@@ -569,47 +576,38 @@
     }
     
     // ==================== IMPRESSION RÉSULTAT ====================
+    // Dernier tour joué à ce guichet : reçu pour imprimante thermique (comme les autres jeux)
+    let lastSpin = null;
     function printLuckyResult() {
-        const container = document.getElementById('lastLuckyDisplay');
-        const content = container.innerHTML;
-        if (content.includes('En attente')) {
-            showToast('Aucun résultat à imprimer', 'warning');
+        if (!lastSpin) {
+            showToast('Aucun tour joué à ce guichet pour le moment', 'warning');
             return;
         }
-        
-        const printWindow = window.open('', '', 'width=500,height=400');
-        printWindow.document.write(`
-            <html>
-                <head>
-                    <title>Résultat Lucky Wheel</title>
-                    <style>
-                        body { font-family: Arial, sans-serif; text-align: center; padding: 30px; }
-                        .title { font-size: 28px; font-weight: 700; color: #059669; margin-bottom: 8px; }
-                        .subtitle { font-size: 14px; color: #666; margin-bottom: 20px; }
-                        .result { padding: 30px; border-radius: 16px; margin: 20px 0; }
-                        .segment { font-size: 32px; font-weight: 700; }
-                        .multiplier { font-size: 20px; margin: 8px 0; }
-                        .amount { font-size: 36px; font-weight: 700; }
-                        .footer { margin-top: 20px; font-size: 12px; color: #999; border-top: 1px solid #ddd; padding-top: 16px; }
-                    </style>
-                </head>
-                <body>
-                    <div class="title">🎡 Lucky Wheel</div>
-                    <div class="subtitle">Résultat - ${new Date().toLocaleString()}</div>
-                    <div class="result" style="background: ${content.includes('GROS GAIN') ? '#fef3c7' : '#f1f5f9'};">
-                        ${content}
-                    </div>
-                    <div class="footer">
-                        Parier Keno Haïti - Résultat officiel du tour
-                    </div>
-                </body>
-            </html>
-        `);
-        printWindow.document.close();
-        printWindow.focus();
-        printWindow.print();
+        const d = lastSpin, won = d.winnings > 0;
+        kpShowReceipt({
+            game: 'LUCKY WHEEL', round: 'Tour de roue', roundTime: KPReceipt.dateTime(d.played_at),
+            bureau: KP_AGENT.bureau, address: KP_AGENT.address, phone: KP_AGENT.phone, agent: KP_AGENT.name,
+            ticket: d.ticket_number, code: d.play_id, placedAt: d.played_at,
+            sections: [
+                { type: 'text', text: 'Segment obtenu : ' + d.segment },
+                { type: 'sep' },
+                { type: 'rows', rows: [['Mise', KPReceipt.money(d.stake)], ['Multiplicateur', 'x' + Number(d.multiplier).toLocaleString('fr-FR')]] },
+                { type: 'total', label: 'GAIN', value: KPReceipt.money(d.winnings) },
+                { type: 'stamp', text: won ? 'GAGNANT' : 'PERDANT', won },
+            ],
+            hash: d.verification_hash,
+            footer: won ? (d.ticket_number ? 'Gain crédité sur le ticket : présentez ce reçu au guichet.' : 'Gain crédité sur le compte du joueur.') : 'Conservez ce reçu.',
+        });
     }
-    
+
+    document.getElementById('playerType').addEventListener('change', e => {
+        const t = e.target.value;
+        document.getElementById('identifierGroup').style.display = t === 'cash' ? 'none' : '';
+        document.getElementById('identifierLabel').textContent = t === 'ticket' ? 'Numéro du ticket' : 'Téléphone du joueur';
+        document.getElementById('identifierInput').placeholder = t === 'ticket' ? 'KNO-XXXX-XXXX' : '34XX-XXXX';
+        document.getElementById('identifierInput').value = '';
+    });
+
     // ==================== RAFRAÎCHIR HISTORIQUE ====================
     function refreshLuckyHistory() {
         if (ws && ws.readyState === WebSocket.OPEN) {
@@ -634,4 +632,18 @@
         document.head.appendChild(style);
     });
 </script>
+
+<!-- ==================== REÇU (imprimante thermique) ==================== -->
+<div class="modal-overlay" id="receiptModal">
+    <div class="modal" style="max-width:420px;">
+        <div id="receiptPrint" class="receipt" style="max-height:65vh;overflow:auto;background:#f1f5f9;padding:8px;border-radius:8px;"></div>
+        <div class="flex" style="gap:8px;margin-top:12px;">
+            <button class="btn btn-primary" onclick="KPReceipt.print(window.__kpReceipt)"><i class="fas fa-print"></i> Imprimer</button>
+            <select class="kp-paper" aria-label="Largeur du papier" onchange="KPReceipt.setPaper(this.value); window.__kpReceipt && KPReceipt.preview(document.getElementById('receiptPrint'), window.__kpReceipt)" style="padding:6px 8px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;">
+                <option value="80">Papier 80 mm</option><option value="58">Papier 58 mm</option>
+            </select>
+            <button class="btn btn-secondary" onclick="closeModal('receiptModal')">Fermer</button>
+        </div>
+    </div>
+</div>
 {% endblock %}

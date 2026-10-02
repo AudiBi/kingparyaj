@@ -1,0 +1,228 @@
+<!-- app/templates/admin/games/horse_races.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Horse Races - Administration{% endblock %}
+{% block page_title %}Horse Races{% endblock %}
+{% block page_subtitle %}Concurrents, cotes, cycle des courses et règlement{% endblock %}
+
+{% block extra_css %}
+<style>
+    .hr-status { padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; background: #e2e8f0; }
+    .hr-status.BETTING_OPEN { background: #dcfce7; color: #166534; }
+    .hr-status.BETTING_CLOSED, .hr-status.RUNNING { background: #fef3c7; color: #92400e; }
+    .hr-status.SETTLED, .hr-status.FINISHED { background: #e0e7ff; color: #3730a3; }
+    .hr-status.CANCELLED { background: #fee2e2; color: #991b1b; }
+    .runner-grid { display: grid; grid-template-columns: 70px 1fr; gap: 6px; align-items: center; margin-bottom: 6px; }
+    .runner-grid input { width: 100%; padding: 7px 9px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 13px; }
+    .actions { min-width: 130px; display: flex; flex-wrap: wrap; gap: 2px; }
+    .actions .btn { margin: 1px; padding: 3px 8px; font-size: 11px; }
+    .mini { font-size: 12px; color: #64748b; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="mb-3 flex" style="gap:8px;">
+    <a href="/horse-races/ecran" target="_blank" class="btn btn-sm btn-secondary"><i class="fas fa-tv"></i> Écran joueurs</a>
+    <button class="btn btn-sm btn-primary" onclick="createRace()"><i class="fas fa-plus"></i> Créer une course maintenant</button>
+</div>
+
+<div class="grid-2">
+    <!-- ==================== CONFIGURATION ==================== -->
+    <div class="table-container">
+        <div class="table-header"><div class="title"><i class="fas fa-cog"></i> Configuration</div></div>
+        <div style="padding: 16px;">
+            <form id="configForm">
+                <label style="font-weight:600;">Les 6 concurrents</label>
+                <div class="runner-grid mini"><span>№ maillot</span><span>Nom</span></div>
+                <div id="runnerRows"></div>
+                <p class="mini" style="margin-bottom:12px;">À chaque course, la cote gagnant de chaque cheval est tirée au hasard entre la cote minimale
+                    et la cote maximale, puis ajustée pour respecter la marge maison ; les chances de victoire découlent de ces cotes.
+                    Les modifications s'appliquent aux prochaines courses, jamais aux paris déjà pris.</p>
+
+                <div class="grid-2">
+                    <div class="form-group"><label>Marge maison (0 à 0,31 avec 4,14–7,79)</label><input class="form-control" name="margin" type="number" step="0.01" min="0" max="0.49"></div>
+                    <div class="form-group"><label>PLACE : positions payées</label><input class="form-control" name="place_positions" type="number" min="1" max="3"></div>
+                    <div class="form-group"><label>Mise minimum (HTG)</label><input class="form-control" name="min_bet" type="number" min="1"></div>
+                    <div class="form-group"><label>Mise maximum (HTG)</label><input class="form-control" name="max_bet" type="number" min="1"></div>
+                    <div class="form-group"><label>Intervalle entre courses (min)</label><input class="form-control" name="interval_minutes" type="number" min="1"></div>
+                    <div class="form-group"><label>Fermeture des paris avant départ (s)</label><input class="form-control" name="betting_close_seconds" type="number" min="0"></div>
+                    <div class="form-group"><label>Durée de l'animation (ms)</label><input class="form-control" name="race_duration_ms" type="number" min="5000" step="1000"></div>
+                    <div class="form-group"><label>Cote minimale</label><input class="form-control" name="odds_min" type="number" step="0.01" min="1.01"></div>
+                    <div class="form-group"><label>Cote maximale</label><input class="form-control" name="odds_max" type="number" step="0.01" min="1.02"></div>
+                    <div class="form-group"><label>Ouverture (heure Haïti)</label><input class="form-control" name="open_hour" type="number" min="0" max="23"></div>
+                    <div class="form-group"><label>Fermeture (heure Haïti)</label><input class="form-control" name="close_hour" type="number" min="1" max="24"></div>
+                </div>
+                <label class="flex-center" style="margin:6px 0 14px;"><input type="checkbox" name="auto_enabled"> Cycle automatique (une course toutes les N minutes)</label>
+                <button type="submit" class="btn btn-primary w-full"><i class="fas fa-save"></i> Enregistrer</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- ==================== COURSES ==================== -->
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-flag-checkered"></i> Courses</div>
+            <button class="btn btn-sm btn-secondary" onclick="loadRaces()"><i class="fas fa-sync"></i></button>
+        </div>
+        <div class="table-responsive">
+            <table class="table">
+                <thead><tr><th>#</th><th>Départ</th><th>Statut</th><th>Paris</th><th>Mises</th><th>Gains</th><th>Actions</th></tr></thead>
+                <tbody id="races"><tr><td colspan="7" class="mini">Chargement…</td></tr></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- ==================== DÉTAIL ==================== -->
+<div class="modal-overlay" id="raceModal">
+    <div class="modal" style="max-width:760px;">
+        <div class="modal-header"><h3 id="raceModalTitle">Course</h3>
+            <button class="btn btn-sm btn-secondary" onclick="closeModal('raceModal')">✕</button></div>
+        <div id="raceModalBody" style="max-height:70vh;overflow:auto;"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    const API = '/admin/api/horse-races';
+    const LABELS = { SCHEDULED: 'Programmée', BETTING_OPEN: 'Paris ouverts', BETTING_CLOSED: 'Paris fermés', RUNNING: 'En cours', FINISHED: 'Arrivée', SETTLED: 'Réglée', CANCELLED: 'Annulée' };
+    const $ = id => document.getElementById(id);
+    const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const money = n => Number(n || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 });
+    const when = iso => iso ? new Date(iso).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+    let config = null;
+
+    function errorMessage(data, fallback) {
+        if (!data) return fallback;
+        if (typeof data.error === 'string') return data.error;
+        if (typeof data.detail === 'string') return data.detail;
+        if (Array.isArray(data.detail) && data.detail[0]) return String(data.detail[0].msg || '').replace(/^Value error, /, '');
+        return data.message || fallback;
+    }
+
+    async function send(method, url, body) {
+        const token = (await (await fetch(API + '/csrf-token')).json()).csrf_token;  // jeton frais à chaque envoi
+        const res = await fetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token },
+            body: body ? JSON.stringify(body) : undefined,
+            redirect: 'manual'
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(errorMessage(data, 'Action refusée (session expirée ?)'));
+        return data;
+    }
+
+    // ---------- Configuration ----------
+    async function loadConfig() {
+        config = await (await fetch(API + '/config')).json();
+        $('runnerRows').innerHTML = config.runners.map((r, i) => `
+            <div class="runner-grid">
+                <input class="form-control" data-i="${i}" data-k="player_number" type="number" min="1" max="99" value="${r.player_number}" required>
+                <input class="form-control" data-i="${i}" data-k="player_name" maxlength="30" value="${esc(r.player_name)}" required>
+            </div>`).join('');
+        const form = $('configForm');
+        ['margin', 'place_positions', 'min_bet', 'max_bet', 'interval_minutes', 'betting_close_seconds',
+         'race_duration_ms', 'odds_min', 'odds_max', 'open_hour', 'close_hour'].forEach(k => { form[k].value = config[k]; });
+        form.auto_enabled.checked = !!config.auto_enabled;
+    }
+
+    $('configForm').addEventListener('submit', async e => {
+        e.preventDefault();
+        const form = e.target;
+        const runners = config.runners.map(r => ({ ...r }));
+        form.querySelectorAll('[data-k]').forEach(inp => {
+            const r = runners[Number(inp.dataset.i)];
+            r[inp.dataset.k] = inp.dataset.k === 'player_name' ? inp.value.trim() : Number(inp.value);
+        });
+        const payload = { runners, auto_enabled: form.auto_enabled.checked };
+        ['margin', 'odds_min', 'odds_max'].forEach(k => payload[k] = parseFloat(form[k].value));
+        ['place_positions', 'min_bet', 'max_bet', 'interval_minutes', 'betting_close_seconds', 'race_duration_ms', 'open_hour', 'close_hour']
+            .forEach(k => payload[k] = Number(form[k].value));
+        try {
+            const data = await send('PUT', API + '/config', payload);
+            config = data.config;
+            showToast('Configuration enregistrée', 'success');
+        } catch (err) { showToast(err.message, 'error'); }
+    });
+
+    // ---------- Courses ----------
+    async function loadRaces() {
+        const data = await (await fetch(API + '/races?limit=50')).json();
+        $('races').innerHTML = (data.races || []).map(r => {
+            const s = r.status, id = r.race_id;
+            const btn = (action, label, cls) => `<button class="btn btn-sm ${cls}" data-action="${action}" data-id="${id}">${label}</button>`;
+            const actions = [
+                s === 'SCHEDULED' ? btn('open', 'Ouvrir', 'btn-success') : '',
+                ['SCHEDULED', 'BETTING_OPEN'].includes(s) ? btn('close', 'Fermer', 'btn-warning') : '',
+                ['SCHEDULED', 'BETTING_OPEN', 'BETTING_CLOSED'].includes(s) ? btn('start', 'Lancer', 'btn-primary') : '',
+                s === 'FINISHED' ? btn('settle', 'Régler', 'btn-primary') : '',
+                ['SCHEDULED', 'BETTING_OPEN', 'BETTING_CLOSED', 'RUNNING'].includes(s) ? btn('cancel', 'Annuler', 'btn-danger') : '',
+                btn('detail', 'Détail', 'btn-secondary')
+            ].join('');
+            return `<tr><td>#${r.race_number}</td><td>${when(r.scheduled_at)}</td>
+                <td><span class="hr-status ${s}">${LABELS[s] || s}</span></td>
+                <td>${r.total_bets}</td><td>${money(r.total_stake)}</td><td>${money(r.total_payout)}</td>
+                <td class="actions">${actions}</td></tr>`;
+        }).join('') || '<tr><td colspan="7" class="mini">Aucune course</td></tr>';
+    }
+
+    window.loadRaces = loadRaces;
+    window.createRace = async function () {
+        try {
+            await send('POST', API + '/races', { open_betting: true });
+            showToast('Course créée, paris ouverts', 'success');
+            loadRaces();
+        } catch (err) { showToast(err.message, 'error'); }
+    };
+
+    async function showDetail(id) {
+        const r = await (await fetch(`${API}/races/${id}`)).json();
+        $('raceModalTitle').textContent = `Course #${r.race_number} — ${LABELS[r.status] || r.status}`;
+        const names = Object.fromEntries(r.participants.map(p => [p.player_number, p.player_name]));
+        const results = (r.results || []).map(x => `${x.position}. №${x.player_number} ${esc(x.player_name)}`).join('<br>') || '—';
+        const odds = r.participants.map(p => `№${p.player_number} ${esc(p.player_name)} : ${p.odds.WIN.toFixed(2)}`).join('<br>');
+        const bets = (r.bets || []).map(b => `<tr><td>${when(b.placed_at)}</td><td>${b.bet_type}</td>
+            <td>${b.selection.map(n => '№' + n + ' ' + esc(names[n] || '')).join(' / ')}</td>
+            <td>${money(b.stake)}</td><td>${b.odds.toFixed(2)}</td><td>${b.status}</td><td>${money(b.winnings)}</td>
+            <td>${b.ticket_id ? esc(b.ticket_number || 'Ticket') : 'Compte'}</td></tr>`).join('');
+        $('raceModalBody').innerHTML = `
+            <div class="grid-2" style="margin-bottom:10px;">
+                <div><b>Cotes WIN</b><br><span class="mini">${odds}</span></div>
+                <div><b>Arrivée</b><br><span class="mini">${results}</span></div>
+            </div>
+            <p class="mini">Hash du seed : ${esc(r.server_seed_hash)}<br>Seed : ${r.server_seed ? esc(r.server_seed) : 'révélé à l’arrivée'}</p>
+            ${r.cancel_reason ? `<p class="mini">Annulation : ${esc(r.cancel_reason)}</p>` : ''}
+            <table class="table" style="margin-top:8px;"><thead><tr><th>Heure</th><th>Type</th><th>Sélection</th><th>Mise</th><th>Cote</th><th>Statut</th><th>Gain</th><th>Ticket / compte</th></tr></thead>
+            <tbody>${bets || '<tr><td colspan="8" class="mini">Aucun pari</td></tr>'}</tbody></table>`;
+        openModal('raceModal');
+    }
+
+    $('races').addEventListener('click', async e => {
+        const btn = e.target.closest('[data-action]');
+        if (!btn) return;
+        const { action, id } = btn.dataset;
+        if (action === 'detail') return showDetail(id);
+        let body;
+        if (action === 'cancel') {
+            const reason = prompt('Motif de l’annulation (les mises seront remboursées) :');
+            if (!reason || reason.trim().length < 3) return;
+            body = { reason: reason.trim() };
+        } else if (action === 'start' && !confirm('Lancer la course maintenant ? Les paris seront fermés.')) {
+            return;
+        }
+        try {
+            await send('POST', `${API}/races/${id}/${action}`, body);
+            showToast('Action effectuée', 'success');
+            loadRaces();
+        } catch (err) { showToast(err.message, 'error'); }
+    });
+
+    loadConfig().catch(() => showToast('Configuration illisible', 'error'));
+    loadRaces();
+    setInterval(loadRaces, 15000);
+})();
+</script>
+{% endblock %}

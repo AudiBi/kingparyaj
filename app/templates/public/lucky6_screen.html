@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<!-- app/templates/public/lucky6_screen.html : écran Lucky6 (TV de la salle, ou écran du joueur au guichet avec ?c=<code>) -->
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lucky6 — King Paryaj</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png">
+    <link rel="icon" href="/static/img/favicon.ico" sizes="any">
+    <link rel="stylesheet" href="/static/css/lucky6.css">
+    <style>
+        :root { --bg: #05061a; --panel: rgba(255,255,255,.05); --line: rgba(140,160,255,.22); --text: #eef1ff; --muted: #9aa4dc; --gold: #ffd54a; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { height: 100%; }
+        body { color: var(--text); font-family: Inter, system-ui, -apple-system, 'Segoe UI', sans-serif; overflow: hidden;
+               background: radial-gradient(ellipse at 15% 10%, #2a1d6b 0, transparent 45%), radial-gradient(ellipse at 85% 90%, #0d3a6b 0, transparent 45%), var(--bg); }
+        body::before { content: ''; position: fixed; inset: 0; pointer-events: none; opacity: .55;
+               background-image: radial-gradient(1px 1px at 10% 20%, #fff, transparent), radial-gradient(1px 1px at 30% 70%, #fff, transparent),
+               radial-gradient(1.5px 1.5px at 55% 35%, #cfd8ff, transparent), radial-gradient(1px 1px at 75% 15%, #fff, transparent),
+               radial-gradient(1px 1px at 90% 60%, #fff, transparent), radial-gradient(1.5px 1.5px at 45% 85%, #cfd8ff, transparent),
+               radial-gradient(1px 1px at 20% 45%, #fff, transparent), radial-gradient(1px 1px at 65% 55%, #fff, transparent); }
+        .screen { position: relative; height: 100vh; display: grid; grid-template-rows: auto 1fr auto; gap: 1.4vh; padding: 1.6vh 1.6vw; }
+        header { display: flex; align-items: center; gap: 1.4vw; flex-wrap: wrap; min-width: 0; }
+        header img { height: 6.5vh; width: auto; }
+        .brand { font-size: 4.4vh; font-weight: 900; letter-spacing: .3vh; }
+        .brand span { color: var(--gold); }
+        .round { margin-left: auto; text-align: right; min-width: 0; }
+        .round .no { font-size: 3vh; font-weight: 800; }
+        .round .hash { font-family: 'Courier New', monospace; font-size: 1.3vh; color: var(--muted); word-break: break-all; max-width: 40vw; }
+        .pill { padding: .7vh 1.4vw; border-radius: 999px; font-weight: 800; font-size: 2vh; background: #232a5c; white-space: nowrap; }
+        .pill.BETTING_OPEN { background: #0f5132; color: #b7f5d2; }
+        .pill.RUNNING { background: #f57c00; color: #1b1000; }
+        .live { width: 1.2vh; height: 1.2vh; border-radius: 50%; background: #64748b; display: inline-block; }
+        .live.on { background: #22c55e; box-shadow: 0 0 1vh #22c55e; }
+
+        main { display: grid; grid-template-columns: minmax(0, 1.75fr) minmax(0, 1fr); gap: 1.4vw; min-height: 0; }
+        .card { background: var(--panel); border: 1px solid var(--line); border-radius: 2vh; padding: 1.4vh 1vw; min-height: 0; overflow: hidden; }
+        .title { font-size: 1.7vh; letter-spacing: .25vh; text-transform: uppercase; color: var(--muted); font-weight: 800; margin-bottom: 1vh; display: flex; justify-content: space-between; gap: 1vw; }
+
+        /* Tableau à l'échelle de l'écran */
+        #board .l6-board { gap: 1.2vh; }
+        #board .l6-stage { grid-template-columns: 17vh 1fr auto; padding: 1.4vh; background: rgba(10,12,40,.65); }
+        #board .l6-drum { width: 15vh; height: 15vh; }
+        #board .l6-ball { width: 4.4vh; height: 4.4vh; font-size: 1.9vh; }
+        #board .l6-ball.l6-big { width: 14vh; height: 14vh; font-size: 6.4vh; }
+        #board .l6-ball.l6-mini { width: 3vh; height: 3vh; font-size: 1.3vh; }
+        #board .l6-count { font-size: 4.4vh; }
+        #board .l6-phase { font-size: 2vh; }
+        #board .l6-first b, #board .l6-match b { font-size: 2.4vh; }
+        #board .l6-first > span, #board .l6-match > span { font-size: 1.4vh; }
+        #board .l6-slot { min-height: 7.6vh; border-radius: 1.2vh; }
+        #board .l6-slot-ball { min-height: 4.4vh; }
+        #board .l6-slot-mult { font-size: 1.6vh; }
+        #board .l6-cell { font-size: 1.6vh; padding: .55vh 0; }
+
+        .side { display: grid; grid-template-rows: auto 1fr; gap: 1.4vh; min-height: 0; }
+        .pay { display: grid; grid-template-columns: repeat(3, 1fr); gap: .4vh .8vw; font-size: 1.75vh; font-variant-numeric: tabular-nums; }
+        .pay div { display: flex; justify-content: space-between; border-bottom: 1px solid rgba(140,160,255,.12); padding: .25vh 0; }
+        .pay b { color: var(--gold); }
+        .pay div.hot { background: linear-gradient(90deg, #f2c300, #f57c00); color: #1b1000; border-radius: .6vh; padding: .25vh .4vw; }
+        .pay div.hot b { color: #1b1000; }
+        .hist { display: grid; gap: .8vh; overflow: hidden; }
+        .hist .row { display: grid; grid-template-columns: 7vh 1fr; gap: .6vw; align-items: center; }
+        .hist .row b { font-size: 1.8vh; }
+        .hist .balls { display: flex; flex-wrap: wrap; gap: .3vh; }
+        .hist .l6-ball { width: 2.6vh; height: 2.6vh; font-size: 1.15vh; }
+        .ticket { background: rgba(0,0,0,.25); border: 1px solid var(--line); border-radius: 1.4vh; padding: 1vh .8vw; margin-bottom: .9vh; }
+        .ticket .top { display: flex; justify-content: space-between; font-size: 1.7vh; color: var(--muted); margin-bottom: .6vh; gap: .6vw; }
+        .ticket .balls { display: flex; gap: .5vh; flex-wrap: wrap; align-items: center; }
+        .ticket .l6-ball { width: 4vh; height: 4vh; font-size: 1.7vh; }
+        .ticket .amount { display: flex; justify-content: space-between; margin-top: .7vh; font-size: 2vh; font-weight: 800; }
+        .ticket.WON { border-color: var(--gold); box-shadow: 0 0 1.6vh rgba(255,213,74,.45); }
+        .ticket.preview { border-style: dashed; }
+        .tag { font-weight: 900; }
+        .tag.WON { color: var(--gold); } .tag.LOST { color: #8b93c4; } .tag.REFUNDED { color: #7dd3fc; }
+        .muted { color: var(--muted); font-size: 1.8vh; }
+
+        footer { min-height: 8vh; display: flex; align-items: center; justify-content: center; text-align: center; gap: 1.2vw; border-radius: 2vh;
+                 font-size: 3.4vh; font-weight: 900; background: rgba(10,12,40,.75); border: 1px solid var(--line); padding: 0 2vw; }
+        footer.win { background: linear-gradient(90deg, #8a5a00, #f2c300, #f57c00, #8a5a00); background-size: 200% 100%; color: #1b1000; animation: shine 2.4s linear infinite; }
+        @keyframes shine { to { background-position: 200% 0; } }
+
+        @media (orientation: portrait), (max-width: 900px) {
+            body { overflow: auto; }
+            .screen { height: auto; min-height: 100vh; }
+            main { grid-template-columns: 1fr; }
+            header { gap: 3vw; }
+            .round { margin-left: 0; width: 100%; text-align: left; }
+            .round .hash { max-width: 100%; }
+            #board .l6-stage { grid-template-columns: 1fr; }
+            #board .l6-drum { display: none; }
+            .pay { grid-template-columns: repeat(2, 1fr); }
+            footer { font-size: 2.6vh; }
+        }
+        @media (prefers-reduced-motion: reduce) { footer.win { animation: none; } }
+    </style>
+</head>
+<body>
+<div class="screen">
+    <header>
+        <img src="/static/img/logo.png" alt="King Paryaj" onerror="this.style.display='none'">
+        <div class="brand">LUCKY<span>6</span></div>
+        <span id="pill" class="pill">Connexion…</span>
+        <span id="live" class="live" title="Temps réel"></span>
+        <div class="round">
+            <div class="no" id="roundNo">—</div>
+            <div class="hash" id="hash"></div>
+        </div>
+    </header>
+
+    <main>
+        <section class="card"><div id="board"></div></section>
+        <section class="side">
+            <div class="card" id="payCard">
+                <div class="title"><span>Gain selon la position du 6e</span><b id="nextInfo"></b></div>
+                <div class="pay" id="pay"></div>
+            </div>
+            <div class="card" id="sideCard">
+                <div class="title"><span id="sideTitle">Derniers tirages</span><b id="sideExtra"></b></div>
+                <div id="side" class="hist"></div>
+            </div>
+        </section>
+    </main>
+
+    <footer id="footer">Chargement…</footer>
+</div>
+
+<script src="/static/js/lucky6.js"></script>
+<script>
+(function () {
+    const L6 = window.Lucky6;
+    const $ = id => document.getElementById(id);
+    const esc = L6.esc, money = L6.money, mult = L6.mult;
+    const CODE = {{ code|tojson }};
+    const clock = new L6.ServerClock();
+    const board = new L6.Board($('board'), { clock });
+
+    let state = null;          // réponse /lucky6/api/live
+    let shown = null;          // manche affichée sur le tableau
+    let holdUntil = 0;         // garde le résultat à l'écran quelques secondes
+    let screen = null;         // écran du guichet : aperçu + tickets
+    const HOLD_MS = 15000;
+
+    const time = iso => iso ? new Date(L6.parseUtc(iso)).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '—';
+
+    function pickRound() {
+        const cur = state && state.race;
+        const now = clock.now();
+        if (shown && (!cur || cur.race_id !== shown.race_id) && ['RUNNING', 'FINISHED', 'SETTLED'].includes(shown.status)) {
+            // la manche affichée vient de se terminer : on garde son résultat quelques secondes
+            if (!holdUntil) holdUntil = now + HOLD_MS;
+            if (now < holdUntil) {
+                const done = ((state && state.history) || []).find(r => r.race_id === shown.race_id);
+                if (done) shown = done;
+                return shown;
+            }
+        }
+        holdUntil = 0;
+        shown = cur || null;
+        return shown;
+    }
+
+    function myTicketsFor(roundId) {
+        return ((screen && screen.tickets) || []).filter(t => t.race_id === roundId);
+    }
+
+    function render() {
+        const r = pickRound();
+        board.setRound(r);
+        const mine = r ? myTicketsFor(r.race_id).filter(t => t.bet_type === 'SIX') : [];
+        const picks = mine.length ? mine[mine.length - 1].selection : [];
+        const key = picks.join(',');
+        if (key !== board._picksKey) { board._picksKey = key; board.setPicks(picks); }
+
+        $('roundNo').textContent = r ? 'Manche #' + r.race_number : 'Lucky6';
+        $('hash').textContent = r ? (r.server_seed ? 'Seed : ' + r.server_seed : 'Empreinte : ' + r.server_seed_hash) : '';
+        $('pill').className = 'pill ' + (r ? r.status : '');
+        $('pill').textContent = r ? L6.statusLabel(r.status) : 'En attente';
+
+        const table = (r && r.paytable) || (state && state.betting_race && state.betting_race.paytable) || [];
+        $('pay').innerHTML = table.map(p => `<div data-pos="${p.position}"><span>${p.position}e</span><b>${mult(p.multiplier)}</b></div>`).join('');
+        renderSide(r);
+    }
+
+    function renderSide(r) {
+        if (CODE) {
+            $('sideTitle').textContent = 'Vos tickets';
+            const items = [];
+            const pv = screen && screen.preview;
+            if (pv && (pv.selection.length || pv.bet_type !== 'SIX')) items.push(ticketHtml(pv, true));
+            ((screen && screen.tickets) || []).slice().reverse().slice(0, 4).forEach(t => items.push(ticketHtml(t, false)));
+            $('side').innerHTML = items.join('') || '<div class="muted">Votre ticket s\'affichera ici pendant la saisie au guichet.</div>';
+            return;
+        }
+        $('sideTitle').textContent = 'Derniers tirages';
+        $('side').innerHTML = ((state && state.history) || []).slice(0, 6).map(h => `<div class="row"><b>#${h.race_number}</b>
+            <div class="balls">${(h.balls || []).map(n => L6.ballHtml(n)).join('') || '<span class="muted">Annulée</span>'}</div></div>`).join('')
+            || '<div class="muted">—</div>';
+    }
+
+    function ticketHtml(t, preview) {
+        const label = t.bet_type === 'SIX' ? '6 numéros' : (t.bet_type === 'FIRST_ODD' ? '1re boule IMPAIRE' : '1re boule PAIRE');
+        const status = preview ? 'En saisie' : ({ PENDING: 'En attente', WON: 'GAGNÉ', LOST: 'Perdu', REFUNDED: 'Remboursé' }[t.status] || t.status);
+        let balls = '';
+        if (t.bet_type === 'SIX') {
+            balls = (t.selection || []).map(n => L6.ballHtml(n)).join('');
+            for (let i = (t.selection || []).length; i < 6; i++) balls += '<span class="l6-ball l6-empty">?</span>';
+        }
+        const right = !preview && t.status === 'WON' ? money(t.winnings) : (t.potential_payout != null ? 'max ' + money(t.potential_payout) : '');
+        return `<div class="ticket ${preview ? 'preview' : esc(t.status)}">
+            <div class="top"><span>Manche #${t.race_number} · ${label}</span><span class="tag ${preview ? '' : esc(t.status)}">${status}</span></div>
+            <div class="balls">${balls}</div>
+            <div class="amount"><span>${t.stake != null ? 'Mise ' + money(t.stake) : 'Mise —'}</span><span>${right}</span></div>
+        </div>`;
+    }
+
+    function tick() {
+        board.render();
+        const r = shown, now = clock.now();
+        const pr = L6.progress(r, now);
+        const next = state && state.betting_race;
+        $('nextInfo').textContent = next ? 'Prochain : #' + next.race_number + ' à ' + time(next.scheduled_at) : '';
+        // case de la table correspondant à la position atteinte
+        const ev = L6.evaluate(board.picks, (r && r.balls) || [], pr.revealed, r && r.paytable);
+        document.querySelectorAll('#pay div').forEach(d => d.classList.toggle('hot', ev.sixth && Number(d.dataset.pos) === ev.sixth));
+
+        const f = $('footer');
+        let text = '', win = false;
+        if (!r) text = next ? `Paris ouverts — manche #${next.race_number} à ${time(next.scheduled_at)}` : 'Lucky6 — prochaine manche bientôt';
+        else if (pr.phase === 'cancelled') text = 'Manche annulée — les mises sont remboursées';
+        else if (pr.phase === 'waiting') text = (r.status === 'BETTING_OPEN' ? 'Paris ouverts' : 'Paris fermés') + ' — tirage dans ' + L6.formatCountdown(L6.parseUtc(r.scheduled_at) - now);
+        else if (pr.phase === 'intro') text = 'Le tirage commence…';
+        else if (pr.phase === 'drawing') {
+            const b = r.balls[pr.revealed - 1];
+            text = `Boule ${pr.revealed} / ${L6.DRAWN} : ${b}` + (board.picks.length ? ` — vous avez ${ev.found} / 6` : '');
+        } else {
+            const mine = CODE ? myTicketsFor(r.race_id) : [];
+            const won = mine.filter(t => t.status === 'WON');
+            if (won.length) { win = true; text = 'GAGNÉ ! ' + money(won.reduce((s, t) => s + t.winnings, 0)); }
+            else if (ev.sixth) { win = true; text = `6 / 6 en position ${ev.sixth} — ${mult(ev.multiplier)}`; }
+            else if (mine.length && mine.every(t => t.status !== 'PENDING')) text = 'Pas gagnant cette fois — bonne chance pour la prochaine manche';
+            else text = `Tirage terminé — 1re boule ${r.balls[0]} ${r.balls[0] % 2 ? 'IMPAIRE' : 'PAIRE'}` + (next ? ` · prochaine manche ${time(next.scheduled_at)}` : '');
+        }
+        if (f.textContent !== text) f.textContent = text;
+        f.classList.toggle('win', win);
+        if (holdUntil && now >= holdUntil) render();
+    }
+
+    async function loadLive() {
+        try {
+            const res = await fetch('/lucky6/api/live');
+            state = await res.json();
+            clock.sync(state.server_time);
+            render();
+        } catch (e) { /* réessai */ }
+    }
+    async function loadScreen() {
+        if (!CODE) return;
+        try {
+            const data = await (await fetch('/lucky6/api/guichet/' + encodeURIComponent(CODE))).json();
+            screen = data.state || null;
+            render();
+        } catch (e) { /* réessai */ }
+    }
+
+    L6.connectLive(() => loadLive(), on => $('live').classList.toggle('on', on));
+    if (CODE) {
+        L6.connectLive((data, ev, type) => {
+            if (type === 'l6_screen') { screen = data; render(); }
+        }, null, 'l6-screen-' + CODE);
+    }
+
+    loadLive();
+    loadScreen();
+    setInterval(tick, 250);
+    setInterval(loadLive, 10000);
+    setInterval(loadScreen, 15000);
+})();
+</script>
+</body>
+</html>

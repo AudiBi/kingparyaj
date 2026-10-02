@@ -18,7 +18,6 @@ from app.models.audit import AuditLog
 from app.models.keno import KenoDraw, KenoDrawStatus
 from app.models.lucky import LuckyPlay, LuckyWheelConfig
 from app.models.notification import Notification, NotificationStatus
-from app.models.session import UserSession
 from app.models.transaction import Transaction
 
 logger = get_logger(__name__)
@@ -413,28 +412,18 @@ async def _cleanup_orphaned_data_async():
                 await db.commit()
                 logger.info(f"📬 {len(old_notifications)} notifications orphelines nettoyées")
             
-            # Tirages en attente trop vieux
-            stale_date = datetime.utcnow() - timedelta(hours=1)
-            result = await db.execute(
-                select(KenoDraw)
-                .where(
-                    and_(
-                        KenoDraw.status == KenoDrawStatus.PENDING,
-                        KenoDraw.draw_time < stale_date
-                    )
-                )
+            # Tirages en attente trop vieux : seulement ceux SANS pari (un tirage
+            # avec des paris est tiré par draw_worker.process_draw ; l'annuler
+            # ici faisait perdre les mises)
+            from app.services.keno_service import KenoService
+
+            count = await KenoService(db, redis_client).cancel_pending_draws_without_bets(
+                older_than=datetime.utcnow() - timedelta(hours=1)
             )
-            stale_draws = result.scalars().all()
-            
-            if stale_draws:
-                for draw in stale_draws:
-                    draw.status = KenoDrawStatus.CANCELLED
-                    draw.closed_at = datetime.utcnow()
-                    draw.closed_by = "system"
-                
-                await db.commit()
-                logger.info(f"🎯 {len(stale_draws)} tirages en attente annulés")
-                
+            await db.commit()
+            if count:
+                logger.info(f"🎯 {count} tirages Keno sans pari annulés")
+
     except Exception as e:
         logger.error(f"❌ Erreur nettoyage données orphelines: {e}")
         raise
@@ -459,17 +448,10 @@ async def _cleanup_old_sessions_async():
     logger.info("🧹 Nettoyage des sessions utilisateur...")
     
     try:
-        async with AsyncSessionLocal() as db:
-            expiry_date = datetime.utcnow() - timedelta(days=30)
-            
-            result = await db.execute(
-                delete(UserSession)
-                .where(UserSession.created_at < expiry_date)
-            )
-            
-            await db.commit()
-            if result.rowcount > 0:
-                logger.info(f"✅ {result.rowcount} sessions utilisateur supprimées")
+        # Il n'existe pas de table de sessions utilisateur (pas de modèle
+        # UserSession) : les sessions/jetons sont stockés dans Redis avec un
+        # TTL, qui les expire automatiquement. Rien à supprimer en base.
+        logger.info("ℹ️ Sessions utilisateur gérées par Redis (TTL) : rien à nettoyer")
                 
     except Exception as e:
         logger.error(f"❌ Erreur nettoyage sessions utilisateur: {e}")

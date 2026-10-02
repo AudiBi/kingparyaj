@@ -60,6 +60,25 @@ async def lifespan(app: FastAPI):
         logger.error(f"❌ Database connection failed: {e}")
         raise
     
+    # 2bis. Relais WebSocket : messages publiés sur Redis (y compris par les
+    # workers Celery) -> clients WebSocket connectés à ce processus
+    ws_relay_task = None
+    try:
+        import asyncio
+        from app.api.websockets.manager import run_relay
+        ws_relay_task = asyncio.create_task(run_relay())
+    except Exception as e:
+        logger.error(f"❌ WebSocket relay failed to start: {e}")
+
+    # 2ter. Cycle automatique des jeux (Keno partagé, Lucky6, Horse Races) :
+    # crée et lance les parties même sans worker Celery / Celery beat.
+    if getattr(settings, "GAME_LOOP_ENABLED", True):
+        try:
+            from app.services import game_loop
+            game_loop.start()
+        except Exception as e:
+            logger.error(f"❌ Cycle automatique des jeux non démarré : {e}")
+
     # 3. Démarrer les workers Celery (production)
     if settings.ENVIRONMENT == "production":
         try:
@@ -103,6 +122,22 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"❌ Error stopping scheduler: {e}")
     
+    # 1bis. Arrêter le cycle automatique des jeux
+    try:
+        from app.services import game_loop
+        await game_loop.stop()
+    except Exception:
+        pass
+
+    # 1ter. Arrêter le relais WebSocket
+    if ws_relay_task is not None:
+        ws_relay_task.cancel()
+        try:
+            await ws_relay_task
+        except BaseException:
+            pass
+        logger.info("✅ WebSocket relay stopped")
+
     # 2. Fermer la connexion Redis
     try:
         await redis_client.close()
@@ -250,6 +285,8 @@ from app.api.v1 import (
     admin,
     reports,
     payments,
+    horse_races,
+    lucky6,
 )
 
 api_v1_prefix = "/api/v1"
@@ -264,6 +301,8 @@ app.include_router(agent.router, prefix=api_v1_prefix)
 app.include_router(admin.router, prefix=api_v1_prefix)
 app.include_router(reports.router, prefix=api_v1_prefix)
 app.include_router(payments.router, prefix=api_v1_prefix)
+app.include_router(horse_races.router, prefix=api_v1_prefix)
+app.include_router(lucky6.router, prefix=api_v1_prefix)
 
 
 # ==================== WEBSOCKETS ====================
@@ -289,6 +328,38 @@ try:
     logger.info("✅ Admin views loaded")
 except ImportError as e:
     logger.warning(f"⚠️ Admin views not available: {e}")
+
+# ✅ Horse Races dans les panels agent et admin
+try:
+    from app.routes.horse_races import admin_router as horse_races_admin_router
+    from app.routes.horse_races import agent_router as horse_races_agent_router
+    from app.routes.horse_races import public_router as horse_races_public_router
+    app.include_router(horse_races_agent_router)
+    app.include_router(horse_races_admin_router)
+    app.include_router(horse_races_public_router)
+    logger.info("✅ Horse Races views loaded")
+except ImportError as e:
+    logger.warning(f"⚠️ Horse Races views not available: {e}")
+
+# ✅ Lucky6 dans les panels agent et admin + écrans publics
+try:
+    from app.routes.lucky6 import admin_router as lucky6_admin_router
+    from app.routes.lucky6 import agent_router as lucky6_agent_router
+    from app.routes.lucky6 import public_router as lucky6_public_router
+    app.include_router(lucky6_agent_router)
+    app.include_router(lucky6_admin_router)
+    app.include_router(lucky6_public_router)
+    logger.info("✅ Lucky6 views loaded")
+except ImportError as e:
+    logger.warning(f"⚠️ Lucky6 views not available: {e}")
+
+# ✅ Keno : pages publiques (vérification d'un tirage)
+try:
+    from app.routes.keno import public_router as keno_public_router
+    app.include_router(keno_public_router)
+    logger.info("✅ Keno public views loaded")
+except ImportError as e:
+    logger.warning(f"⚠️ Keno public views not available: {e}")
 
 # ✅ Routes pour l'interface publique
 # try:

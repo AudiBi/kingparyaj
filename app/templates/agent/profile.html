@@ -27,8 +27,8 @@
                 <tr><td style="padding:6px 0;color:#94a3b8;">Email</td><td style="padding:6px 0;">{{ agent.email or 'Non renseigné' }}</td></tr>
                 <tr><td style="padding:6px 0;color:#94a3b8;">Bureau</td><td style="padding:6px 0;">{{ agent.bureau_name }}</td></tr>
                 <tr><td style="padding:6px 0;color:#94a3b8;">Code agent</td><td style="padding:6px 0;font-family:monospace;">{{ agent.code }}</td></tr>
-                <tr><td style="padding:6px 0;color:#94a3b8;">Inscrit le</td><td style="padding:6px 0;">{{ agent.created_at.strftime('%d/%m/%Y') }}</td></tr>
-                <tr><td style="padding:6px 0;color:#94a3b8;">Dernière connexion</td><td style="padding:6px 0;">{{ agent.last_login.strftime('%d/%m/%Y %H:%M') if agent.last_login else 'Jamais' }}</td></tr>
+                <tr><td style="padding:6px 0;color:#94a3b8;">Inscrit le</td><td style="padding:6px 0;">{{ (agent.created_at|local).strftime('%d/%m/%Y') }}</td></tr>
+                <tr><td style="padding:6px 0;color:#94a3b8;">Dernière connexion</td><td style="padding:6px 0;">{{ (agent.last_login|local).strftime('%d/%m/%Y %H:%M') if agent.last_login else 'Jamais' }}</td></tr>
             </table>
         </div>
     </div>

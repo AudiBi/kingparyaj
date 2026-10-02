@@ -308,8 +308,9 @@ class ResponsibleService(BaseService[SelfExclusion, None, None]):
         
         await self.db.flush()
         
-        # Mettre à jour le wallet
-        wallet = await self.db.get(Wallet, user_id)
+        # Mettre à jour le wallet (clé = user_id, pas la PK du wallet)
+        wallet_result = await self.db.execute(select(Wallet).where(Wallet.user_id == user_id))
+        wallet = wallet_result.scalar_one_or_none()
         if wallet:
             if limit_type == "DAILY_DEPOSIT":
                 wallet.daily_deposit_limit = amount

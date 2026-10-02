@@ -9,11 +9,9 @@ rejeté par POST /keno/ticket-bets et POST /lucky/wheel/spin-ticket, qui
 répondaient à tort "Ticket expiré ou déjà payé". Les tests ci-dessous
 vérifient qu'un ticket actif est désormais accepté par les deux routes.
 
-KenoDraw/KenoBet utilisent des colonnes ARRAY (Postgres-only, non créables
-sur la base SQLite de test) : le test Keno s'arrête donc volontairement à la
-vérification "solde ticket insuffisant" (qui répond avant toute requête sur
-ces tables) pour prouver que le contrôle de statut est passé. Le test Lucky,
-lui, va jusqu'au bout (LuckyPlay n'utilise que du JSON, portable).
+Le test Keno s'arrête volontairement à la vérification "solde ticket
+insuffisant" pour prouver que le contrôle de statut est passé (le règlement
+Keno complet est couvert par tests/test_services/test_keno_service.py).
 """
 
 from decimal import Decimal
@@ -60,17 +58,30 @@ def _agent_headers(agent_id: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
+async def _open_keno_draw(db_session, fake_redis=None, agent_id="agent"):
+    """Tirage instantané préparé (empreinte publiée avant le pari)."""
+    import json
+
+    from app.services import keno_engine
+    from app.services.keno_service import CONFIG_KEY, KenoService
+
+    # option « instantané » (le mode par défaut est partagé)
+    await fake_redis.set(CONFIG_KEY, json.dumps(keno_engine.validate_config({"mode": "instant"})))
+    return await KenoService(db_session, fake_redis).prepare_instant_draw(agent_id)
+
+
 @pytest.mark.asyncio
 async def test_active_ticket_is_accepted_by_keno_ticket_bet_route(
-    ticket_play_client, make_agent, make_ticket
+    ticket_play_client, make_agent, make_ticket, db_session, fake_redis
 ):
     agent = await make_agent()
     ticket = await make_ticket(agent, balance=Decimal("5"))  # volontairement petit
+    draw = await _open_keno_draw(db_session, fake_redis, agent.id)
 
     response = await ticket_play_client.post(
         "/api/v1/keno/ticket-bets",
         params={"ticket_number": ticket["ticket_number"]},
-        json={"draw_id": "does-not-need-to-exist-yet", "picks": [1, 2, 3], "stake": 1000},
+        json={"draw_id": draw.id, "picks": [1, 2, 3], "stake": 1000},
         headers=_agent_headers(agent.id),
     )
 
@@ -90,16 +101,17 @@ async def test_expired_or_paid_ticket_is_still_rejected_by_keno_route(
 
     ticket_service = TicketService(db_session, fake_redis)
     await ticket_service.payout_ticket(ticket["ticket_number"], agent_id=agent.id)
+    draw = await _open_keno_draw(db_session, fake_redis, agent.id)
 
     response = await ticket_play_client.post(
         "/api/v1/keno/ticket-bets",
         params={"ticket_number": ticket["ticket_number"]},
-        json={"draw_id": "whatever", "picks": [1, 2, 3], "stake": 10},
+        json={"draw_id": draw.id, "picks": [1, 2, 3], "stake": 10},
         headers=_agent_headers(agent.id),
     )
 
     assert response.status_code == 400
-    assert "expiré ou déjà payé" in response.json()["detail"]
+    assert "inactif" in response.json()["detail"]
 
 
 @pytest.mark.asyncio

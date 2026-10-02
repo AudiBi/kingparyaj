@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<!-- app/templates/public/horse_races_bet.html : suivi d'un pari par le joueur (lecture seule) -->
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mon pari — King Paryaj</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png">
+    <link rel="icon" href="/static/img/favicon.ico" sizes="any">
+    <link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { background: #f1f5f9; color: #0f172a; font-family: Inter, system-ui, -apple-system, 'Segoe UI', sans-serif; padding: 16px; }
+        .wrap { max-width: 560px; margin: 0 auto; }
+        h1 { font-size: 22px; margin: 8px 0 4px; }
+        p.lead { color: #475569; font-size: 14px; margin-bottom: 14px; }
+        form { display: flex; gap: 8px; margin-bottom: 16px; }
+        input { flex: 1; min-width: 0; padding: 12px; border: 1px solid #cbd5e1; border-radius: 10px; font-size: 15px; }
+        button { padding: 12px 16px; border: 0; border-radius: 10px; background: #059669; color: #fff; font-weight: 700; font-size: 15px; cursor: pointer; }
+        .card { background: #fff; border-radius: 12px; padding: 14px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+        .row { display: flex; justify-content: space-between; gap: 10px; font-size: 14px; padding: 3px 0; }
+        .row span:first-child { color: #64748b; }
+        .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-weight: 800; font-size: 12px; background: #e2e8f0; }
+        .WON { background: #dcfce7; color: #166534; } .LOST { background: #fee2e2; color: #991b1b; }
+        .PENDING { background: #fef3c7; color: #92400e; } .REFUNDED { background: #e0e7ff; color: #3730a3; }
+        .muted { color: #64748b; font-size: 13px; }
+        a { color: #059669; font-weight: 700; }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <img src="/static/img/logo-192.png" alt="King Paryaj" style="width:110px;height:auto;display:block;margin:0 auto 4px;">
+    <h1>Suivre mon pari Horse Races</h1>
+    <p class="lead">Entrez le code imprimé sur votre reçu, ou le numéro de votre ticket.</p>
+    <form id="lookup">
+        <input id="code" name="code" value="{{ code|e }}" placeholder="Code du pari ou KNO-XXXX-XXXX" required minlength="6" maxlength="40" autocomplete="off">
+        <button type="submit">Voir</button>
+    </form>
+    <div id="results"></div>
+    <p class="muted">Regardez la course en direct : <a href="/horse-races/ecran">écran Horse Races</a></p>
+</div>
+
+<script>
+(function () {
+    const STATUS = { PENDING: 'En attente', WON: 'Gagné', LOST: 'Perdu', REFUNDED: 'Remboursé', VOID: 'Annulé' };
+    const RACE = { SCHEDULED: 'Programmée', BETTING_OPEN: 'Paris ouverts', BETTING_CLOSED: 'Paris fermés', RUNNING: 'Course en cours', FINISHED: 'Arrivée', SETTLED: 'Terminée', CANCELLED: 'Annulée' };
+    const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const money = n => Number(n || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 }) + ' HTG';
+    const out = document.getElementById('results');
+
+    async function lookup(code) {
+        out.innerHTML = '<p class="muted">Recherche…</p>';
+        try {
+            const res = await fetch('/api/v1/horse-races/lookup?code=' + encodeURIComponent(code));
+            const data = await res.json();
+            if (!res.ok) { out.innerHTML = '<div class="card">Code invalide.</div>'; return; }
+            if (!data.bets.length) { out.innerHTML = '<div class="card">Aucun pari trouvé pour ce code.</div>'; return; }
+            out.innerHTML = data.bets.map(b => {
+                const ordered = b.bet_type === 'EXACTA' || b.bet_type === 'TRIFECTA';
+                const sel = b.selection.map((n, i) => `№${n} ${esc(b.selection_names[i] || '')}`).join(ordered ? ' → ' : ' + ');
+                const podium = (b.race_results || []).slice(0, 3).map(r => `${r.position}. №${r.player_number} ${esc(r.player_name)}`).join('<br>');
+                return `<div class="card">
+                    <div class="row"><b>Course #${b.race_number}</b><span class="badge ${b.status}">${STATUS[b.status] || b.status}</span></div>
+                    <div class="row"><span>Course</span><span>${RACE[b.race_status] || b.race_status}</span></div>
+                    <div class="row"><span>Départ</span><span>${new Date(b.race_scheduled_at).toLocaleString('fr-FR')}</span></div>
+                    <div class="row"><span>Pari</span><span>${b.bet_type}</span></div>
+                    <div class="row"><span>Sélection</span><span>${sel}</span></div>
+                    <div class="row"><span>Mise</span><span>${money(b.stake)}</span></div>
+                    <div class="row"><span>Cote</span><span>${b.odds.toFixed(2)}</span></div>
+                    <div class="row"><span>${b.status === 'WON' ? 'Gain' : 'Gain potentiel'}</span><span><b>${money(b.status === 'WON' ? b.winnings : b.potential_payout)}</b></span></div>
+                    ${podium ? `<div class="row"><span>Arrivée</span><span style="text-align:right">${podium}</span></div>` : ''}
+                    ${b.status === 'WON' ? '<p class="muted">Présentez votre reçu ou votre ticket à l’agent.</p>' : ''}
+                </div>`;
+            }).join('');
+        } catch (e) {
+            out.innerHTML = '<div class="card">Erreur réseau, réessayez.</div>';
+        }
+    }
+
+    document.getElementById('lookup').addEventListener('submit', e => {
+        e.preventDefault();
+        const code = document.getElementById('code').value.trim();
+        history.replaceState(null, '', '?code=' + encodeURIComponent(code));
+        lookup(code);
+    });
+    const initial = document.getElementById('code').value.trim();
+    if (initial) lookup(initial);
+    setInterval(() => { const c = document.getElementById('code').value.trim(); if (c && out.querySelector('.PENDING')) lookup(c); }, 20000);
+})();
+</script>
+</body>
+</html>

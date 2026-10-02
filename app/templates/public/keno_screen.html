@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<!-- app/templates/public/keno_screen.html : écran du joueur au guichet (Keno instantané) -->
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Keno — Écran joueur — King Paryaj</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png">
+    <link rel="icon" href="/static/img/favicon.ico" sizes="any">
+    <style>
+        :root {
+            --bg: #07130f; --panel: #0d2019; --line: #1c3a2f; --text: #ecfdf5; --muted: #8fb5a6;
+            --gold: #fbbf24; --gold-2: #f59e0b; --green: #10b981; --red: #ef4444;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { height: 100%; }
+        body { background: radial-gradient(ellipse at 30% 0%, #12372a 0%, var(--bg) 60%); color: var(--text);
+               font-family: Inter, system-ui, -apple-system, 'Segoe UI', sans-serif; overflow: hidden; }
+        .screen { height: 100vh; display: grid; grid-template-rows: auto 1fr auto; gap: 1.2vh; padding: 1.6vh 1.6vw; }
+
+        header { display: flex; align-items: center; gap: 1.4vw; flex-wrap: wrap; }
+        header img { height: 6.5vh; width: auto; }
+        .brand { font-size: 4.2vh; font-weight: 900; letter-spacing: .3vh; }
+        .brand span { color: var(--gold); }
+        .draw { margin-left: auto; text-align: right; }
+        .draw .no { font-size: 3.2vh; font-weight: 800; }
+        .draw .hash { font-family: 'Courier New', monospace; font-size: 1.4vh; color: var(--muted); word-break: break-all; }
+        .draw { min-width: 0; }
+        .pill { padding: .7vh 1.4vw; border-radius: 999px; font-weight: 800; font-size: 2vh; background: #1f2937; color: #e5e7eb; white-space: nowrap; }
+        .pill.wait { background: #1e293b; } .pill.ticket { background: #064e3b; color: #a7f3d0; }
+        .pill.launch, .pill.draw { background: var(--gold-2); color: #111827; animation: pulse 1s infinite; }
+        .pill.won { background: var(--green); color: #052e16; } .pill.lost { background: #334155; }
+        .live { width: 1.2vh; height: 1.2vh; border-radius: 50%; background: #64748b; display: inline-block; margin-right: .5vw; }
+        .live.on { background: #22c55e; box-shadow: 0 0 1vh #22c55e; }
+        @keyframes pulse { 50% { opacity: .65; } }
+
+        main { display: grid; grid-template-columns: 1.35fr 1fr; gap: 1.6vw; min-height: 0; }
+        .card { background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.01)); border: 1px solid var(--line);
+                border-radius: 2vh; padding: 1.6vh 1.2vw; min-height: 0; }
+        .left { display: grid; grid-template-rows: 1fr auto; gap: 1.4vh; min-height: 0; }
+        .machine { position: relative; min-height: 0; padding: 0; overflow: hidden; }
+        #machine { width: 100%; height: 100%; display: block; }
+        .title { font-size: 1.8vh; letter-spacing: .25vh; text-transform: uppercase; color: var(--muted); font-weight: 800; margin-bottom: 1vh; display: flex; justify-content: space-between; }
+        .title b { color: var(--text); }
+
+        .board { display: grid; grid-template-columns: repeat(10, 1fr); gap: .5vh; }
+        .cell { height: 3.4vh; border-radius: .7vh; background: #0b1914; border: 1px solid #16302a; display: flex; align-items: center;
+                justify-content: center; font-weight: 800; font-size: 1.7vh; color: #4b6b5f; transition: all .3s; }
+        .cell.picked { border-color: var(--green); color: #a7f3d0; background: #063826; }
+        .cell.drawn { background: #3b2f0b; color: var(--gold); border-color: #7c5d10; }
+        .cell.hit { background: var(--gold); color: #111827; border-color: #fde68a; transform: scale(1.08); box-shadow: 0 0 1.4vh rgba(251,191,36,.7); }
+
+        .right { display: grid; grid-template-rows: auto auto 1fr; gap: 1.4vh; min-height: 0; }
+        .balls { display: flex; flex-wrap: wrap; gap: .9vh; min-height: 6.5vh; align-items: center; }
+        .ball { width: 6.2vh; height: 6.2vh; border-radius: 50%; display: flex; align-items: center; justify-content: center; position: relative;
+                font-weight: 900; font-size: 2.5vh; color: #111827; box-shadow: inset -0.6vh -0.8vh 1.4vh rgba(0,0,0,.35), 0 .6vh 1.2vh rgba(0,0,0,.4); }
+        .ball::before { content: ''; position: absolute; inset: 22%; border-radius: 50%; background: #fff; }
+        .ball span { position: relative; }
+        .ball.hit { outline: .5vh solid var(--gold); outline-offset: .3vh; animation: glow 1.2s ease-in-out infinite; }
+        .ball.miss { filter: saturate(.25) brightness(.8); }
+        @keyframes glow { 50% { box-shadow: 0 0 2.4vh rgba(251,191,36,.9); } }
+        .muted { color: var(--muted); font-size: 1.9vh; }
+        .stake { display: grid; grid-template-columns: 1fr 1fr; gap: 1vw; margin-top: 1.2vh; }
+        .stake div { background: #0b1914; border: 1px solid var(--line); border-radius: 1.2vh; padding: 1vh 1vw; }
+        .stake small { display: block; color: var(--muted); font-size: 1.5vh; text-transform: uppercase; letter-spacing: .15vh; }
+        .stake b { font-size: 3.4vh; font-variant-numeric: tabular-nums; }
+        .pay { width: 100%; border-collapse: collapse; margin-top: 1vh; font-size: 1.7vh; }
+        .pay td { padding: .35vh .4vw; border-bottom: 1px solid #12271f; font-variant-numeric: tabular-nums; }
+        .pay td:last-child { text-align: right; font-weight: 800; }
+        .pay tr.active td { color: var(--gold); }
+
+        .slots { display: grid; grid-template-columns: repeat(10, 1fr); gap: .8vh; }
+        .slot { aspect-ratio: 1/1; border-radius: 50%; border: .3vh dashed #1f4436; display: flex; align-items: center; justify-content: center; }
+        .slot .ball { width: 100%; height: 100%; font-size: 2vh; animation: drop .45s cubic-bezier(.2,1.4,.5,1); }
+        @keyframes drop { from { transform: translateY(-3vh) scale(.3); opacity: 0; } to { transform: none; opacity: 1; } }
+        .count { font-size: 2.4vh; font-weight: 900; }
+
+        footer { min-height: 8vh; display: flex; align-items: center; justify-content: center; border-radius: 2vh; font-size: 3.6vh; font-weight: 900;
+                 background: #0d2019; border: 1px solid var(--line); text-align: center; padding: 0 2vw; }
+        footer.won { background: linear-gradient(90deg, #065f46, #10b981, #065f46); color: #fff; animation: shine 2s linear infinite; background-size: 200% 100%; }
+        footer.lost { background: #1e293b; color: #cbd5e1; }
+        @keyframes shine { to { background-position: 200% 0; } }
+        #confetti { position: fixed; inset: 0; pointer-events: none; }
+        .sound { position: fixed; right: 1vw; bottom: 1vh; background: rgba(255,255,255,.08); color: var(--muted); border: 1px solid var(--line);
+                 border-radius: 999px; padding: .6vh 1vw; font-size: 1.5vh; cursor: pointer; }
+
+        @media (orientation: portrait) {
+            body { overflow: auto; }
+            .screen { height: auto; min-height: 100vh; }
+            main { grid-template-columns: 1fr; }
+            .machine { height: 55vh; }
+            .left { grid-template-rows: auto auto; }
+            .brand { font-size: 3vh; }
+            .draw { margin-left: 0; text-align: left; flex: 1 1 100%; }
+            .cell { height: 3vh; font-size: 1.4vh; }
+            .slots { grid-template-columns: repeat(5, 1fr); }
+        }
+        @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+    </style>
+</head>
+<body>
+<div class="screen">
+    <header>
+        <img src="/static/img/logo-192.png" alt="King Paryaj">
+        <div class="brand">KENO <span>INSTANTANÉ</span></div>
+        <div class="draw">
+            <div class="no"><span class="live" id="live" title="Connexion"></span><span id="drawNo">Tirage —</span></div>
+            <div class="hash" id="hash">Empreinte du tirage : —</div>
+        </div>
+        <div class="pill wait" id="status" role="status">En attente</div>
+    </header>
+
+    <main>
+        <section class="left">
+            <div class="card machine"><canvas id="machine" aria-label="Tireuse de boules"></canvas></div>
+            <div class="card">
+                <div class="title"><span>Tableau des 80 numéros</span><span>Tirés : <b id="drawnCount">0</b> / 20</span></div>
+                <div class="board" id="board"></div>
+            </div>
+        </section>
+
+        <section class="right">
+            <div class="card">
+                <div class="title"><span>Votre ticket</span><span><b id="spots">0</b> numéro(s)</span></div>
+                <div class="balls" id="picks"><span class="muted">L'agent saisit vos numéros…</span></div>
+                <div class="stake">
+                    <div><small>Mise</small><b id="stake">—</b></div>
+                    <div><small>Gain maximum</small><b id="maxWin">—</b></div>
+                </div>
+                <table class="pay" id="pay"></table>
+            </div>
+            <div class="card">
+                <div class="title"><span>Numéros sortis</span><span>Trouvés : <b class="count" id="hits">0</b></span></div>
+                <div class="slots" id="slots"></div>
+            </div>
+            <div class="card" style="display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;">
+                <div class="muted" id="lastLabel">Gain</div>
+                <div style="font-size:7vh;font-weight:900;font-variant-numeric:tabular-nums;" id="payout">—</div>
+                <div class="muted" id="verify" style="font-size:1.4vh;word-break:break-all;"></div>
+            </div>
+        </section>
+    </main>
+
+    <footer id="banner">Bienvenue ! Choisissez de 1 à 10 numéros au guichet.</footer>
+</div>
+<canvas id="confetti"></canvas>
+<button class="sound" id="soundBtn" type="button" aria-pressed="false">Son : désactivé</button>
+
+<script charset="utf-8">
+(function () {
+    'use strict';
+    const CODE = '{{ code|e }}';
+    const $ = id => document.getElementById(id);
+    const money = n => n == null ? '—' : Number(n).toLocaleString('fr-FR', { maximumFractionDigits: 2 }) + ' HTG';
+    const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    // Couleur des boules par dizaine (comme une vraie tireuse)
+    const COLORS = ['#facc15', '#fb923c', '#f87171', '#f472b6', '#c084fc', '#60a5fa', '#34d399', '#a3e635'];
+    const colorOf = n => COLORS[Math.floor((n - 1) / 10)];
+    const ballHtml = (n, cls = '') => `<div class="ball ${cls}" style="background:radial-gradient(circle at 30% 28%, #fff 0 6%, ${colorOf(n)} 30%, ${shade(colorOf(n), -35)} 100%)"><span>${n}</span></div>`;
+    function shade(hex, pct) {
+        const n = parseInt(hex.slice(1), 16), f = 1 + pct / 100;
+        const c = v => Math.max(0, Math.min(255, Math.round(v * f)));
+        return '#' + [n >> 16, (n >> 8) & 255, n & 255].map(v => c(v).toString(16).padStart(2, '0')).join('');
+    }
+
+    // ---------- Tableau 1-80 et emplacements ----------
+    $('board').innerHTML = Array.from({ length: 80 }, (_, i) => `<div class="cell" id="c${i + 1}">${i + 1}</div>`).join('');
+    function resetSlots() { $('slots').innerHTML = Array.from({ length: 20 }, () => '<div class="slot"></div>').join(''); }
+    resetSlots();
+
+    // ---------- Son (optionnel, activé par un clic) ----------
+    let audio = null;
+    $('soundBtn').addEventListener('click', () => {
+        if (audio) { audio.close(); audio = null; } else { audio = new (window.AudioContext || window.webkitAudioContext)(); }
+        $('soundBtn').textContent = 'Son : ' + (audio ? 'activé' : 'désactivé');
+        $('soundBtn').setAttribute('aria-pressed', String(!!audio));
+    });
+    function beep(freq, ms, vol = .08) {
+        if (!audio) return;
+        const o = audio.createOscillator(), g = audio.createGain();
+        o.frequency.value = freq; o.type = 'sine';
+        g.gain.setValueAtTime(vol, audio.currentTime); g.gain.exponentialRampToValueAtTime(.0001, audio.currentTime + ms / 1000);
+        o.connect(g).connect(audio.destination); o.start(); o.stop(audio.currentTime + ms / 1000);
+    }
+
+    // ============================================================
+    // Tireuse : sphère de verre, 80 boules brassées par l'air,
+    // sortie par le tube et présentation de chaque numéro.
+    // Les numéros viennent du serveur : l'animation ne choisit rien.
+    // ============================================================
+    const cv = $('machine'), ctx = cv.getContext('2d');
+    let W = 0, H = 0, DPR = 1, G = null;            // G : géométrie
+    const balls = [];                                // boules dans la sphère
+    let energy = 0.25;                               // intensité du brassage
+    let flying = null;                               // boule en cours de sortie
+    let presented = null;                            // grosse boule affichée
+
+    function layout() {
+        DPR = Math.min(2, window.devicePixelRatio || 1);
+        const r = cv.getBoundingClientRect();
+        W = r.width; H = r.height;
+        cv.width = W * DPR; cv.height = H * DPR;
+        ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+        const R = Math.min(W * 0.33, H * 0.40);
+        const cx = W * 0.38, cy = H * 0.50;
+        G = { R, cx, cy, rb: R * 0.085, px: W * 0.80, py: H * 0.38, pr: Math.min(W * 0.14, H * 0.24) };
+        balls.forEach(b => { b.x = cx + (b.x - (b._cx || cx)) * 1; b._cx = cx; });
+    }
+
+    function fillGlobe(exclude = []) {
+        balls.length = 0;
+        for (let n = 1; n <= 80; n++) {
+            if (exclude.includes(n)) continue;
+            const a = Math.random() * Math.PI * 2, d = Math.sqrt(Math.random()) * (G.R - G.rb * 1.2);
+            balls.push({ n, x: G.cx + Math.cos(a) * d, y: G.cy + Math.sin(a) * d, vx: 0, vy: 0, rot: Math.random() * 6 });
+        }
+    }
+
+    function step(dt) {
+        const { R, cx, cy, rb } = G;
+        const k = Math.min(dt, 32) / 16;
+        for (const b of balls) {
+            // gravité + jets d'air depuis le bas de la sphère
+            b.vy += 0.18 * k;
+            const fromBottom = (b.y - cy) / R;
+            if (fromBottom > 0.35) b.vy -= energy * (0.9 + Math.random() * 1.6) * k;
+            b.vx += (Math.random() - 0.5) * energy * 1.4 * k;
+            b.vx *= 0.995; b.vy *= 0.995;
+            b.x += b.vx * k; b.y += b.vy * k;
+            b.rot += b.vx * 0.05;
+            // paroi de la sphère
+            const dx = b.x - cx, dy = b.y - cy, d = Math.hypot(dx, dy), lim = R - rb - 2;
+            if (d > lim) {
+                const nx = dx / d, ny = dy / d;
+                b.x = cx + nx * lim; b.y = cy + ny * lim;
+                const dot = b.vx * nx + b.vy * ny;
+                b.vx -= 1.75 * dot * nx; b.vy -= 1.75 * dot * ny;
+            }
+        }
+        // chocs entre boules (séparation simple)
+        for (let i = 0; i < balls.length; i++) {
+            for (let j = i + 1; j < balls.length; j++) {
+                const a = balls[i], b = balls[j];
+                const dx = b.x - a.x, dy = b.y - a.y, d2 = dx * dx + dy * dy, min = rb * 2;
+                if (d2 < min * min && d2 > 0.01) {
+                    const d = Math.sqrt(d2), push = (min - d) / 2, nx = dx / d, ny = dy / d;
+                    a.x -= nx * push; a.y -= ny * push; b.x += nx * push; b.y += ny * push;
+                    const rv = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
+                    if (rv < 0) { a.vx += rv * nx * 0.9; a.vy += rv * ny * 0.9; b.vx -= rv * nx * 0.9; b.vy -= rv * ny * 0.9; }
+                }
+            }
+        }
+    }
+
+    function drawBall(x, y, r, n, alpha = 1) {
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.shadowColor = 'rgba(0,0,0,.45)'; ctx.shadowBlur = r * 0.5; ctx.shadowOffsetY = r * 0.18;
+        const g = ctx.createRadialGradient(x - r * 0.35, y - r * 0.4, r * 0.05, x, y, r);
+        g.addColorStop(0, '#ffffff'); g.addColorStop(0.18, colorOf(n)); g.addColorStop(1, shade(colorOf(n), -45));
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+        ctx.shadowColor = 'transparent';
+        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(x, y, r * 0.56, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#111827'; ctx.font = `900 ${r * (n > 9 ? 0.62 : 0.72)}px Inter, system-ui, sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(n, x, y + r * 0.04);
+        ctx.restore();
+    }
+
+    function tubePoint(t) {
+        // tube : sommet de la sphère -> col -> fenêtre de présentation
+        const { cx, cy, R, px, py } = G;
+        const p0 = [cx, cy - R], p1 = [cx, cy - R - H * 0.16], p2 = [px - G.pr * 1.2, cy - R - H * 0.16], p3 = [px - G.pr * 0.2, py];
+        const u = 1 - t;
+        return [
+            u * u * u * p0[0] + 3 * u * u * t * p1[0] + 3 * u * t * t * p2[0] + t * t * t * p3[0],
+            u * u * u * p0[1] + 3 * u * u * t * p1[1] + 3 * u * t * t * p2[1] + t * t * t * p3[1],
+        ];
+    }
+
+    function drawMachine() {
+        const { R, cx, cy, rb, px, py, pr } = G;
+        ctx.clearRect(0, 0, W, H);
+        // socle
+        const base = ctx.createLinearGradient(0, cy + R * 0.8, 0, cy + R * 1.35);
+        base.addColorStop(0, '#94a3b8'); base.addColorStop(.5, '#e2e8f0'); base.addColorStop(1, '#475569');
+        ctx.fillStyle = base;
+        ctx.beginPath(); ctx.moveTo(cx - R * 0.55, cy + R * 0.88); ctx.lineTo(cx + R * 0.55, cy + R * 0.88);
+        ctx.lineTo(cx + R * 0.85, cy + R * 1.32); ctx.lineTo(cx - R * 0.85, cy + R * 1.32); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = '#0f172a'; ctx.font = `800 ${R * 0.09}px Inter, system-ui`; ctx.textAlign = 'center';
+        ctx.fillText('KING PARYAJ', cx, cy + R * 1.17);
+        // tube
+        ctx.lineCap = 'round';
+        ctx.strokeStyle = 'rgba(203,213,225,.18)'; ctx.lineWidth = rb * 2.6;
+        ctx.beginPath(); for (let t = 0; t <= 1.001; t += 0.05) { const [x, y] = tubePoint(t); t === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); } ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 1.5; ctx.stroke();
+        // intérieur de la sphère
+        const inner = ctx.createRadialGradient(cx - R * 0.3, cy - R * 0.35, R * 0.1, cx, cy, R);
+        inner.addColorStop(0, 'rgba(255,255,255,.10)'); inner.addColorStop(1, 'rgba(16,185,129,.06)');
+        ctx.fillStyle = inner; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
+        // boules
+        for (const b of balls) drawBall(b.x, b.y, rb, b.n);
+        // verre : reflets
+        ctx.strokeStyle = 'rgba(226,232,240,.55)'; ctx.lineWidth = R * 0.035;
+        ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,255,255,.22)'; ctx.lineWidth = R * 0.05;
+        ctx.beginPath(); ctx.arc(cx, cy, R * 0.86, Math.PI * 1.1, Math.PI * 1.45); ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,255,255,.12)'; ctx.lineWidth = R * 0.02;
+        ctx.beginPath(); ctx.arc(cx, cy, R * 0.9, Math.PI * 0.05, Math.PI * 0.3); ctx.stroke();
+        // fenêtre de présentation
+        const ring = ctx.createRadialGradient(px, py, pr * 0.8, px, py, pr * 1.15);
+        ring.addColorStop(0, 'rgba(251,191,36,0)'); ring.addColorStop(1, presented ? 'rgba(251,191,36,.35)' : 'rgba(148,163,184,.12)');
+        ctx.fillStyle = ring; ctx.beginPath(); ctx.arc(px, py, pr * 1.15, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = presented ? '#fbbf24' : 'rgba(148,163,184,.4)'; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(px, py, pr * 1.05, 0, Math.PI * 2); ctx.stroke();
+        // boule en vol / présentée
+        if (flying) {
+            if (flying.phase === 'suck') drawBall(flying.x, flying.y, rb, flying.n);
+            else { const [x, y] = tubePoint(flying.t); drawBall(x, y, rb * (1 + flying.t * 0.6), flying.n); }
+        }
+        if (presented) {
+            const s = presented.scale;
+            drawBall(px, py, pr * s, presented.n);
+            if (presented.label) {
+                ctx.fillStyle = presented.hit ? '#fbbf24' : '#cbd5e1';
+                ctx.font = `900 ${pr * 0.24}px Inter, system-ui`; ctx.textAlign = 'center';
+                ctx.fillText(presented.label, px, py + pr * 1.42);
+            }
+        } else if (!flying) {
+            ctx.fillStyle = 'rgba(203,213,225,.55)'; ctx.font = `700 ${pr * 0.16}px Inter, system-ui`; ctx.textAlign = 'center';
+            ctx.fillText(idleText, px, py + 6);
+        }
+    }
+
+    let idleText = 'En attente';
+    let last = performance.now();
+    function frame(now) {
+        const dt = now - last; last = now;
+        if (G) { if (!REDUCED) step(dt); drawMachine(); }
+        requestAnimationFrame(frame);
+    }
+
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    function tween(ms, fn) {
+        return new Promise(res => {
+            if (REDUCED || ms <= 0) { fn(1); return res(); }
+            const t0 = performance.now();
+            const tick = now => { const t = Math.min(1, (now - t0) / ms); fn(t); t < 1 ? requestAnimationFrame(tick) : res(); };
+            requestAnimationFrame(tick);
+        });
+    }
+    const ease = t => t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+
+    // Une boule sort : elle remonte en haut de la sphère, traverse le tube, est présentée en grand
+    async function drawOne(n, isHit, speed) {
+        const idx = balls.findIndex(b => b.n === n);
+        const b = idx >= 0 ? balls.splice(idx, 1)[0] : { x: G.cx, y: G.cy };
+        const x0 = b.x, y0 = b.y;
+        flying = { n, t: 0, phase: 'suck', x: x0, y: y0 };
+        // aspiration vers la sortie, en haut de la sphère
+        const [tx, ty] = tubePoint(0);
+        await tween(300 * speed, t => { const e = ease(t); flying.x = x0 + (tx - x0) * e; flying.y = y0 + (ty - y0) * e; });
+        beep(520, 60);
+        flying.phase = 'tube';
+        await tween(560 * speed, t => { flying.t = ease(t); });
+        flying = null;
+        presented = { n, scale: 0.35, hit: isHit, label: '' };
+        beep(isHit ? 880 : 660, isHit ? 220 : 120, isHit ? .12 : .08);
+        await tween(260 * speed, t => { presented.scale = 0.35 + 0.65 * ease(t); });
+        presented.label = isHit ? 'TROUVÉ !' : '';
+    }
+
+    // ============================================================
+    // États reçus du serveur
+    // ============================================================
+    let lastSeq = 0, busy = false, pendingPreview = null, queue = [];
+
+    function setStatus(cls, text) { const s = $('status'); s.className = 'pill ' + cls; s.textContent = text; }
+    function setDraw(no, hash) {
+        $('drawNo').textContent = no ? 'Tirage #' + no : 'Tirage —';
+        $('hash').textContent = 'Empreinte du tirage : ' + (hash ? hash : '—');
+    }
+
+    function showTicket(st) {
+        const picks = st.picks || [];
+        $('spots').textContent = picks.length;
+        $('picks').innerHTML = picks.length ? picks.map(n => ballHtml(n)).join('') : '<span class="muted">L\'agent saisit vos numéros…</span>';
+        $('stake').textContent = money(st.stake);
+        $('maxWin').textContent = money(st.max_win);
+        $('pay').innerHTML = (st.paytable || []).map(r => `<tr data-h="${r.hits}"><td>${r.hits} trouvé${r.hits > 1 ? 's' : ''} sur ${picks.length}</td><td>x${r.multiplier.toLocaleString('fr-FR')}</td><td>${r.payout != null ? money(r.payout) : ''}</td></tr>`).join('');
+        for (let n = 1; n <= 80; n++) $('c' + n).className = 'cell' + (picks.includes(n) ? ' picked' : '');
+    }
+
+    function clearDraw() {
+        resetSlots();
+        $('drawnCount').textContent = '0'; $('hits').textContent = '0';
+        $('payout').textContent = '—'; $('verify').textContent = '';
+        $('banner').className = ''; presented = null;
+    }
+
+    function applyPreview(st) {
+        clearDraw();
+        setDraw(st.draw_number, st.server_seed_hash);
+        showTicket(st);
+        if (st.picks && st.picks.length) {
+            setStatus('ticket', 'Ticket en préparation');
+            $('banner').textContent = `${st.picks.length} numéro(s) demandé(s)` + (st.stake ? ` · mise ${money(st.stake)}` : '');
+            idleText = 'Prêt';
+        } else {
+            setStatus('wait', 'En attente');
+            $('banner').textContent = 'Bienvenue ! Choisissez de 1 à 10 numéros au guichet.';
+            idleText = 'En attente';
+        }
+        if (balls.length !== 80) fillGlobe();
+        energy = 0.25;
+    }
+
+    async function playDraw(st, instant) {
+        busy = true;
+        clearDraw();
+        setDraw(st.draw_number, st.server_seed_hash);
+        showTicket({ ...st, paytable: [] });
+        const picks = new Set(st.picks);
+        const order = st.draw_order || st.winning_numbers || [];
+        let hits = 0;
+
+        if (!instant) {
+            setStatus('launch', 'Lancement du jeu');
+            $('banner').textContent = 'Le tirage commence…';
+            fillGlobe();
+            for (const c of [3, 2, 1]) {
+                idleText = String(c); presented = null; beep(440, 120);
+                energy = 0.25 + (4 - c) * 0.35;
+                await sleep(800);
+            }
+            energy = 1.6; idleText = '';
+            await sleep(900);
+            setStatus('draw', 'Tirage en cours');
+        } else {
+            fillGlobe(order);
+        }
+
+        for (let i = 0; i < order.length; i++) {
+            const n = order[i], hit = picks.has(n);
+            const speed = instant ? 0 : (queue.length ? 0.35 : 1);
+            if (!instant) await drawOne(n, hit, speed);
+            if (hit) hits++;
+            const slot = $('slots').children[i];
+            slot.innerHTML = ballHtml(n, hit ? 'hit' : '');
+            $('c' + n).className = 'cell ' + (hit ? 'hit' : 'drawn');
+            $('drawnCount').textContent = String(i + 1);
+            $('hits').textContent = String(hits);
+            if (hit) {
+                const pb = Array.from($('picks').children).find(el => el.textContent.trim() === String(n));
+                if (pb) pb.classList.add('hit');
+            }
+            if (!instant) await sleep((hit ? 700 : 420) * speed);
+        }
+        presented = null; flying = null; energy = 0.25; idleText = 'Terminé';
+        Array.from($('picks').children).forEach(el => { if (!el.classList.contains('hit')) el.classList.add('miss'); });
+
+        const won = st.payout > 0;
+        $('payout').textContent = money(st.payout);
+        $('lastLabel').textContent = won ? `Gagné : ${st.match_count} sur ${st.spots} (x${Number(st.multiplier).toLocaleString('fr-FR')})` : `${st.match_count} sur ${st.spots} trouvé(s)`;
+        $('verify').textContent = st.server_seed ? 'Seed révélé : ' + st.server_seed : '';
+        $('banner').className = won ? 'won' : 'lost';
+        $('banner').textContent = won ? `FÉLICITATIONS ! Vous gagnez ${money(st.payout)}` : 'Pas de gain cette fois. Bonne chance au prochain ticket !';
+        setStatus(won ? 'won' : 'lost', won ? 'Gagné !' : 'Terminé');
+        if (won && !instant) { confetti(); beep(988, 300, .14); }
+        if (!instant) await sleep(queue.length ? 2500 : 8000);
+        busy = false;
+    }
+
+    async function pump() {
+        if (busy) return;
+        while (queue.length) await playDraw(queue.shift(), false);
+        if (pendingPreview) { const p = pendingPreview; pendingPreview = null; applyPreview(p); }
+    }
+
+    function handle(st, fromLoad) {
+        if (!st || st.seq <= lastSeq) return;
+        lastSeq = st.seq;
+        if (st.event === 'play') {
+            const age = (Date.now() - Date.parse(st.at)) / 1000;
+            if (fromLoad && age > 20) { playDraw(st, true); return; }   // reprise : résultat affiché sans relancer
+            queue.push(st); pump();
+        } else if (st.event === 'preview') {
+            if (busy || queue.length) pendingPreview = st; else applyPreview(st);
+        }
+    }
+
+    // ---------- Confettis ----------
+    function confetti() {
+        if (REDUCED) return;
+        const c = $('confetti'), x = c.getContext('2d');
+        c.width = innerWidth; c.height = innerHeight;
+        const parts = Array.from({ length: 160 }, () => ({ x: Math.random() * c.width, y: -20 - Math.random() * c.height * .5,
+            vx: (Math.random() - .5) * 3, vy: 2 + Math.random() * 4, s: 4 + Math.random() * 6, col: COLORS[Math.floor(Math.random() * 8)], r: Math.random() * 6 }));
+        const t0 = performance.now();
+        (function anim(now) {
+            x.clearRect(0, 0, c.width, c.height);
+            for (const p of parts) { p.x += p.vx; p.y += p.vy; p.r += .1; x.save(); x.translate(p.x, p.y); x.rotate(p.r); x.fillStyle = p.col; x.fillRect(-p.s / 2, -p.s / 2, p.s, p.s * .6); x.restore(); }
+            if (now - t0 < 5000) requestAnimationFrame(anim); else x.clearRect(0, 0, c.width, c.height);
+        })(t0);
+    }
+
+    // ---------- Connexion : WebSocket (temps réel) + reprise de l'état ----------
+    let ws = null, attempts = 0;
+    function connect() {
+        const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+        try { ws = new WebSocket(proto + location.host + '/ws/draws/keno-screen-' + CODE); } catch (e) { return retry(); }
+        ws.onopen = () => { attempts = 0; $('live').classList.add('on'); load(); };
+        ws.onmessage = ev => { try { const m = JSON.parse(ev.data); if (m.type === 'keno_screen') handle(m.data, false); } catch (e) {} };
+        ws.onclose = () => { $('live').classList.remove('on'); retry(); };
+        ws.onerror = () => { try { ws.close(); } catch (e) {} };
+    }
+    function retry() { attempts++; setTimeout(connect, Math.min(1000 * attempts, 10000)); }
+    async function load(first) {
+        try {
+            const res = await fetch('/keno/api/ecran/' + CODE, { cache: 'no-store' });
+            const data = await res.json();
+            if (data.state) handle(data.state, !!first);
+        } catch (e) {}
+    }
+    // secours si le WebSocket est coupé
+    setInterval(() => { if (!ws || ws.readyState !== 1) load(); }, 3000);
+
+    window.addEventListener('resize', () => { layout(); if (!busy) fillGlobe(); });
+    layout(); fillGlobe(); requestAnimationFrame(frame);
+    load(true).then(connect);
+})();
+</script>
+</body>
+</html>

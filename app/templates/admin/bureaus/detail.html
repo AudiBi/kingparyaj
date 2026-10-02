@@ -106,7 +106,7 @@
                 </tr>
                 <tr>
                     <td style="padding: 8px 0; color: #94a3b8;">Créé le</td>
-                    <td style="padding: 8px 0;">{{ bureau.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
+                    <td style="padding: 8px 0;">{{ (bureau.created_at|local).strftime('%d/%m/%Y %H:%M') }}</td>
                 </tr>
             </table>
         </div>
@@ -215,6 +215,7 @@
         {% endif %}
     </div>
 </div>
+{% endblock %}
 
 {% block extra_js %}
 <script>
@@ -222,5 +223,4 @@
         showToast('Fonctionnalité en cours de développement', 'info');
     }
 </script>
-{% endblock %}
 {% endblock %}

@@ -10,8 +10,6 @@ from app.workers.draw_worker import (
     schedule_draws,
     cancel_stale_draws,
     export_draw_results_to_leh,
-    settle_bets_for_draw,
-    generate_draw_results,
     # Lucky
     export_lucky_results_to_leh,
     export_lucky_daily_to_leh,
@@ -68,6 +66,9 @@ from app.workers.monitoring_worker import (
     alert_slow_queries,
 )
 
+# ==================== HORSE RACE WORKER ====================
+from app.workers.horse_race_worker import horse_race_tick
+
 # ==================== TÂCHES PARTAGÉES ====================
 from app.workers.tasks import (
     health_check,
@@ -83,8 +84,6 @@ __all__ = [
     "schedule_draws",
     "cancel_stale_draws",
     "export_draw_results_to_leh",
-    "settle_bets_for_draw",
-    "generate_draw_results",
     
     # Draw Worker - Lucky
     "export_lucky_results_to_leh",
@@ -138,6 +137,9 @@ __all__ = [
     "check_performance_metrics",
     "alert_slow_queries",
     
+    # Horse Races
+    "horse_race_tick",
+
     # Tâches partagées
     "health_check",
     "test_task",

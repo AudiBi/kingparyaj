@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<!-- app/templates/public/horse_races_counter.html : écran du joueur au guichet (Horse Races) -->
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Horse Races — Écran joueur — King Paryaj</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/img/favicon-32.png">
+    <link rel="icon" href="/static/img/favicon.ico" sizes="any">
+    <style>
+        :root { --bg: #07130f; --line: #1c3a2f; --text: #ecfdf5; --muted: #8fb5a6; --gold: #fbbf24; --gold-2: #f59e0b; --green: #10b981; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { height: 100%; }
+        body { background: radial-gradient(ellipse at 30% 0%, #12372a 0%, var(--bg) 60%); color: var(--text);
+               font-family: Inter, system-ui, -apple-system, 'Segoe UI', sans-serif; overflow: hidden; }
+        .screen { height: 100vh; display: grid; grid-template-rows: auto 1fr auto; gap: 1.2vh; padding: 1.6vh 1.6vw; }
+        header { display: flex; align-items: center; gap: 1.4vw; flex-wrap: wrap; }
+        header img { height: 6.5vh; width: auto; }
+        .brand { font-size: 4.2vh; font-weight: 900; letter-spacing: .3vh; }
+        .brand span { color: var(--gold); }
+        .race { font-size: 3.2vh; font-weight: 800; display: flex; align-items: center; gap: 1vw; }
+        .live { width: 1.2vh; height: 1.2vh; border-radius: 50%; background: #64748b; display: inline-block; }
+        .live.on { background: #22c55e; box-shadow: 0 0 1vh #22c55e; }
+        .pill { padding: .6vh 1.2vw; border-radius: 999px; font-weight: 800; font-size: 1.9vh; background: #334155; white-space: nowrap; }
+        .pill.BETTING_OPEN { background: #16a34a; } .pill.BETTING_CLOSED, .pill.RUNNING { background: var(--gold-2); color: #111827; }
+        .pill.FINISHED, .pill.SETTLED { background: #0e7490; } .pill.CANCELLED { background: #dc2626; }
+        .count { margin-left: auto; text-align: right; }
+        .count small { display: block; color: var(--muted); font-size: 1.6vh; font-weight: 700; }
+        .count b { font-size: 5vh; font-weight: 900; color: var(--gold); font-variant-numeric: tabular-nums; line-height: 1; }
+
+        main { display: grid; grid-template-columns: 1.55fr 1fr; gap: 1.6vw; min-height: 0; }
+        .card { background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.01)); border: 1px solid var(--line);
+                border-radius: 2vh; padding: 1.6vh 1.2vw; min-height: 0; }
+        .left { display: grid; grid-template-rows: 1fr auto; gap: 1.4vh; min-height: 0; }
+        .track { padding: 0; overflow: hidden; display: flex; align-items: center; }
+        canvas { width: 100%; display: block; }
+        .title { font-size: 1.8vh; letter-spacing: .25vh; text-transform: uppercase; color: var(--muted); font-weight: 800; margin-bottom: 1.2vh; display: flex; justify-content: space-between; gap: 1vw; }
+        .title b { color: var(--text); }
+        .odds { display: grid; grid-template-columns: repeat(6, 1fr); gap: .8vw; }
+        .odd { background: #0b1914; border: 1px solid var(--line); border-radius: 1.2vh; padding: .9vh .5vw; text-align: center; }
+        .odd.mine { border-color: var(--gold); box-shadow: 0 0 1.4vh rgba(251,191,36,.35); }
+        .odd .nm { font-size: 1.6vh; font-weight: 700; margin-top: .5vh; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .odd .v { font-size: 2.6vh; font-weight: 900; color: var(--gold); font-variant-numeric: tabular-nums; }
+        .shirt { width: 5vh; height: 4.4vh; margin: 0 auto; border-radius: .8vh .8vh 1.6vh 1.6vh; display: flex; align-items: center; justify-content: center;
+                 font-weight: 900; font-size: 2.1vh; border: .25vh solid rgba(0,0,0,.25); }
+
+        .right { display: grid; grid-template-rows: auto 1fr; gap: 1.4vh; min-height: 0; }
+        .type { display: flex; align-items: baseline; gap: 1vw; margin-bottom: 1.2vh; }
+        .type b { font-size: 4vh; font-weight: 900; color: var(--gold); }
+        .type span { color: var(--muted); font-size: 1.9vh; }
+        .horses { display: grid; gap: .8vh; min-height: 6vh; }
+        .horse { display: grid; grid-template-columns: auto 1fr auto; gap: 1vw; align-items: center; background: #0b1914; border: 1px solid var(--line);
+                 border-radius: 1.2vh; padding: .8vh 1vw; animation: slide .35s ease-out; }
+        .horse .ord { font-size: 1.5vh; color: var(--gold); font-weight: 800; }
+        .horse .nm { font-size: 2.4vh; font-weight: 900; }
+        .horse .v { font-size: 2.2vh; font-weight: 800; color: var(--muted); font-variant-numeric: tabular-nums; }
+        @keyframes slide { from { transform: translateX(2vw); opacity: 0; } to { transform: none; opacity: 1; } }
+        .nums { display: grid; grid-template-columns: repeat(3, 1fr); gap: .8vw; margin-top: 1.4vh; }
+        .nums div { background: #0b1914; border: 1px solid var(--line); border-radius: 1.2vh; padding: .9vh .8vw; }
+        .nums small { display: block; color: var(--muted); font-size: 1.4vh; text-transform: uppercase; letter-spacing: .15vh; }
+        .nums b { font-size: 2.6vh; font-variant-numeric: tabular-nums; white-space: nowrap; }
+        .nums .win b { color: var(--gold); }
+        .confirm { text-align: center; padding: 2vh 0; animation: slide .35s ease-out; }
+        .confirm .ok { font-size: 3.6vh; font-weight: 900; color: var(--green); }
+        .muted { color: var(--muted); font-size: 2vh; }
+
+        .tickets { display: grid; gap: .9vh; overflow: hidden; align-content: start; }
+        .tk { display: grid; grid-template-columns: auto 1fr auto; gap: 1vw; align-items: center; background: #0b1914; border: 1px solid var(--line);
+              border-radius: 1.2vh; padding: .9vh 1vw; }
+        .tk .race-no { font-weight: 900; font-size: 2.2vh; }
+        .tk .sel { font-size: 1.8vh; font-weight: 700; }
+        .tk .meta { font-size: 1.5vh; color: var(--muted); }
+        .badge { padding: .5vh 1vw; border-radius: 999px; font-weight: 900; font-size: 1.7vh; background: #334155; white-space: nowrap; }
+        .badge.PENDING { background: #1e293b; color: #cbd5e1; } .badge.WON { background: var(--green); color: #052e16; }
+        .badge.LOST { background: #3f1d1d; color: #fecaca; } .badge.REFUNDED, .badge.VOID { background: #1e3a8a; color: #dbeafe; }
+        .tk.WON { border-color: var(--green); box-shadow: 0 0 1.6vh rgba(16,185,129,.35); }
+        .tk.ontrack { border-color: var(--gold); box-shadow: 0 0 1.4vh rgba(251,191,36,.35); }
+
+        footer { min-height: 8vh; display: flex; align-items: center; justify-content: center; border-radius: 2vh; font-size: 3.4vh; font-weight: 900;
+                 background: #0d2019; border: 1px solid var(--line); text-align: center; padding: 0 2vw; }
+        footer.won { background: linear-gradient(90deg, #065f46, #10b981, #065f46); background-size: 200% 100%; animation: shine 2s linear infinite; }
+        footer.lost { background: #1e293b; color: #cbd5e1; }
+        footer.run { background: linear-gradient(90deg, #78350f, #f59e0b, #78350f); background-size: 200% 100%; color: #111827; animation: shine 2.5s linear infinite; }
+        @keyframes shine { to { background-position: 200% 0; } }
+        #confetti { position: fixed; inset: 0; pointer-events: none; }
+
+        @media (orientation: portrait) {
+            body { overflow: auto; }
+            .screen { height: auto; min-height: 100vh; }
+            main { grid-template-columns: 1fr; }
+            .brand { font-size: 3vh; }
+            .count { margin-left: 0; text-align: left; flex: 1 1 100%; }
+            .odds { grid-template-columns: repeat(3, 1fr); }
+        }
+        @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+    </style>
+</head>
+<body>
+<div class="screen">
+    <header>
+        <img src="/static/img/logo-192.png" alt="King Paryaj">
+        <div class="brand">HORSE <span>RACES</span></div>
+        <div class="race"><span class="live" id="live" title="Connexion"></span><span id="raceNo">Course —</span><span class="pill" id="status">Chargement…</span></div>
+        <div class="count"><small id="countLabel"></small><b id="count"></b></div>
+    </header>
+
+    <main>
+        <section class="left">
+            <div class="card track"><canvas id="raceCanvas" aria-label="Course en direct" role="img"></canvas></div>
+            <div class="card">
+                <div class="title"><span id="oddsTitle">Cotes gagnant</span><span>Vos chevaux sont encadrés en or</span></div>
+                <div class="odds" id="odds"></div>
+            </div>
+        </section>
+        <section class="right">
+            <div class="card" id="ticketCard">
+                <div class="title"><span>Votre ticket</span><span id="ticketRace"></span></div>
+                <div id="ticket"><p class="muted">L'agent prépare votre ticket…</p></div>
+            </div>
+            <div class="card" style="display:flex;flex-direction:column;min-height:0;">
+                <div class="title"><span>Vos tickets</span><span id="ticketCount"></span></div>
+                <div class="tickets" id="tickets"><p class="muted">Aucun ticket pour le moment.</p></div>
+            </div>
+        </section>
+    </main>
+
+    <footer id="banner">Bienvenue ! Les paris se prennent au guichet.</footer>
+</div>
+<canvas id="confetti"></canvas>
+
+<script src="/static/js/horse_races.js" charset="utf-8"></script>
+<script charset="utf-8">
+(function () {
+    'use strict';
+    const CODE = '{{ code|e }}';
+    const HR = window.HorseRaces;
+    const $ = id => document.getElementById(id);
+    const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const money = n => n == null ? '—' : Number(n).toLocaleString('fr-FR', { maximumFractionDigits: 2 }) + ' HTG';
+    const TYPES = {
+        WIN: 'Gagnant : votre cheval finit 1er',
+        PLACE: "Placé : l'un de vos chevaux finit 1er",
+        EXACTA: 'Couplé ordre : le 1er puis le 2e',
+        TRIFECTA: 'Tiercé ordre : le 1er, le 2e puis le 3e',
+    };
+    const STATUS = { PENDING: 'En attente', WON: 'Gagné', LOST: 'Perdu', REFUNDED: 'Remboursé', VOID: 'Annulé' };
+
+    const clock = new HR.ServerClock();
+    const renderer = new HR.Renderer($('raceCanvas'), { clock, maxHeight: Math.max(300, Math.round(window.innerHeight * 0.58)) });
+    let display = null, betting = null, screen = { tickets: [] }, lastSeq = 0, confirmUntil = 0;
+    const celebrated = new Set();
+
+    // ---------- Course en direct (même flux que l'écran de la salle) ----------
+    const live = new HR.LiveState((shown, open) => {
+        if (!shown || !display || shown.race_id !== display.race_id || shown.status !== display.status) renderer.setRace(shown);
+        display = shown; betting = open;
+        $('raceNo').textContent = shown ? 'Course #' + shown.race_number : 'Course —';
+        $('status').textContent = shown ? HR.statusLabel(shown.status) : 'Prochaine course bientôt';
+        $('status').className = 'pill ' + (shown ? shown.status : '');
+        render();
+    });
+
+    function horsesHtml(selection, ordered) {
+        const ord = ['1er', '2e', '3e'];
+        return selection.map((h, i) => {
+            const j = HR.jersey(h.lane);
+            return `<div class="horse"><span class="shirt" style="background:${j.shirt};color:${j.text}">${h.number}</span>
+                <span><span class="ord">${ordered ? ord[i] || '' : ''}</span><div class="nm">№${h.number} ${esc(h.name).toUpperCase()}</div></span>
+                <span class="v">${Number(h.odds_win).toFixed(2)}</span></div>`;
+        }).join('');
+    }
+
+    function renderTicket() {
+        const now = Date.now();
+        const p = screen.preview;
+        const last = screen.last_ticket;
+        if (last && now < confirmUntil) {
+            $('ticketRace').textContent = 'Course #' + last.race_number;
+            $('ticket').innerHTML = `<div class="confirm"><div class="ok">TICKET ENREGISTRÉ</div>
+                <div class="muted" style="margin-top:.8vh">${last.bet_type} · ${last.selection.map(h => '№' + h.number + ' ' + esc(h.name)).join(last.ordered ? ' → ' : ' + ')}</div></div>
+                <div class="nums"><div><small>Mise</small><b>${money(last.stake)}</b></div><div><small>Cote</small><b>${last.odds.toFixed(2)}</b></div>
+                <div class="win"><small>Gain potentiel</small><b>${money(last.potential_payout)}</b></div></div>`;
+            return;
+        }
+        if (!p || !p.selection || !p.selection.length) {
+            $('ticketRace').textContent = betting ? 'Course #' + betting.race_number : '';
+            $('ticket').innerHTML = `<p class="muted">L'agent prépare votre ticket…</p>
+                <p class="muted" style="margin-top:1vh;font-size:1.6vh">Gagnant · Placé · Couplé ordre · Tiercé ordre</p>`;
+            return;
+        }
+        $('ticketRace').textContent = 'Course #' + p.race_number;
+        $('ticket').innerHTML = `<div class="type"><b>${p.bet_type}</b><span>${TYPES[p.bet_type] || ''}</span></div>
+            <div class="horses">${horsesHtml(p.selection, p.ordered)}</div>
+            <div class="nums"><div><small>Mise</small><b>${money(p.stake)}</b></div>
+            <div><small>Cote</small><b>${p.odds ? p.odds.toFixed(2) : '—'}</b></div>
+            <div class="win"><small>Gain potentiel</small><b>${money(p.potential_payout)}</b></div></div>`;
+    }
+
+    function renderTickets() {
+        const list = (screen.tickets || []).slice().reverse();
+        $('ticketCount').textContent = list.length ? list.length + ' ticket(s)' : '';
+        $('tickets').innerHTML = list.length ? list.map(t => {
+            const onTrack = display && t.race_id === display.race_id && ['RUNNING', 'BETTING_CLOSED'].includes(display.status);
+            const label = t.status === 'WON' ? 'Gagné ' + money(t.winnings) : STATUS[t.status] || t.status;
+            return `<div class="tk ${t.status} ${onTrack ? 'ontrack' : ''}"><span class="race-no">#${t.race_number}</span>
+                <span><div class="sel">${t.bet_type} · ${t.selection.map(h => '№' + h.number + ' ' + esc(h.name)).join(t.ordered ? ' → ' : ' + ')}</div>
+                <div class="meta">Mise ${money(t.stake)} · cote ${t.odds.toFixed(2)} · gain potentiel ${money(t.potential_payout)}</div></span>
+                <span class="badge ${t.status}">${label}</span></div>`;
+        }).join('') : '<p class="muted">Aucun ticket pour le moment.</p>';
+    }
+
+    function renderOdds() {
+        const race = betting || display;
+        if (!race) { $('odds').innerHTML = '<p class="muted">En attente de la prochaine course…</p>'; return; }
+        $('oddsTitle').textContent = 'Cotes gagnant — course #' + race.race_number;
+        const mine = new Set();
+        (screen.tickets || []).filter(t => t.race_id === race.race_id).forEach(t => t.selection.forEach(h => mine.add(h.number)));
+        ((screen.preview && screen.preview.race_id === race.race_id && screen.preview.selection) || []).forEach(h => mine.add(h.number));
+        $('odds').innerHTML = race.participants.map((p, lane) => {
+            const j = HR.jersey(lane);
+            return `<div class="odd ${mine.has(p.player_number) ? 'mine' : ''}"><span class="shirt" style="background:${j.shirt};color:${j.text}">${p.player_number}</span>
+                <div class="nm">${esc(p.player_name)}</div><div class="v">${Number(p.odds.WIN).toFixed(2)}</div></div>`;
+        }).join('');
+    }
+
+    let result = null;   // résultat de vos tickets, affiché ~25 s après l'arrivée
+    function renderBanner() {
+        const b = $('banner');
+        const mine = display ? (screen.tickets || []).filter(t => t.race_id === display.race_id) : [];
+        if (display && mine.length && display.status === 'RUNNING') {
+            b.className = 'run'; b.textContent = `Course #${display.race_number} en cours — bonne chance !`; return;
+        }
+        if (display && mine.length && ['FINISHED', 'SETTLED'].includes(display.status) && mine.some(t => t.status === 'PENDING')) {
+            b.className = ''; b.textContent = 'Arrivée ! Calcul de vos gains…'; return;
+        }
+        if (result && Date.now() < result.until) {
+            if (result.total > 0) { b.className = 'won'; b.textContent = `FÉLICITATIONS ! Vous gagnez ${money(result.total)} (course #${result.race_number})`; }
+            else { b.className = 'lost'; b.textContent = `Course #${result.race_number} : pas de gain cette fois. Bonne chance pour la prochaine !`; }
+            return;
+        }
+        if (screen.last_ticket && Date.now() < confirmUntil) {
+            b.className = ''; b.textContent = `Ticket enregistré pour la course #${screen.last_ticket.race_number}`; return;
+        }
+        b.className = '';
+        b.textContent = betting ? `Paris ouverts pour la course #${betting.race_number}` : 'Bienvenue ! Les paris se prennent au guichet.';
+    }
+
+    // Un ticket passe de « en attente » à gagné / perdu : on annonce le résultat de la course
+    function detectResults(previous, next) {
+        const before = {};
+        (previous || []).forEach(t => before[t.bet_id] = t.status);
+        const done = (next || []).filter(t => before[t.bet_id] === 'PENDING' && t.status !== 'PENDING');
+        if (!done.length) return;
+        const raceId = done[0].race_id;
+        const race = (next || []).filter(t => t.race_id === raceId);
+        if (race.some(t => t.status === 'PENDING')) return;
+        const won = race.filter(t => t.status === 'WON');
+        result = { race_number: race[0].race_number, total: won.reduce((s, t) => s + t.winnings, 0), until: Date.now() + 25000 };
+        if (won.some(t => !celebrated.has(t.bet_id))) { won.forEach(t => celebrated.add(t.bet_id)); confetti(); }
+    }
+
+    function render() {
+        renderTicket(); renderTickets(); renderOdds(); renderBanner();
+        const shownMine = display ? (screen.tickets || []).filter(t => t.race_id === display.race_id) : [];
+        renderer.setHighlight([].concat(...shownMine.map(t => t.selection.map(h => h.number))));
+    }
+
+    function applyScreen(st) {
+        if (!st || st.seq < lastSeq) return;
+        const isNewTicket = st.event === 'ticket' && st.seq > lastSeq;
+        lastSeq = st.seq;
+        detectResults(screen.tickets, st.tickets);
+        screen = st;
+        if (isNewTicket) confirmUntil = Date.now() + 8000;
+        render();
+    }
+
+    // ---------- Confettis ----------
+    function confetti() {
+        if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+        const c = $('confetti'), x = c.getContext('2d');
+        c.width = innerWidth; c.height = innerHeight;
+        const cols = ['#fbbf24', '#10b981', '#f472b6', '#60a5fa', '#f87171', '#a3e635'];
+        const parts = Array.from({ length: 160 }, () => ({ x: Math.random() * c.width, y: -20 - Math.random() * c.height * .5,
+            vx: (Math.random() - .5) * 3, vy: 2 + Math.random() * 4, s: 4 + Math.random() * 6, col: cols[Math.floor(Math.random() * cols.length)], r: Math.random() * 6 }));
+        const t0 = performance.now();
+        (function anim(now) {
+            x.clearRect(0, 0, c.width, c.height);
+            for (const p of parts) { p.x += p.vx; p.y += p.vy; p.r += .1; x.save(); x.translate(p.x, p.y); x.rotate(p.r); x.fillStyle = p.col; x.fillRect(-p.s / 2, -p.s / 2, p.s, p.s * .6); x.restore(); }
+            if (now - t0 < 5000) requestAnimationFrame(anim); else x.clearRect(0, 0, c.width, c.height);
+        })(t0);
+    }
+
+    // ---------- Données ----------
+    async function loadCurrent() {
+        try {
+            const res = await fetch('/api/v1/horse-races/races/current', { cache: 'no-store' });
+            const data = await res.json();
+            clock.sync(data.server_time);
+            live.applySnapshot(data);
+        } catch (e) { /* réessai */ }
+    }
+    async function loadScreen() {
+        try {
+            const res = await fetch('/horse-races/api/guichet/' + CODE, { cache: 'no-store' });
+            const data = await res.json();
+            if (data.state) applyScreen(data.state);
+        } catch (e) { /* réessai */ }
+    }
+
+    let ws = null, attempts = 0;
+    function connectCounter() {
+        const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+        try { ws = new WebSocket(proto + location.host + '/ws/draws/hr-screen-' + CODE); } catch (e) { return retry(); }
+        ws.onopen = () => { attempts = 0; $('live').classList.add('on'); loadScreen(); };
+        ws.onmessage = ev => { try { const m = JSON.parse(ev.data); if (m.type === 'hr_screen') applyScreen(m.data); } catch (e) {} };
+        ws.onclose = () => { $('live').classList.remove('on'); retry(); };
+        ws.onerror = () => { try { ws.close(); } catch (e) {} };
+    }
+    function retry() { attempts++; setTimeout(connectCounter, Math.min(1000 * attempts, 10000)); }
+
+    function tick() {
+        live.tick();
+        const now = clock.now();
+        if (display && ['BETTING_OPEN', 'BETTING_CLOSED', 'SCHEDULED'].includes(display.status)) {
+            $('countLabel').textContent = display.status === 'BETTING_OPEN' ? 'Paris fermés dans' : 'Départ dans';
+            $('count').textContent = HR.formatCountdown(HR.parseUtc(display.status === 'BETTING_OPEN' ? display.betting_closes_at : display.scheduled_at) - now);
+        } else if (betting) {
+            $('countLabel').textContent = `Course #${betting.race_number} : paris fermés dans`;
+            $('count').textContent = HR.formatCountdown(HR.parseUtc(betting.betting_closes_at) - now);
+        } else { $('countLabel').textContent = ''; $('count').textContent = ''; }
+        if (confirmUntil && Date.now() > confirmUntil) { confirmUntil = 0; render(); }
+    }
+
+    HR.connectLive((data, event) => live.applyEvent(data, event), () => {});
+    loadCurrent(); loadScreen(); connectCounter();
+    setInterval(tick, 250);
+    setInterval(loadCurrent, 15000);
+    // résultats des tickets : relus pendant l'arrivée, et en secours si le WebSocket est coupé
+    setInterval(() => {
+        const waiting = (screen.tickets || []).some(t => t.status === 'PENDING');
+        if (waiting || !ws || ws.readyState !== 1) loadScreen();
+        if (result && Date.now() > result.until) { result = null; render(); }
+    }, 2500);
+})();
+</script>
+</body>
+</html>

@@ -141,7 +141,7 @@
         <div class="grid-2">
             <div>
                 <p style="margin:4px 0;font-size:13px;">
-                    <strong>Ouverture:</strong> {{ session_open.opened_at.strftime('%d/%m/%Y %H:%M') }}
+                    <strong>Ouverture:</strong> {{ (session_open.opened_at|local).strftime('%d/%m/%Y %H:%M') }}
                 </p>
                 <p style="margin:4px 0;font-size:13px;">
                     <strong>Solde initial:</strong> {{ session_open.starting_balance|format_number }} HTG
@@ -217,7 +217,7 @@
     
     // ==================== COMPTE À REBOURS ====================
     {% if next_draw %}
-    const targetTime = '{{ next_draw.draw_time.isoformat() }}';
+    const targetTime = '{{ next_draw.draw_time.isoformat() }}Z';
     
     function updateCountdown() {
         const now = new Date();

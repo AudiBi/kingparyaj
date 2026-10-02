@@ -1,10 +1,10 @@
 # app/workers/celery.py
 """Configuration Celery pour les workers - VERSION COMPLÈTE (Keno + Lucky)"""
 
-import datetime
 
 from celery import Celery
 from celery.schedules import crontab
+from datetime import timedelta
 from app.config import settings
 import os
 import sys
@@ -19,7 +19,11 @@ celery_app = Celery(
         "app.workers.draw_worker",
         "app.workers.notification_worker",
         "app.workers.cleanup_worker",
-        "app.workers.monitoring_worker"
+        "app.workers.monitoring_worker",
+        "app.workers.tasks",
+        "app.workers.horse_race_worker",
+        "app.workers.lucky6_worker",
+        "app.workers.keno_worker",
     ]
 )
 
@@ -54,14 +58,13 @@ celery_app.conf.update(
     
     beat_schedule={
         # ==================== KENO ====================
-        'process-keno-draws': {
-            'task': 'app.workers.draw_worker.process_draw',
-            'schedule': crontab(minute='*/5'),
-            'args': (),
-        },
-        'schedule-keno-draws': {
-            'task': 'app.workers.draw_worker.schedule_draws',
-            'schedule': crontab(hour=0, minute=5),
+        # Tirages partagés : tirage à l'heure exacte, règlement, tirages suivants.
+        # (remplace 'process-keno-draws' toutes les 5 min et la planification
+        # quotidienne de 24 h de tirages : les réglages sont figés à la création
+        # de chaque tirage, on ne crée donc que les deux prochains.)
+        'keno-tick': {
+            'task': 'app.workers.keno_worker.keno_tick',
+            'schedule': timedelta(seconds=3),
             'args': (),
         },
         'cancel-stale-keno-draws': {
@@ -72,9 +75,25 @@ celery_app.conf.update(
         'export-keno-to-leh': {
             'task': 'app.workers.draw_worker.export_draw_results_to_leh',
             'schedule': crontab(hour=1, minute=0),
-            'args': (datetime.utcnow().strftime("%Y-%m-%d"),),
+            # Pas de date figée ici : ces args étaient évalués une seule fois au
+            # démarrage de beat. La tâche calcule elle-même la veille (heure d'Haïti).
+            'args': (),
         },
         
+        # ==================== HORSE RACES ====================
+        'horse-race-tick': {
+            'task': 'app.workers.horse_race_worker.horse_race_tick',
+            'schedule': timedelta(seconds=5),
+            'args': (),
+        },
+
+        # ==================== LUCKY6 ====================
+        'lucky6-tick': {
+            'task': 'app.workers.lucky6_worker.lucky6_tick',
+            'schedule': timedelta(seconds=3),
+            'args': (),
+        },
+
         # ==================== LUCKY ====================
         'export-lucky-to-leh': {
             'task': 'app.workers.draw_worker.export_lucky_daily_to_leh',

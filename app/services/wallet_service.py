@@ -9,6 +9,7 @@ from sqlalchemy import select, func, and_
 import redis.asyncio as redis
 
 from app.core.exceptions import AppException, InsufficientBalanceException
+from app.core.timezone import today_haiti, today_bounds_utc, to_haiti
 from app.core.logger import get_logger
 from app.models.wallet import Wallet, WalletStatus
 from app.models.user import User
@@ -22,7 +23,7 @@ from app.payments.base import get_gateway
 # à une action d'audit existante (jamais None), pour ne pas faire échouer le
 # flush de l'audit log (et donc toute la transaction wallet) sur une contrainte.
 _DEBIT_AUDIT_ACTIONS = {"BET": AuditAction.BET_PLACED, "WITHDRAWAL": AuditAction.WITHDRAWAL}
-_CREDIT_AUDIT_ACTIONS = {"DEPOSIT": AuditAction.DEPOSIT, "WIN": AuditAction.BET_SETTLED}
+_CREDIT_AUDIT_ACTIONS = {"DEPOSIT": AuditAction.DEPOSIT, "WIN": AuditAction.BET_SETTLED, "REFUND": AuditAction.BET_SETTLED}
 
 # Méthodes de paiement réglées via une passerelle mobile money (cycle
 # pending -> confirmé/échoué par webhook). Les autres (cash au bureau,
@@ -61,6 +62,22 @@ class WalletService(BaseService[Wallet, None, None]):
 
         return wallet
 
+    async def get_for_update(self, user_id: str) -> Wallet:
+        """Récupère (ou crée) le portefeuille en le verrouillant jusqu'à la fin
+        de la transaction DB (SELECT … FOR UPDATE).
+
+        Empêche deux opérations concurrentes (deux paris, un pari et un
+        retrait…) de lire le même solde puis de l'écraser chacune. Sans effet
+        sur SQLite (tests), qui n'a pas de verrou de ligne.
+        """
+        result = await self.db.execute(
+            select(Wallet).where(Wallet.user_id == user_id).with_for_update()
+        )
+        wallet = result.scalar_one_or_none()
+        if not wallet:
+            wallet = await self.get_or_create(user_id)
+        return wallet
+
     async def get_by_user_id(self, user_id: str) -> Optional[Wallet]:
         """Récupère le portefeuille d'un utilisateur"""
         result = await self.db.execute(
@@ -92,8 +109,16 @@ class WalletService(BaseService[Wallet, None, None]):
         payment_method: str = None,
         external_reference: str = None,
         reference: str = None,
+        bet_id: str = None,
+        draw_id: str = None,
+        ticket_id: str = None,
     ) -> Transaction:
         """Débite le portefeuille d'un utilisateur.
+
+        `bet_id`/`draw_id`/`ticket_id` (ou, pour compatibilité, `reference_id`
+        comme bet_id) sont enregistrés sur la transaction pour la traçabilité.
+        Pour un débit de type BET, les règles de jeu responsable sont
+        vérifiées (cf. _assert_can_bet).
 
         `status`/`payment_method`/`external_reference`/`reference` existent
         pour les retraits réglés via une passerelle mobile money : les fonds
@@ -101,7 +126,11 @@ class WalletService(BaseService[Wallet, None, None]):
         attendant la confirmation du virement externe (cf. withdraw() /
         confirm_withdrawal() / fail_withdrawal() plus bas).
         """
-        wallet = await self.get_or_create(user_id)
+        wallet = await self.get_for_update(user_id)
+        self._reset_daily_counters_if_new_day(wallet)
+
+        if transaction_type == "BET":
+            await self._assert_can_bet(wallet, user_id, amount)
 
         if wallet.balance < amount:
             raise InsufficientBalanceException(float(amount), float(wallet.balance))
@@ -111,7 +140,7 @@ class WalletService(BaseService[Wallet, None, None]):
         wallet.updated_at = datetime.utcnow()
 
         # Mettre à jour les compteurs journaliers
-        await self._update_daily_counters(wallet, amount, is_debit=True)
+        await self._update_daily_counters(wallet, amount, is_debit=True, transaction_type=transaction_type)
 
         transaction = Transaction(
             user_id=user_id,
@@ -125,6 +154,9 @@ class WalletService(BaseService[Wallet, None, None]):
             status=status,
             external_reference=external_reference,
             completed_at=datetime.utcnow() if status == TransactionStatus.COMPLETED else None,
+            bet_id=bet_id or reference_id,
+            draw_id=draw_id,
+            ticket_id=ticket_id,
         )
 
         self.db.add(transaction)
@@ -153,9 +185,13 @@ class WalletService(BaseService[Wallet, None, None]):
         payment_method: str = None,
         external_reference: str = None,
         reference: str = None,
+        bet_id: str = None,
+        draw_id: str = None,
+        ticket_id: str = None,
     ) -> Transaction:
         """Crédite le portefeuille d'un utilisateur"""
-        wallet = await self.get_or_create(user_id)
+        wallet = await self.get_for_update(user_id)
+        self._reset_daily_counters_if_new_day(wallet)
 
         old_balance = wallet.balance
         wallet.balance += amount
@@ -166,7 +202,7 @@ class WalletService(BaseService[Wallet, None, None]):
         wallet.updated_at = datetime.utcnow()
 
         # Mettre à jour les compteurs journaliers
-        await self._update_daily_counters(wallet, amount, is_debit=False)
+        await self._update_daily_counters(wallet, amount, is_debit=False, transaction_type=transaction_type)
 
         transaction = Transaction(
             user_id=user_id,
@@ -180,6 +216,9 @@ class WalletService(BaseService[Wallet, None, None]):
             status=status,
             external_reference=external_reference,
             completed_at=datetime.utcnow() if status == TransactionStatus.COMPLETED else None,
+            bet_id=bet_id or reference_id,
+            draw_id=draw_id,
+            ticket_id=ticket_id,
         )
 
         self.db.add(transaction)
@@ -376,12 +415,13 @@ class WalletService(BaseService[Wallet, None, None]):
         if transaction.status != TransactionStatus.PENDING:
             return transaction
 
-        wallet = await self.get_by_user_id(transaction.user_id)
+        wallet = await self.get_for_update(transaction.user_id)
+        self._reset_daily_counters_if_new_day(wallet)
         old_balance = wallet.balance
         wallet.add(transaction.amount)
         wallet.total_deposited += transaction.amount
         wallet.updated_at = datetime.utcnow()
-        await self._update_daily_counters(wallet, transaction.amount, is_debit=False)
+        await self._update_daily_counters(wallet, transaction.amount, is_debit=False, transaction_type="DEPOSIT")
 
         transaction.balance_before = old_balance
         transaction.balance_after = wallet.balance
@@ -537,29 +577,145 @@ class WalletService(BaseService[Wallet, None, None]):
 
         return wallet
 
-    async def _update_daily_counters(self, wallet: Wallet, amount: Decimal, is_debit: bool) -> None:
-        """Met à jour les compteurs journaliers"""
-        today = date.today()
-
-        if wallet.last_reset_date and wallet.last_reset_date.date() != today:
-            # Réinitialiser les compteurs quotidiens
+    def _reset_daily_counters_if_new_day(self, wallet: Wallet) -> None:
+        """Remet à zéro les compteurs journaliers au changement de jour
+        (jour civil d'Haïti)."""
+        today = today_haiti()
+        last = to_haiti(wallet.last_reset_date).date() if wallet.last_reset_date else None
+        if last != today:
             wallet.today_deposits = Decimal("0")
             wallet.today_losses = Decimal("0")
             wallet.today_bets = Decimal("0")
             wallet.last_reset_date = datetime.utcnow()
 
-        if not wallet.last_reset_date:
-            wallet.last_reset_date = datetime.utcnow()
+    async def _update_daily_counters(
+        self,
+        wallet: Wallet,
+        amount: Decimal,
+        is_debit: bool,
+        transaction_type: str = None,
+    ) -> None:
+        """Met à jour les compteurs journaliers.
 
-        if is_debit:
-            wallet.today_bets += amount
-            wallet.today_losses += amount
-        else:
-            wallet.today_deposits += amount
+        - BET (débit)    : mises du jour + perte nette du jour
+        - WIN (crédit)   : réduit la perte nette du jour
+        - REFUND (crédit): annule la mise remboursée
+        - DEPOSIT        : dépôts du jour
+        Un retrait n'est ni une mise ni une perte.
+        `today_losses` est une perte NETTE (mises - gains) et peut être négative.
+        """
+        self._reset_daily_counters_if_new_day(wallet)
+        today_bets = wallet.today_bets or Decimal("0")
+        today_losses = wallet.today_losses or Decimal("0")
+        today_deposits = wallet.today_deposits or Decimal("0")
+
+        if transaction_type == "BET" and is_debit:
+            wallet.today_bets = today_bets + amount
+            wallet.today_losses = today_losses + amount
+        elif transaction_type == "WIN" and not is_debit:
+            wallet.today_losses = today_losses - amount
+        elif transaction_type == "REFUND" and not is_debit:
+            wallet.today_bets = today_bets - amount
+            wallet.today_losses = today_losses - amount
+        elif transaction_type == "DEPOSIT" and not is_debit:
+            wallet.today_deposits = today_deposits + amount
+
+    async def _assert_can_bet(self, wallet: Wallet, user_id: str, amount: Decimal) -> None:
+        """Règles de jeu responsable vérifiées avant chaque mise.
+
+        Lève AppException (403) si : compte inactif/verrouillé, auto-exclusion
+        active, portefeuille gelé, limite par pari ou limite de perte
+        journalière dépassée. Le solde est vérifié séparément (400).
+        """
+        user = await self.db.get(User, user_id)
+        if user is None or not user.is_active or user.is_locked:
+            raise AppException(403, "Compte inactif ou verrouillé : mise impossible", "ACCOUNT_LOCKED")
+
+        from app.services.responsible_service import ResponsibleService  # import local : évite un cycle
+        exclusion = await ResponsibleService(self.db, self.redis).get_active_exclusion(user_id)
+        if exclusion is not None:
+            raise AppException(403, "Auto-exclusion active : les paris sont bloqués", "SELF_EXCLUDED")
+
+        if wallet.status != WalletStatus.ACTIVE:
+            raise AppException(403, "Portefeuille gelé : mise impossible", "WALLET_FROZEN")
+
+        if wallet.single_bet_limit and amount > wallet.single_bet_limit:
+            raise AppException(
+                403, f"Mise supérieure à votre limite par pari ({wallet.single_bet_limit} HTG)", "BET_LIMIT"
+            )
+
+        if wallet.daily_loss_limit and (wallet.today_losses or Decimal("0")) + amount > wallet.daily_loss_limit:
+            raise AppException(
+                403, f"Limite de perte journalière atteinte ({wallet.daily_loss_limit} HTG)", "LOSS_LIMIT"
+            )
+
+    # ========== Raccourcis jeux ==========
+
+    async def debit_for_bet(
+        self,
+        user_id: str,
+        amount: Decimal,
+        bet_id: str = None,
+        draw_id: str = None,
+        ticket_id: str = None,
+        reference: str = None,
+    ) -> Transaction:
+        """Débite une mise (type BET) en la rattachant au pari / tirage."""
+        return await self.debit(
+            user_id=user_id,
+            amount=Decimal(str(amount)),
+            transaction_type="BET",
+            bet_id=bet_id,
+            draw_id=draw_id,
+            ticket_id=ticket_id,
+            reference=reference,
+        )
+
+    async def credit_for_win(
+        self,
+        user_id: str,
+        amount: Decimal,
+        bet_id: str = None,
+        draw_id: str = None,
+        ticket_id: str = None,
+        reference: str = None,
+    ) -> Transaction:
+        """Crédite un gain (type WIN). Passer une `reference` déterministe
+        (ex. WIN-<jeu>-<bet_id>) rend le paiement idempotent : la contrainte
+        d'unicité sur transactions.reference refuse un second paiement."""
+        return await self.credit(
+            user_id=user_id,
+            amount=Decimal(str(amount)),
+            transaction_type="WIN",
+            bet_id=bet_id,
+            draw_id=draw_id,
+            ticket_id=ticket_id,
+            reference=reference,
+        )
+
+    async def credit_refund(
+        self,
+        user_id: str,
+        amount: Decimal,
+        bet_id: str = None,
+        draw_id: str = None,
+        ticket_id: str = None,
+        reference: str = None,
+    ) -> Transaction:
+        """Rembourse une mise (type REFUND), ex. manche annulée."""
+        return await self.credit(
+            user_id=user_id,
+            amount=Decimal(str(amount)),
+            transaction_type="REFUND",
+            bet_id=bet_id,
+            draw_id=draw_id,
+            ticket_id=ticket_id,
+            reference=reference,
+        )
 
     async def _get_today_deposits(self, user_id: str) -> Decimal:
         """Récupère le total des dépôts du jour"""
-        today_start = datetime.combine(date.today(), datetime.min.time())
+        today_start, _ = today_bounds_utc()
         result = await self.db.execute(
             select(func.sum(Transaction.amount))
             .where(

@@ -19,7 +19,7 @@
                 <span class="badge {% if ticket.status == 'active' %}success{% elif ticket.status == 'paid' %}gray{% elif ticket.status == 'expired' %}danger{% elif ticket.status == 'cancelled' %}warning{% endif %}">
                     {{ ticket.status }}
                 </span>
-                &nbsp;|&nbsp; {{ ticket.created_at.strftime('%d/%m/%Y %H:%M') }}
+                &nbsp;|&nbsp; {{ (ticket.created_at|local).strftime('%d/%m/%Y %H:%M') }}
             </p>
         </div>
     </div>
@@ -79,12 +79,12 @@
                 </tr>
                 <tr>
                     <td style="padding: 8px 0; color: #94a3b8;">Créé le</td>
-                    <td style="padding: 8px 0;">{{ ticket.created_at.strftime('%d/%m/%Y %H:%M:%S') }}</td>
+                    <td style="padding: 8px 0;">{{ (ticket.created_at|local).strftime('%d/%m/%Y %H:%M:%S') }}</td>
                 </tr>
                 <tr>
                     <td style="padding: 8px 0; color: #94a3b8;">Expire le</td>
                     <td style="padding: 8px 0; font-weight: {% if ticket.expires_at < now %}600; color: #ef4444;{% endif %}">
-                        {{ ticket.expires_at.strftime('%d/%m/%Y %H:%M:%S') }}
+                        {{ (ticket.expires_at|local).strftime('%d/%m/%Y %H:%M:%S') }}
                         {% if ticket.expires_at < now %}
                         <span class="badge danger" style="font-size: 10px;">Expiré</span>
                         {% endif %}
@@ -93,7 +93,7 @@
                 {% if ticket.paid_at %}
                 <tr>
                     <td style="padding: 8px 0; color: #94a3b8;">Payé le</td>
-                    <td style="padding: 8px 0;">{{ ticket.paid_at.strftime('%d/%m/%Y %H:%M:%S') }}</td>
+                    <td style="padding: 8px 0;">{{ (ticket.paid_at|local).strftime('%d/%m/%Y %H:%M:%S') }}</td>
                 </tr>
                 <tr>
                     <td style="padding: 8px 0; color: #94a3b8;">Payé par</td>
@@ -160,7 +160,7 @@
             <tbody>
                 {% for tx in transactions %}
                 <tr>
-                    <td class="text-muted" style="font-size: 12px;">{{ tx.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
+                    <td class="text-muted" style="font-size: 12px;">{{ (tx.created_at|local).strftime('%d/%m/%Y %H:%M') }}</td>
                     <td>
                         <span class="badge {% if tx.type == 'deposit' %}success{% elif tx.type == 'bet' %}gray{% elif tx.type == 'win' %}success{% elif tx.type == 'payout' %}danger{% endif %}">
                             {{ tx.type }}
@@ -204,7 +204,7 @@
             <tbody>
                 {% for bet in bets %}
                 <tr>
-                    <td class="text-muted" style="font-size: 12px;">{{ bet.placed_at.strftime('%d/%m/%Y %H:%M') }}</td>
+                    <td class="text-muted" style="font-size: 12px;">{{ (bet.placed_at|local).strftime('%d/%m/%Y %H:%M') }}</td>
                     <td>{{ bet.game }}</td>
                     <td>
                         {% if bet.picks %}
@@ -322,6 +322,7 @@
         </div>
     </div>
 </div>
+{% endblock %}
 
 {% block extra_js %}
 <script>
@@ -415,6 +416,7 @@
                 </head>
                 <body>
                     <div class="container">
+                        ${kpLogoHtml(120)}
                         <h2>Ticket {{ ticket.ticket_number }}</h2>
                         <div>${document.getElementById('qrCodeDisplay').innerHTML}</div>
                         <div class="ticket-number">{{ ticket.ticket_number }}</div>
@@ -424,8 +426,7 @@
             </html>
         `);
         win.document.close();
-        win.focus();
-        win.print();
+        kpPrint(win);
     }
     
     function downloadQR() {
@@ -448,5 +449,4 @@
         openModal('cancelModal');
     }
 </script>
-{% endblock %}
 {% endblock %}

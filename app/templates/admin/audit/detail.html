@@ -16,7 +16,7 @@
         <div>
             <h2 style="font-size: 20px; font-weight: 600; margin: 0;">{{ log.action|replace('_', ' ')|capitalize }}</h2>
             <p style="color: #94a3b8; margin: 4px 0 0;">
-                {{ log.created_at.strftime('%d/%m/%Y %H:%M:%S') }}
+                {{ (log.created_at|local).strftime('%d/%m/%Y %H:%M:%S') }}
                 &nbsp;|&nbsp; <span class="badge gray">{{ log.resource_type or 'N/A' }}</span>
                 &nbsp;|&nbsp; <span class="badge {% if log.leh_exported %}success{% else %}warning{% endif %}">
                     {% if log.leh_exported %}Exporté LEH{% else %}En attente{% endif %}
@@ -66,11 +66,11 @@
                 </tr>
                 <tr>
                     <td style="padding: 8px 0; color: #94a3b8;">Date de création</td>
-                    <td style="padding: 8px 0;">{{ log.created_at.strftime('%d/%m/%Y %H:%M:%S') }}</td>
+                    <td style="padding: 8px 0;">{{ (log.created_at|local).strftime('%d/%m/%Y %H:%M:%S') }}</td>
                 </tr>
                 <tr>
                     <td style="padding: 8px 0; color: #94a3b8;">Dernière mise à jour</td>
-                    <td style="padding: 8px 0;">{{ log.updated_at.strftime('%d/%m/%Y %H:%M:%S') }}</td>
+                    <td style="padding: 8px 0;">{{ (log.updated_at|local).strftime('%d/%m/%Y %H:%M:%S') }}</td>
                 </tr>
                 <tr>
                     <td style="padding: 8px 0; color: #94a3b8;">Export LEH</td>
@@ -78,7 +78,7 @@
                         {% if log.leh_exported %}
                             <span class="badge success"><i class="fas fa-check"></i> Exporté</span>
                             {% if log.leh_exported_at %}
-                            <br><span style="font-size: 12px; color: #94a3b8;">le {{ log.leh_exported_at.strftime('%d/%m/%Y %H:%M') }}</span>
+                            <br><span style="font-size: 12px; color: #94a3b8;">le {{ (log.leh_exported_at|local).strftime('%d/%m/%Y %H:%M') }}</span>
                             {% endif %}
                         {% else %}
                             <span class="badge warning"><i class="fas fa-clock"></i> En attente</span>
@@ -263,6 +263,7 @@
         </div>
     </div>
 </div>
+{% endblock %}
 
 {% block extra_js %}
 <script>
@@ -303,5 +304,4 @@
             .catch(() => showToast('Erreur lors de la copie', 'error'));
     }
 </script>
-{% endblock %}
 {% endblock %}

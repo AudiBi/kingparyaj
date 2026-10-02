@@ -126,7 +126,7 @@
                     </td>
                     <td style="font-weight: 600;">#{{ draw.draw_number }}</td>
                     <td class="text-muted" style="font-size: 12px;">
-                        {{ draw.draw_time.strftime('%d/%m/%Y %H:%M') }}
+                        {{ (draw.draw_time|local).strftime('%d/%m/%Y %H:%M') }}
                     </td>
                     <td>
                         {% if draw.numbers %}
@@ -240,6 +240,7 @@
         </div>
     </div>
 </div>
+{% endblock %}
 
 {% block extra_js %}
 <script>
@@ -413,5 +414,4 @@
         location.reload();
     }
 </script>
-{% endblock %}
 {% endblock %}

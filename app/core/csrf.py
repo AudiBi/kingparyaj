@@ -98,12 +98,34 @@ class AdminCsrfMiddleware(BaseHTTPMiddleware):
                 separator = "&" if "?" in target else "?"
                 return RedirectResponse(f"{target}{separator}csrf_error=1", status_code=303)
 
-        csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+        # Jeton STABLE tant que le cookie est valide : avant, un nouveau jeton
+        # était émis à chaque réponse, si bien qu'une page (Keno, Lucky…) qui
+        # avait fait un autre appel (ex. rafraîchissement du solde de caisse
+        # toutes les 30 s) envoyait ensuite un jeton périmé et son POST était
+        # refusé. Le même jeton est re-signé à chaque réponse (expiration
+        # glissante) ; un nouveau jeton n'est créé qu'en l'absence de cookie
+        # valide (première visite, inactivité > durée de vie, cookie falsifié).
+        serializer = URLSafeTimedSerializer(csrf_protect._secret_key, salt="fastapi-csrf-token")
+        csrf_token = self._token_from_cookie(request, csrf_protect, serializer)
+        if csrf_token is None:
+            csrf_token, signed_token = csrf_protect.generate_csrf_tokens()
+        else:
+            signed_token = serializer.dumps(csrf_token)
         request.state.csrf_token = csrf_token
 
         response = await call_next(request)
         csrf_protect.set_csrf_cookie(signed_token, response)
         return response
+
+    @staticmethod
+    def _token_from_cookie(request: Request, csrf_protect: CsrfProtect, serializer) -> str | None:
+        signed_token = request.cookies.get(csrf_protect._cookie_key)
+        if not signed_token:
+            return None
+        try:
+            return serializer.loads(signed_token, max_age=csrf_protect._max_age)
+        except (BadData, SignatureExpired):
+            return None
 
     @staticmethod
     async def _is_valid(request: Request, csrf_protect: CsrfProtect) -> bool:

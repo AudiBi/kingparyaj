@@ -93,7 +93,7 @@
                         {{ ticket.balance|format_number }} HTG
                     </td>
                     <td class="text-muted" style="font-size:12px;">
-                        {{ ticket.expires_at.strftime('%d/%m/%Y') }}
+                        {{ (ticket.expires_at|local).strftime('%d/%m/%Y') }}
                         {% if ticket.expires_at < now %}
                         <span class="badge danger">Expiré</span>
                         {% endif %}
@@ -287,21 +287,14 @@
     }
     
     function printQR() {
-        const content = document.getElementById('qrContent').innerHTML;
-        const win = window.open('', '', 'width=400,height=500');
-        win.document.write(`
-            <html><head><title>QR Code</title>
-            <style>body{text-align:center;font-family:Arial;padding:20px;}.container{display:inline-block;padding:20px;border:1px solid #e2e8f0;border-radius:8px;}.ticket-number{font-family:monospace;font-size:18px;font-weight:bold;margin-top:12px;}</style>
-            </head>
-            <body><div class="container"><h2>Ticket ${currentTicketNumber}</h2>
-            <div>${document.getElementById('qrCodeContainer').innerHTML}</div>
-            <div class="ticket-number">${currentTicketNumber}</div>
-            <p style="color:#94a3b8;font-size:12px;margin-top:12px;">Présentez ce QR code en bureau</p>
-            </div></body></html>
-        `);
-        win.document.close();
-        win.focus();
-        win.print();
+        const img = document.querySelector('#qrCodeContainer img');
+        KPReceipt.print({
+            game: 'TICKET', round: 'Ticket de jeu au comptant',
+            bureau: KP_AGENT.bureau, address: KP_AGENT.address, phone: KP_AGENT.phone, agent: KP_AGENT.name,
+            ticket: currentTicketNumber,
+            sections: img ? [{ type: 'image', src: img.src, mm: 34, caption: 'Présentez ce code au guichet' }] : [],
+            footer: 'Ce ticket sert à jouer et à encaisser vos gains au bureau. Valable 7 jours. Conservez-le.',
+        });
     }
 </script>
 {% endblock %}

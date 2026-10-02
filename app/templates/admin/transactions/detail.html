@@ -19,7 +19,7 @@
                 <span class="badge {% if transaction.transaction_type == 'deposit' %}success{% elif transaction.transaction_type == 'withdrawal' %}danger{% elif transaction.transaction_type == 'win' %}success{% elif transaction.transaction_type == 'bet' %}gray{% else %}warning{% endif %}">
                     {{ transaction.transaction_type }}
                 </span>
-                &nbsp;|&nbsp; {{ transaction.created_at.strftime('%d/%m/%Y %H:%M') }}
+                &nbsp;|&nbsp; {{ (transaction.created_at|local).strftime('%d/%m/%Y %H:%M') }}
             </p>
         </div>
     </div>
@@ -84,11 +84,11 @@
                 </tr>
                 <tr>
                     <td style="padding: 8px 0; color: #94a3b8;">Date de création</td>
-                    <td style="padding: 8px 0;">{{ transaction.created_at.strftime('%d/%m/%Y %H:%M:%S') }}</td>
+                    <td style="padding: 8px 0;">{{ (transaction.created_at|local).strftime('%d/%m/%Y %H:%M:%S') }}</td>
                 </tr>
                 <tr>
                     <td style="padding: 8px 0; color: #94a3b8;">Date de complétion</td>
-                    <td style="padding: 8px 0;">{{ transaction.completed_at.strftime('%d/%m/%Y %H:%M:%S') if transaction.completed_at else 'En attente' }}</td>
+                    <td style="padding: 8px 0;">{{ (transaction.completed_at|local).strftime('%d/%m/%Y %H:%M:%S') if transaction.completed_at else 'En attente' }}</td>
                 </tr>
                 {% if transaction.failure_reason %}
                 <tr>
@@ -149,9 +149,8 @@
                     <tr>
                         <td style="padding: 4px 0; color: #94a3b8; width: 40%;">Pari</td>
                         <td style="padding: 4px 0;">
-                            <a href="{{ url_for('admin_keno_draw_detail', draw_id=transaction.bet_id) }}" style="color: #3b82f6;">
-                                {{ transaction.bet_id[:8] }}
-                            </a>
+                            {# pas de page détail pour un pari (Keno, Lucky ou Horse Races) : identifiant affiché #}
+                            <span style="font-family: monospace;" title="{{ transaction.bet_id }}">{{ transaction.bet_id[:8] }}</span>
                         </td>
                     </tr>
                     {% endif %}
@@ -159,7 +158,7 @@
                     <tr>
                         <td style="padding: 4px 0; color: #94a3b8;">Tirage</td>
                         <td style="padding: 4px 0;">
-                            <a href="{{ url_for('admin_keno_draw_detail', draw_id=transaction.draw_id) }}" style="color: #3b82f6;">
+                            <a href="{{ url_for('admin_keno_draws_page') }}" style="color: #3b82f6;" title="{{ transaction.draw_id }}">
                                 {{ transaction.draw_id[:8] }}
                             </a>
                         </td>
@@ -169,7 +168,7 @@
                     <tr>
                         <td style="padding: 4px 0; color: #94a3b8;">Ticket</td>
                         <td style="padding: 4px 0;">
-                            <a href="{{ url_for('admin_ticket_detail', ticket_id=transaction.ticket_id) }}" style="color: #3b82f6;">
+                            <a href="{{ url_for('admin_ticket_detail_page', ticket_id=transaction.ticket_id) }}" style="color: #3b82f6;">
                                 {{ transaction.ticket_id[:8] }}
                             </a>
                         </td>
@@ -235,6 +234,7 @@
         </div>
     </div>
 </div>
+{% endblock %}
 
 {% block extra_js %}
 <script>
@@ -305,5 +305,4 @@
         openModal('cancelModal');
     }
 </script>
-{% endblock %}
 {% endblock %}

@@ -10,6 +10,7 @@ from app.core.exceptions import (
     InsufficientBalanceException, GameException
 )
 from app.core.logger import logger, setup_logging
+from app.core.timezone import now_utc
 
 __all__ = [
     "get_db", "engine",

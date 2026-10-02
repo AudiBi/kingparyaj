@@ -38,9 +38,9 @@
             <tbody>
                 {% for session in sessions %}
                 <tr>
-                    <td class="text-muted" style="font-size: 12px;">{{ session.opened_at.strftime('%d/%m/%Y') }}</td>
-                    <td style="font-size: 12px;">{{ session.opened_at.strftime('%H:%M') }}</td>
-                    <td style="font-size: 12px;">{{ session.closed_at.strftime('%H:%M') if session.closed_at else '-' }}</td>
+                    <td class="text-muted" style="font-size: 12px;">{{ (session.opened_at|local).strftime('%d/%m/%Y') }}</td>
+                    <td style="font-size: 12px;">{{ (session.opened_at|local).strftime('%H:%M') }}</td>
+                    <td style="font-size: 12px;">{{ (session.closed_at|local).strftime('%H:%M') if session.closed_at else '-' }}</td>
                     <td>{{ session.starting_balance|format_number }} HTG</td>
                     <td class="text-success">{{ session.cash_in_amount|format_number }} HTG</td>
                     <td class="text-danger">{{ session.cash_out_amount|format_number }} HTG</td>

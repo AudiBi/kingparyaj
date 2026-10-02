@@ -1,0 +1,289 @@
+<!-- app/templates/admin/games/lucky6.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Lucky6 - Administration{% endblock %}
+{% block page_title %}Lucky6{% endblock %}
+{% block page_subtitle %}Table de paiement, cycle des manches et règlement{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="/static/css/lucky6.css">
+<style>
+    .l6s { padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; background: #e2e8f0; }
+    .l6s.BETTING_OPEN { background: #dcfce7; color: #166534; }
+    .l6s.BETTING_CLOSED, .l6s.RUNNING { background: #fef3c7; color: #92400e; }
+    .l6s.SETTLED, .l6s.FINISHED { background: #e0e7ff; color: #3730a3; }
+    .l6s.CANCELLED { background: #fee2e2; color: #991b1b; }
+    .actions { min-width: 130px; display: flex; flex-wrap: wrap; gap: 2px; }
+    .actions .btn { margin: 1px; padding: 3px 8px; font-size: 11px; }
+    .mini { font-size: 12px; color: #64748b; }
+    .pt { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+    .pt th, .pt td { padding: 4px 6px; border-bottom: 1px solid #f1f5f9; text-align: right; }
+    .pt th:first-child, .pt td:first-child { text-align: left; }
+    .pt input { width: 100px; padding: 4px 6px; border: 1px solid #cbd5e1; border-radius: 6px; text-align: right; }
+    .pt-wrap { max-height: 520px; overflow: auto; border: 1px solid #e2e8f0; border-radius: 8px; }
+    .rtp-box { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; background: #f8fafc; border-radius: 8px; padding: 10px; margin: 10px 0; }
+    .rtp-val { font-size: 22px; font-weight: 800; }
+    .rtp-val.bad { color: #dc2626; } .rtp-val.ok { color: #059669; }
+    .l6-balls { display: flex; flex-wrap: wrap; gap: 3px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="mb-3 flex" style="gap:8px;flex-wrap:wrap;">
+    <a href="/lucky6/ecran" target="_blank" class="btn btn-sm btn-secondary"><i class="fas fa-tv"></i> Écran salle</a>
+    <button class="btn btn-sm btn-primary" onclick="createRound()"><i class="fas fa-plus"></i> Créer la prochaine manche</button>
+</div>
+
+<div class="grid-2">
+    <!-- ==================== CONFIGURATION ==================== -->
+    <div class="table-container">
+        <div class="table-header"><div class="title"><i class="fas fa-cog"></i> Configuration</div></div>
+        <div style="padding:16px;">
+            <form id="configForm">
+                <div class="flex" style="gap:16px;flex-wrap:wrap;margin-bottom:12px;">
+                    <label class="flex-center"><input type="checkbox" name="enabled"> Lucky6 ouvert</label>
+                    <label class="flex-center"><input type="checkbox" name="auto_enabled"> Manches automatiques</label>
+                    <label class="flex-center"><input type="checkbox" name="parity_enabled"> Pari pair / impair (1re boule)</label>
+                </div>
+                <div class="grid-2">
+                    <div class="form-group"><label>Une manche toutes les (min)</label><input class="form-control" name="interval_minutes" type="number" min="2" max="120"></div>
+                    <div class="form-group"><label>Fermeture des paris avant le tirage (s)</label><input class="form-control" name="betting_close_seconds" type="number" min="0" max="300"></div>
+                    <div class="form-group"><label>Présentation avant la 1re boule (ms)</label><input class="form-control" name="intro_ms" type="number" min="0" step="500"></div>
+                    <div class="form-group"><label>Intervalle entre deux boules (ms)</label><input class="form-control" name="ball_interval_ms" type="number" min="500" step="100"></div>
+                    <div class="form-group"><label>Affichage du résultat (ms)</label><input class="form-control" name="outro_ms" type="number" min="0" step="500"></div>
+                    <div class="form-group"><label>Cote pair / impair</label><input class="form-control" name="parity_odds" type="number" min="1.01" step="0.01"></div>
+                    <div class="form-group"><label>Mise minimum (HTG)</label><input class="form-control" name="min_bet" type="number" min="1"></div>
+                    <div class="form-group"><label>Mise maximum (HTG, ≤ 100 000)</label><input class="form-control" name="max_bet" type="number" min="1" max="100000"></div>
+                    <div class="form-group"><label>Mises proposées (séparées par des virgules)</label><input class="form-control" name="stake_options"></div>
+                    <div class="form-group"><label>Gain maximum par pari (HTG)</label><input class="form-control" name="max_payout" type="number" min="1"></div>
+                    <div class="form-group"><label>Taux de redistribution maximum (%)</label><input class="form-control" name="max_rtp" type="number" min="50" max="100" step="0.1"></div>
+                    <div class="form-group"><label>Ouverture / fermeture (heure Haïti)</label>
+                        <div class="flex" style="gap:6px;"><input class="form-control" name="open_hour" type="number" min="0" max="23"><input class="form-control" name="close_hour" type="number" min="1" max="24"></div></div>
+                </div>
+                <p class="mini" id="durationHint" style="margin-bottom:12px;"></p>
+
+                <label style="font-weight:700;">Table de paiement — position du 6e numéro trouvé → multiplicateur</label>
+                <div class="rtp-box">
+                    <div>Taux de redistribution exact<div id="rtpVal" class="rtp-val">—</div><span class="mini" id="winProb"></span></div>
+                    <div class="flex" style="gap:6px;align-items:center;flex-wrap:wrap;">
+                        <input id="targetRtp" class="form-control" type="number" min="14" max="100" step="0.1" value="85" style="width:90px;"> %
+                        <button type="button" class="btn btn-sm btn-secondary" id="scaleBtn" title="Garde les proportions, arrondit vers le bas">Ajuster au taux cible</button>
+                        <button type="button" class="btn btn-sm btn-secondary" id="defaultBtn">Table par défaut</button>
+                    </div>
+                </div>
+                <div class="pt-wrap">
+                    <table class="pt">
+                        <thead><tr><th>Position</th><th>Multiplicateur</th><th>Probabilité</th><th>Part du taux</th></tr></thead>
+                        <tbody id="paytable"></tbody>
+                    </table>
+                </div>
+                <p class="mini" style="margin:8px 0 12px;">0 = position non payée. Une position plus tardive ne peut pas payer plus qu'une position plus tôt.
+                    Les modifications s'appliquent aux <b>prochaines manches</b> : une manche déjà créée garde ses réglages.</p>
+                <button type="submit" class="btn btn-primary w-full"><i class="fas fa-save"></i> Enregistrer</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- ==================== MANCHES ==================== -->
+    <div class="table-container">
+        <div class="table-header">
+            <div class="title"><i class="fas fa-list"></i> Manches</div>
+            <button class="btn btn-sm btn-secondary" onclick="loadRounds()"><i class="fas fa-sync"></i></button>
+        </div>
+        <div class="table-responsive">
+            <table class="table">
+                <thead><tr><th>#</th><th>Tirage</th><th>Statut</th><th>Paris</th><th>Mises</th><th>Gains</th><th>Actions</th></tr></thead>
+                <tbody id="rounds"><tr><td colspan="7" class="mini">Chargement…</td></tr></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div class="modal-overlay" id="roundModal">
+    <div class="modal" style="max-width:820px;">
+        <div class="modal-header"><h3 id="roundModalTitle">Manche</h3>
+            <button class="btn btn-sm btn-secondary" onclick="closeModal('roundModal')">✕</button></div>
+        <div id="roundModalBody" style="max-height:70vh;overflow:auto;"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="/static/js/lucky6.js"></script>
+<script>
+(function () {
+    const API = '/admin/api/lucky6';
+    const L6 = window.Lucky6;
+    const $ = id => document.getElementById(id);
+    const esc = L6.esc;
+    const money = n => Number(n || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 });
+    const when = iso => iso ? new Date(L6.parseUtc(iso)).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+    let meta = null, table = [];
+
+    function errorMessage(data, fallback) {
+        if (!data) return fallback;
+        if (typeof data.error === 'string') return data.error;
+        if (typeof data.detail === 'string') return data.detail;
+        if (Array.isArray(data.detail) && data.detail[0]) return String(data.detail[0].msg || '').replace(/^Value error, /, '');
+        return data.message || fallback;
+    }
+    async function send(method, url, body) {
+        const token = (await (await fetch(API + '/csrf-token')).json()).csrf_token;
+        const res = await fetch(url, {
+            method, headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token },
+            body: body ? JSON.stringify(body) : undefined, redirect: 'manual'
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(errorMessage(data, 'Action refusée (session expirée ?)'));
+        return data;
+    }
+
+    // ---------- Table de paiement (taux recalculé par le serveur) ----------
+    function renderTable(rows) {
+        $('paytable').innerHTML = rows.map((r, i) => `<tr>
+            <td>${r.position}e</td>
+            <td><input type="number" min="0" step="0.1" data-i="${i}" value="${r.multiplier}"></td>
+            <td>${(r.probability * 100).toFixed(4)} %</td>
+            <td>${(r.contribution * 100).toFixed(2)} %</td></tr>`).join('');
+    }
+    function showRtp(rtp) {
+        const max = Number($('configForm').max_rtp.value) / 100;
+        $('rtpVal').textContent = (rtp * 100).toFixed(2) + ' %';
+        $('rtpVal').className = 'rtp-val ' + (rtp > max + 1e-9 ? 'bad' : 'ok');
+    }
+    let previewTimer = null;
+    async function preview(target, rerender) {
+        try {
+            const data = await send('POST', API + '/paytable/preview', target ? { paytable: table, target_rtp: target } : { paytable: table });
+            table = data.paytable;
+            if (target || rerender) renderTable(data.rtp_table);
+            else data.rtp_table.forEach((r, i) => {
+                const row = $('paytable').rows[i];
+                if (row) row.cells[3].textContent = (r.contribution * 100).toFixed(2) + ' %';
+            });
+            showRtp(data.rtp);
+        } catch (err) { showToast(err.message, 'error'); }
+    }
+    $('paytable').addEventListener('input', e => {
+        const inp = e.target.closest('input[data-i]');
+        if (!inp) return;
+        table[Number(inp.dataset.i)] = Number(inp.value) || 0;
+        clearTimeout(previewTimer);
+        previewTimer = setTimeout(() => preview(null), 300);
+    });
+    $('scaleBtn').addEventListener('click', () => preview(Number($('targetRtp').value) / 100));
+    $('defaultBtn').addEventListener('click', () => { table = meta.default_paytable.slice(); preview(null, true); });
+
+    function durationHint() {
+        const f = $('configForm');
+        const ms = Number(f.intro_ms.value) + 35 * Number(f.ball_interval_ms.value) + Number(f.outro_ms.value);
+        $('durationHint').textContent = `Durée du tirage : ${(ms / 1000).toFixed(0)} s (doit rester inférieure à l'intervalle entre manches, moins la fermeture des paris).`;
+    }
+
+    // ---------- Configuration ----------
+    const NUM = ['interval_minutes', 'betting_close_seconds', 'intro_ms', 'ball_interval_ms', 'outro_ms', 'open_hour', 'close_hour', 'min_bet', 'max_bet', 'max_payout', 'parity_odds'];
+    async function loadConfig() {
+        meta = await (await fetch(API + '/config')).json();
+        const c = meta.config, f = $('configForm');
+        NUM.forEach(k => f[k].value = c[k]);
+        ['enabled', 'auto_enabled', 'parity_enabled'].forEach(k => f[k].checked = !!c[k]);
+        f.stake_options.value = c.stake_options.join(', ');
+        f.max_rtp.value = (c.max_rtp * 100).toFixed(1);
+        table = c.paytable.slice();
+        renderTable(meta.rtp_table);
+        showRtp(meta.rtp);
+        $('winProb').textContent = `Probabilité qu'un pari 6 numéros gagne : ${(meta.win_probability * 100).toFixed(2)} %`;
+        durationHint();
+    }
+    ['intro_ms', 'ball_interval_ms', 'outro_ms'].forEach(k => $('configForm')[k].addEventListener('input', durationHint));
+    $('configForm').max_rtp.addEventListener('input', () => preview(null));
+
+    $('configForm').addEventListener('submit', async e => {
+        e.preventDefault();
+        const f = e.target;
+        const payload = { paytable: table.map(Number) };
+        NUM.forEach(k => payload[k] = Number(f[k].value));
+        ['enabled', 'auto_enabled', 'parity_enabled'].forEach(k => payload[k] = f[k].checked);
+        payload.stake_options = f.stake_options.value.split(/[,;\s]+/).filter(Boolean).map(Number);
+        payload.max_rtp = Number(f.max_rtp.value) / 100;
+        try {
+            const data = await send('PUT', API + '/config', payload);
+            showToast(`Configuration enregistrée (taux ${(data.rtp * 100).toFixed(2)} %)`, 'success');
+            loadConfig();
+        } catch (err) { showToast(err.message, 'error'); }
+    });
+
+    // ---------- Manches ----------
+    async function loadRounds() {
+        const data = await (await fetch(API + '/rounds?limit=50')).json();
+        $('rounds').innerHTML = (data.rounds || []).map(r => {
+            const s = r.status, id = r.race_id;
+            const btn = (a, label, cls) => `<button class="btn btn-sm ${cls}" data-action="${a}" data-id="${id}">${label}</button>`;
+            const actions = [
+                s === 'SCHEDULED' ? btn('open', 'Ouvrir', 'btn-success') : '',
+                ['SCHEDULED', 'BETTING_OPEN'].includes(s) ? btn('close', 'Fermer', 'btn-warning') : '',
+                ['SCHEDULED', 'BETTING_OPEN', 'BETTING_CLOSED'].includes(s) ? btn('start', 'Tirer', 'btn-primary') : '',
+                s === 'FINISHED' ? btn('settle', 'Régler', 'btn-primary') : '',
+                ['SCHEDULED', 'BETTING_OPEN', 'BETTING_CLOSED', 'RUNNING'].includes(s) ? btn('cancel', 'Annuler', 'btn-danger') : '',
+                btn('detail', 'Détail', 'btn-secondary')
+            ].join('');
+            return `<tr><td>#${r.race_number}</td><td>${when(r.scheduled_at)}</td>
+                <td><span class="l6s ${s}">${L6.statusLabel(s)}</span></td>
+                <td>${r.total_bets}</td><td>${money(r.total_stake)}</td><td>${money(r.total_payout)}</td>
+                <td class="actions">${actions}</td></tr>`;
+        }).join('') || '<tr><td colspan="7" class="mini">Aucune manche</td></tr>';
+    }
+    window.loadRounds = loadRounds;
+    window.createRound = async function () {
+        try {
+            const data = await send('POST', API + '/rounds', { open_betting: true });
+            showToast(`Manche #${data.round.race_number} créée (tirage ${when(data.round.scheduled_at)})`, 'success');
+            loadRounds();
+        } catch (err) { showToast(err.message, 'error'); }
+    };
+
+    async function showDetail(id) {
+        const r = await (await fetch(`${API}/rounds/${id}`)).json();
+        $('roundModalTitle').textContent = `Manche #${r.race_number} — ${L6.statusLabel(r.status)}`;
+        const balls = (r.balls || []).map(n => L6.ballHtml(n, 'l6-mini')).join('') || '<span class="mini">Pas encore tiré</span>';
+        const bets = (r.bets || []).map(b => `<tr><td>${when(b.placed_at)}</td>
+            <td>${b.bet_type === 'SIX' ? '<div class="l6-balls">' + b.selection.map(n => L6.ballHtml(n, 'l6-mini' + ((b.matched || []).includes(n) ? ' l6-hit' : ''))).join('') + '</div>' : b.bet_type}</td>
+            <td>${money(b.stake)}</td><td>${b.bet_type === 'SIX' ? (b.sixth_position ? b.sixth_position + 'e · x' + b.multiplier : (b.matched || []).length + '/6') : b.odds.toFixed(2)}</td>
+            <td>${b.status}</td><td>${money(b.winnings)}</td><td>${b.ticket_id ? esc(b.ticket_number || 'Ticket') : 'Compte'}</td></tr>`).join('');
+        $('roundModalBody').innerHTML = `
+            <p><b>35 boules (ordre de sortie)</b></p><div class="l6-balls" style="margin:6px 0 10px;">${balls}</div>
+            <p class="mini">Empreinte : ${esc(r.server_seed_hash)}<br>Seed : ${r.server_seed ? esc(r.server_seed) : 'révélé après le tirage'}
+            ${r.server_seed ? `<br><a href="/lucky6/verifier?manche=${esc(r.race_id)}" target="_blank">Vérifier le tirage</a>` : ''}</p>
+            ${r.cancel_reason ? `<p class="mini">Annulation : ${esc(r.cancel_reason)}</p>` : ''}
+            <p class="mini">${r.total_bets} pari(s) · mises ${money(r.total_stake)} HTG · gains ${money(r.total_payout)} HTG</p>
+            <table class="table" style="margin-top:8px;"><thead><tr><th>Heure</th><th>Pari</th><th>Mise</th><th>Position / cote</th><th>Statut</th><th>Gain</th><th>Ticket / compte</th></tr></thead>
+            <tbody>${bets || '<tr><td colspan="7" class="mini">Aucun pari</td></tr>'}</tbody></table>`;
+        openModal('roundModal');
+    }
+
+    $('rounds').addEventListener('click', async e => {
+        const btn = e.target.closest('[data-action]');
+        if (!btn) return;
+        const { action, id } = btn.dataset;
+        if (action === 'detail') return showDetail(id);
+        let body;
+        if (action === 'cancel') {
+            const reason = prompt('Motif de l’annulation (les mises seront remboursées) :');
+            if (!reason || reason.trim().length < 3) return;
+            body = { reason: reason.trim() };
+        } else if (action === 'start' && !confirm('Lancer le tirage maintenant ? Les paris seront fermés.')) {
+            return;
+        }
+        try {
+            await send('POST', `${API}/rounds/${id}/${action}`, body);
+            showToast('Action effectuée', 'success');
+            loadRounds();
+        } catch (err) { showToast(err.message, 'error'); }
+    });
+
+    loadConfig().catch(() => showToast('Configuration illisible', 'error'));
+    loadRounds();
+    setInterval(loadRounds, 15000);
+})();
+</script>
+{% endblock %}

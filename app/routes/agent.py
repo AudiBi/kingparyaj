@@ -6,9 +6,9 @@ import json
 import secrets
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Form
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
@@ -26,6 +26,10 @@ from app.core.security import (
     decode_token,
 )
 from app.core.csrf import register_csrf_globals
+from app.core.timezone import (
+    now_utc, now_haiti, today_haiti, today_bounds_utc, to_haiti,
+    local_date_start_utc, local_date_end_utc, local_day,
+)
 from app.core.exceptions import AppException, NotFoundException, ValidationException, InsufficientBalanceException
 from app.config import settings
 from app.models.user import User
@@ -62,25 +66,43 @@ def format_number(value):
 
 
 def timeago(value):
-    """Convertit une date en format 'il y a X'"""
+    """Convertit une date (UTC naive en base) en format relatif, passé ou futur."""
     if not value:
         return ""
-    now = datetime.utcnow()
-    diff = now - value
-    if diff.days > 30:
+    if not isinstance(value, datetime):
         return value.strftime("%d/%m/%Y")
-    if diff.days > 0:
-        return f"il y a {diff.days}j"
-    if diff.seconds > 3600:
-        return f"il y a {diff.seconds // 3600}h"
-    if diff.seconds > 60:
-        return f"il y a {diff.seconds // 60}min"
-    return "à l'instant"
+    if value.tzinfo is not None:
+        value = value.astimezone(timezone.utc).replace(tzinfo=None)
+    diff = now_utc() - value
+    future = diff.total_seconds() < 0
+    seconds = int(abs(diff.total_seconds()))
+    days = seconds // 86400
+    if days > 30:
+        return to_haiti(value).strftime("%d/%m/%Y")
+    if days > 0:
+        amount = f"{days}j"
+    elif seconds >= 3600:
+        amount = f"{seconds // 3600}h"
+    elif seconds >= 60:
+        amount = f"{seconds // 60}min"
+    else:
+        return "à l'instant"
+    return f"dans {amount}" if future else f"il y a {amount}"
+
+
+def local_dt(value):
+    """Filtre Jinja : convertit un datetime UTC stocké en heure d'Haïti."""
+    return to_haiti(value)
 
 
 templates.env.filters["format_number"] = format_number
 templates.env.filters["timeago"] = timeago
-templates.env.filters["tojson"] = lambda v: json.dumps(v)
+templates.env.filters["local"] = local_dt
+# Markup sûr : sans cela l'auto-échappement casse `const x = {{ y|tojson }}` (&#34;)
+from jinja2.utils import htmlsafe_json_dumps  # noqa: E402
+templates.env.filters["tojson"] = lambda v, indent=None: htmlsafe_json_dumps(
+    v, dumps=lambda o, **kw: json.dumps(o, indent=indent, default=str, **kw)
+)
 
 
 # ==================== HELPERS ====================
@@ -102,6 +124,8 @@ def _agent_view(agent: User, bureau: Optional[Bureau]) -> dict:
         "email": agent.email,
         "role": agent.role.value if hasattr(agent.role, "value") else agent.role,
         "bureau_name": bureau.name if bureau else "Sans bureau",
+        "bureau_address": (bureau.address or "") if bureau else "",
+        "bureau_phone": (bureau.phone or "") if bureau else "",
         # Pas de champ "code agent" dédié dans le modèle User : le téléphone
         # (identifiant réel de connexion) fait office d'identifiant affiché.
         "code": agent.phone,
@@ -121,7 +145,7 @@ async def _base_context(db: AsyncSession, agent: User, active: str) -> dict:
                 and_(
                     Ticket.bureau_id == agent.bureau_id,
                     Ticket.status == TicketStatus.ACTIVE,
-                    Ticket.expires_at > datetime.utcnow(),
+                    Ticket.expires_at > now_utc(),
                 )
             )
         )
@@ -198,7 +222,7 @@ async def agent_login(
 
     await redis_client.setex(f"agent:refresh:{user.id}", expire, refresh_token)
 
-    user.last_login = datetime.utcnow()
+    user.last_login = now_utc()
     user.last_ip = request.client.host if request.client else None
     await db.commit()
 
@@ -261,10 +285,10 @@ async def agent_dashboard(
     base = await _base_context(db, current_agent, "dashboard")
     session = base["session_open"]
 
-    today = datetime.utcnow().date()
-    today_start = datetime.combine(today, datetime.min.time())
-    tomorrow_start = today_start + timedelta(days=1)
-    yesterday_start = today_start - timedelta(days=1)
+    today = today_haiti()
+    today_start = local_date_start_utc(today)
+    tomorrow_start = local_date_end_utc(today)
+    yesterday_start = local_date_start_utc(today - timedelta(days=1))
 
     async def _count_bets(start, end) -> int:
         b = await db.execute(
@@ -351,7 +375,7 @@ async def agent_dashboard(
             .where(
                 Ticket.bureau_id == current_agent.bureau_id,
                 Ticket.status == TicketStatus.ACTIVE,
-                Ticket.expires_at > datetime.utcnow(),
+                Ticket.expires_at > now_utc(),
             )
             .order_by(Ticket.expires_at.asc())
             .limit(5)
@@ -360,7 +384,10 @@ async def agent_dashboard(
             active_tickets.append({"number": t.ticket_number, "balance": float(t.balance), "expires_at": t.expires_at})
 
     next_draw_result = await db.execute(
-        select(KenoDraw).where(KenoDraw.status == KenoDrawStatus.PENDING).order_by(KenoDraw.draw_time.asc()).limit(1)
+        select(KenoDraw)
+        .where(KenoDraw.status == KenoDrawStatus.PENDING, KenoDraw.mode == "scheduled", KenoDraw.draw_time > now_utc())
+        .order_by(KenoDraw.draw_time.asc())
+        .limit(1)
     )
     next_draw = next_draw_result.scalar_one_or_none()
 
@@ -472,7 +499,7 @@ async def agent_open_session(
         starting_balance=starting_balance,
         current_balance=starting_balance,
         expected_balance=starting_balance,
-        opened_at=datetime.utcnow(),
+        opened_at=now_utc(),
     )
     db.add(session)
     await db.commit()
@@ -634,7 +661,7 @@ async def agent_payout(
             raise NotFoundException("Ticket", identifier)
         if ticket.status != TicketStatus.ACTIVE:
             raise ValidationException(f"Ticket déjà {ticket.status.value}")
-        if ticket.expires_at < datetime.utcnow():
+        if ticket.expires_at < now_utc():
             ticket.status = TicketStatus.EXPIRED
             await db.commit()
             raise ValidationException("Ticket expiré")
@@ -757,7 +784,7 @@ async def agent_tickets(
                 "status": t.status.value,
             })
 
-    today_start = datetime.combine(datetime.utcnow().date(), datetime.min.time())
+    today_start = today_bounds_utc()[0]
     stats = {"active": len(tickets), "total_balance": sum(t["balance"] for t in tickets), "today_created": 0, "today_paid": 0}
     if current_agent.bureau_id:
         created_today = await db.execute(
@@ -775,7 +802,7 @@ async def agent_tickets(
         **base,
         "stats": stats,
         "tickets": tickets,
-        "now": datetime.utcnow(),
+        "now": now_utc(),
     })
 
 
@@ -980,7 +1007,7 @@ async def agent_history(
     if date:
         try:
             target_date = datetime.strptime(date, "%Y-%m-%d").date()
-            items = [i for i in items if i["date"] and i["date"].date() == target_date]
+            items = [i for i in items if i["date"] and to_haiti(i["date"]).date() == target_date]
         except ValueError:
             pass
     if search:
@@ -1018,7 +1045,7 @@ async def agent_reports(
 ):
     base = await _base_context(db, current_agent, "reports")
 
-    today = datetime.utcnow().date()
+    today = today_haiti()
     try:
         start = datetime.strptime(start_date, "%Y-%m-%d").date() if start_date else today - timedelta(days=7)
     except ValueError:
@@ -1030,31 +1057,31 @@ async def agent_reports(
     if end < start:
         start, end = end, start
 
-    range_start = datetime.combine(start, datetime.min.time())
-    range_end = datetime.combine(end, datetime.max.time())
+    range_start = local_date_start_utc(start)
+    range_end = local_date_end_utc(end)  # exclusive
 
     tickets_created_result = await db.execute(
-        select(Ticket).where(Ticket.agent_id == current_agent.id, Ticket.created_at >= range_start, Ticket.created_at <= range_end)
+        select(Ticket).where(Ticket.agent_id == current_agent.id, Ticket.created_at >= range_start, Ticket.created_at < range_end)
     )
     tickets_created = tickets_created_result.scalars().all()
 
     tickets_paid_result = await db.execute(
-        select(Ticket).where(Ticket.paid_by_agent == current_agent.id, Ticket.paid_at >= range_start, Ticket.paid_at <= range_end)
+        select(Ticket).where(Ticket.paid_by_agent == current_agent.id, Ticket.paid_at >= range_start, Ticket.paid_at < range_end)
     )
     tickets_paid = tickets_paid_result.scalars().all()
 
     tx_result = await db.execute(
-        select(Transaction).where(Transaction.created_by == current_agent.id, Transaction.created_at >= range_start, Transaction.created_at <= range_end)
+        select(Transaction).where(Transaction.created_by == current_agent.id, Transaction.created_at >= range_start, Transaction.created_at < range_end)
     )
     transactions = tx_result.scalars().all()
 
     bets_result = await db.execute(
-        select(KenoBet).where(KenoBet.agent_id == current_agent.id, KenoBet.placed_at >= range_start, KenoBet.placed_at <= range_end)
+        select(KenoBet).where(KenoBet.agent_id == current_agent.id, KenoBet.placed_at >= range_start, KenoBet.placed_at < range_end)
     )
     bets = bets_result.scalars().all()
 
     plays_result = await db.execute(
-        select(LuckyPlay).where(LuckyPlay.agent_id == current_agent.id, LuckyPlay.played_at >= range_start, LuckyPlay.played_at <= range_end)
+        select(LuckyPlay).where(LuckyPlay.agent_id == current_agent.id, LuckyPlay.played_at >= range_start, LuckyPlay.played_at < range_end)
     )
     plays = plays_result.scalars().all()
 
@@ -1066,17 +1093,17 @@ async def agent_reports(
     daily, labels, dep_series, pay_series = [], [], [], []
     cursor = start
     while cursor <= end:
-        day_start = datetime.combine(cursor, datetime.min.time())
-        day_end = datetime.combine(cursor, datetime.max.time())
+        day_start = local_date_start_utc(cursor)
+        day_end = local_date_end_utc(cursor)  # exclusive
 
-        day_deposits = sum(float(t.initial_amount) for t in tickets_created if day_start <= t.created_at <= day_end)
-        day_deposits += sum(float(tx.amount) for tx in transactions if tx.transaction_type == TransactionType.DEPOSIT and day_start <= tx.created_at <= day_end)
+        day_deposits = sum(float(t.initial_amount) for t in tickets_created if day_start <= t.created_at < day_end)
+        day_deposits += sum(float(tx.amount) for tx in transactions if tx.transaction_type == TransactionType.DEPOSIT and day_start <= tx.created_at < day_end)
 
-        day_payouts = sum(float(t.initial_amount) for t in tickets_paid if t.paid_at and day_start <= t.paid_at <= day_end)
-        day_payouts += sum(float(tx.amount) for tx in transactions if tx.transaction_type == TransactionType.WITHDRAWAL and day_start <= tx.created_at <= day_end)
+        day_payouts = sum(float(t.initial_amount) for t in tickets_paid if t.paid_at and day_start <= t.paid_at < day_end)
+        day_payouts += sum(float(tx.amount) for tx in transactions if tx.transaction_type == TransactionType.WITHDRAWAL and day_start <= tx.created_at < day_end)
 
-        day_bets = sum(1 for b in bets if day_start <= b.placed_at <= day_end) + sum(1 for p in plays if day_start <= p.played_at <= day_end)
-        day_tickets = sum(1 for t in tickets_created if day_start <= t.created_at <= day_end)
+        day_bets = sum(1 for b in bets if day_start <= b.placed_at < day_end) + sum(1 for p in plays if day_start <= p.played_at < day_end)
+        day_tickets = sum(1 for t in tickets_created if day_start <= t.created_at < day_end)
 
         label = cursor.strftime("%d/%m")
         daily.append({"date": label, "deposits": day_deposits, "payouts": day_payouts, "bets": day_bets, "tickets": day_tickets, "net": day_deposits - day_payouts})
@@ -1140,7 +1167,7 @@ async def agent_profile(
     total_payouts += float(tx_withdraw_sum.scalar() or 0)
 
     active_days_result = await db.execute(
-        select(func.count(func.distinct(func.date(Ticket.created_at)))).where(Ticket.agent_id == current_agent.id)
+        select(func.count(func.distinct(local_day(Ticket.created_at)))).where(Ticket.agent_id == current_agent.id)
     )
     active_days = active_days_result.scalar() or 0
 
@@ -1192,15 +1219,91 @@ async def agent_keno(
     request: Request,
     current_agent: User = Depends(get_current_agent),
     db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
 ):
+    """Keno au bureau : tirages PARTAGÉS (par défaut) ou instantanés (option admin)."""
+    from app.services import keno_engine
+    from app.services.keno_service import MODE_INSTANT, KenoService
+
     base = await _base_context(db, current_agent, "keno")
+    service = KenoService(db, redis_client)
+    config = await service.get_config()
+    if config["mode"] != MODE_INSTANT:
+        return templates.TemplateResponse(request, "agent/keno_shared.html", {
+            **base,
+            "keno_config": keno_engine.public_config(config),
+            "screen_code": KenoService.shared_screen_code(current_agent.id),
+        })
+    draw = await service.prepare_instant_draw(current_agent.id) if config["enabled"] else None
+    await db.commit()
+    return templates.TemplateResponse(request, "agent/keno.html", {
+        **base,
+        "keno_config": keno_engine.public_config(config),
+        "prepared": _prepared_payload(draw),
+        "screen_code": KenoService.screen_code(current_agent.id),
+    })
 
-    draw_result = await db.execute(
-        select(KenoDraw).where(KenoDraw.status == KenoDrawStatus.PENDING).order_by(KenoDraw.draw_time.asc()).limit(1)
-    )
-    next_draw = draw_result.scalar_one_or_none()
 
-    return templates.TemplateResponse(request, "agent/keno.html", {**base, "next_draw": next_draw})
+def _prepared_payload(draw) -> Optional[Dict[str, Any]]:
+    if draw is None:
+        return None
+    return {"draw_id": draw.id, "draw_number": draw.draw_number, "server_seed_hash": draw.server_seed_hash}
+
+
+@router.get("/api/keno/state")
+async def agent_keno_state(
+    current_agent: User = Depends(get_current_agent),
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    """Configuration en vigueur + tirage préparé (empreinte affichée avant le pari)."""
+    from app.services import keno_engine
+    from app.services.keno_service import KenoService
+
+    from app.services.keno_service import MODE_INSTANT
+
+    service = KenoService(db, redis_client)
+    config = await service.get_config()
+    instant = config["enabled"] and config["mode"] == MODE_INSTANT
+    draw = await service.prepare_instant_draw(current_agent.id) if instant else None
+    await db.commit()
+    return {"config": keno_engine.public_config(config), "prepared": _prepared_payload(draw)}
+
+
+@router.post("/api/keno/screen")
+async def agent_keno_screen_preview(
+    request: Request,
+    current_agent: User = Depends(get_current_agent),
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    """Montre au joueur, sur son écran, le ticket en cours de saisie
+    (numéros demandés, mise, gains possibles). Affichage seulement."""
+    from app.services.keno_service import KenoService
+
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    service = KenoService(db, redis_client)
+    prepared = await service.prepare_instant_draw(current_agent.id)
+    await db.commit()
+    state = await service.screen_preview(current_agent.id, payload.get("picks"), payload.get("stake"), prepared)
+    return {"success": True, "seq": state["seq"]}
+
+
+@router.get("/api/keno/quick-pick")
+async def agent_keno_quick_pick(
+    count: int = Query(5, ge=1, le=10),
+    current_agent: User = Depends(get_current_agent),
+):
+    """Sélection aléatoire (générateur du serveur). Ne joue rien et n'a aucun
+    effet sur le tirage, qui dépend uniquement du seed déjà engagé."""
+    from app.services.rng_service import RNGService
+
+    return {"picks": RNGService().generate_lucky_numbers(1, 80, count)}
 
 
 @router.post("/api/keno/bet")
@@ -1210,81 +1313,276 @@ async def agent_place_keno_bet(
     db: AsyncSession = Depends(get_db),
     redis_client: redis.Redis = Depends(get_redis),
 ):
+    """Ticket Keno instantané, pour un compte joueur ou un ticket bureau.
+
+    Contrôles, débit, tirage, règlement et crédit : KenoService.play_instant
+    (une seule transaction). Le client n'envoie que les numéros, la mise et
+    le joueur : aucun résultat, multiplicateur ou gain n'est accepté."""
+    from app.services.keno_service import KenoService
+
     try:
         payload = await request.json()
     except Exception:
         raise ValidationException("Requête invalide")
+    if not isinstance(payload, dict):
+        raise ValidationException("Requête invalide")
 
     player_type = payload.get("player_type")
-    identifier = payload.get("identifier")
+    identifier = str(payload.get("identifier") or "").strip()
     draw_id = payload.get("draw_id")
-    picks = payload.get("picks") or []
+    if not draw_id:
+        raise ValidationException("Tirage indisponible : rechargez la page")
 
-    try:
-        stake = Decimal(str(payload.get("stake")))
-    except (InvalidOperation, TypeError):
-        raise ValidationException("Mise invalide")
-    if stake < 10:
-        raise ValidationException("Mise minimum: 10 HTG")
-    if not (1 <= len(picks) <= 10):
-        raise ValidationException("Choisissez entre 1 et 10 numéros")
+    service = KenoService(db, redis_client)
+    ip_address = request.client.host if request.client else "0.0.0.0"
+    kwargs = dict(draw_id=draw_id, picks=payload.get("picks"), stake=payload.get("stake"),
+                  agent_id=current_agent.id, ip_address=ip_address)
 
-    draw = await db.get(KenoDraw, draw_id) if draw_id else None
-    if not draw or draw.status != KenoDrawStatus.PENDING:
-        raise ValidationException("Tirage indisponible")
+    if player_type in (None, "", "cash"):
+        # espèces : le numéro de ticket est créé automatiquement (même transaction)
+        from app.services.cash_ticket import sell_cash_ticket
 
+        identifier = await sell_cash_ticket(db, redis_client, current_agent, payload.get("stake"), payload.get("player_name"))
+        player_type = "ticket"
     if player_type == "account":
-        user_service = UserService(db, redis_client)
-        user = await user_service.get_by_phone(identifier)
+        user = await UserService(db, redis_client).get_by_phone(identifier)
         if not user:
             raise NotFoundException("Joueur", identifier)
-
-        wallet_service = WalletService(db, redis_client)
-        await wallet_service.debit(user_id=user.id, amount=stake, transaction_type="BET")
-
-        bet = KenoBet(user_id=user.id, draw_id=draw.id, agent_id=current_agent.id, picks=picks, stake=stake, placed_at=datetime.utcnow())
+        result = await service.play_instant(user_id=user.id, **kwargs)
         player_name = user.full_name or user.phone
-
     elif player_type == "ticket":
-        ticket_service = TicketService(db, redis_client)
-        ticket = await ticket_service.get_by_number(identifier)
-        if not ticket:
-            raise NotFoundException("Ticket", identifier)
-        if ticket.status != TicketStatus.ACTIVE:
-            raise ValidationException("Ticket inactif")
-        if ticket.expires_at < datetime.utcnow():
-            ticket.status = TicketStatus.EXPIRED
-            await db.commit()
-            raise ValidationException("Ticket expiré")
-        if ticket.balance < stake:
-            raise ValidationException("Solde du ticket insuffisant")
-
-        ticket.balance -= stake
-        bet = KenoBet(ticket_id=ticket.id, draw_id=draw.id, agent_id=current_agent.id, picks=picks, stake=stake, placed_at=datetime.utcnow())
-        player_name = ticket.player_name or "Ticket"
-
+        result = await service.play_instant(ticket_number=identifier, **kwargs)
+        ticket = await db.get(Ticket, result["ticket_id"])
+        player_name = (ticket.player_name if ticket else None) or "Ticket"
+        result["ticket_number"] = ticket.ticket_number if ticket else identifier
+        result["ticket_balance"] = float(ticket.balance) if ticket else None
     else:
         raise ValidationException("Type de joueur invalide")
 
-    db.add(bet)
-    draw.total_bets += 1
-    draw.total_amount += stake
-    await db.flush()
-
-    audit_service = AuditService(db, redis_client)
-    await audit_service.log(
-        agent_id=current_agent.id,
-        user_id=bet.user_id,
-        action=AuditAction.BET_PLACED,
-        resource_type="keno_bet",
-        resource_id=bet.id,
-        new_values={"draw_id": draw.id, "picks": picks, "stake": float(stake)},
-        ip_address=request.client.host if request.client else "0.0.0.0",
-    )
-
+    # Tirage suivant préparé tout de suite (son empreinte s'affiche pour le prochain ticket)
+    next_draw = await service.prepare_instant_draw(current_agent.id)
     await db.commit()
+    # Écran joueur : lancement du tirage et sortie des numéros (résultat déjà réglé)
+    await service.screen_play(current_agent.id, result)
 
-    return {"success": True, "message": f"Pari de {stake} HTG placé pour {player_name}", "bet_id": bet.id}
+    return {
+        "success": True,
+        "message": f"Ticket Keno de {result['stake']:g} HTG joué pour {player_name}",
+        "player_name": player_name,
+        "agent_name": current_agent.full_name or current_agent.phone,
+        **result,
+        "next": _prepared_payload(next_draw),
+    }
+
+
+@router.get("/api/keno/bets/{bet_id}")
+async def agent_keno_bet_detail(
+    bet_id: str,
+    current_agent: User = Depends(get_current_agent),
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    """Réimpression d'un reçu : uniquement les tickets pris par cet agent."""
+    from app.services.keno_service import KenoService
+
+    bet = await db.get(KenoBet, bet_id)
+    if bet is None or bet.agent_id != current_agent.id:
+        raise NotFoundException("Pari", bet_id)
+    draw = await db.get(KenoDraw, bet.draw_id)
+    service = KenoService(db, redis_client)
+    data = service.serialize_instant(draw, bet, await service.get_config())
+    if bet.ticket_id:
+        ticket = await db.get(Ticket, bet.ticket_id)
+        data["ticket_number"] = ticket.ticket_number if ticket else None
+    return data
+
+
+@router.get("/api/keno/history")
+async def agent_keno_history(
+    limit: int = Query(15, ge=1, le=50),
+    current_agent: User = Depends(get_current_agent),
+    db: AsyncSession = Depends(get_db),
+):
+    """Derniers tickets Keno pris par cet agent."""
+    from app.services.cash_ticket import ticket_numbers
+
+    rows = (await db.execute(
+        select(KenoBet, KenoDraw.draw_number)
+        .join(KenoDraw, KenoDraw.id == KenoBet.draw_id)
+        .where(KenoBet.agent_id == current_agent.id)
+        .order_by(KenoBet.placed_at.desc())
+        .limit(limit)
+    )).all()
+    numbers = await ticket_numbers(db, [bet.ticket_id for bet, _ in rows])
+    return {"items": [
+        {
+            "bet_id": bet.id,
+            "draw_number": number,
+            "placed_at": bet.placed_at.isoformat() + "Z" if bet.placed_at else None,
+            "picks": [int(n) for n in bet.picks],
+            "stake": float(bet.stake),
+            "match_count": int(bet.hits or 0),
+            "payout": float(bet.winnings or 0),
+            "status": bet.status.value if hasattr(bet.status, "value") else bet.status,
+            "ticket_number": numbers.get(bet.ticket_id),
+        }
+        for bet, number in rows
+    ]}
+
+
+# ==================== KENO PARTAGÉ ====================
+# Tirage commun à tous les bureaux toutes les N minutes : l'agent prend les
+# tickets sur le tirage ouvert ; le worker tire et règle à l'heure.
+
+@router.get("/api/keno/csrf-token")
+async def agent_keno_csrf_token(request: Request, current_agent: User = Depends(get_current_agent)):
+    """Jeton CSRF frais avant chaque envoi (la page reste ouverte longtemps)."""
+    return {"csrf_token": getattr(request.state, "csrf_token", "")}
+
+
+@router.get("/api/keno/live")
+async def agent_keno_live(
+    current_agent: User = Depends(get_current_agent),
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    from app.services import keno_engine
+    from app.services.keno_service import KenoService
+
+    service = KenoService(db, redis_client)
+    state = await service.live_state()
+    state["config"] = keno_engine.public_config(await service.get_config())
+    return state
+
+
+@router.post("/api/keno/shared/bet")
+async def agent_keno_shared_bet(
+    request: Request,
+    current_agent: User = Depends(get_current_agent),
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    """Ticket sur le tirage partagé ouvert, pour un compte joueur ou un ticket.
+    Le navigateur n'envoie que le tirage, les numéros, la mise et le joueur."""
+    from app.services.keno_service import KenoService
+
+    try:
+        payload = await request.json()
+    except Exception:
+        raise ValidationException("Requête invalide")
+    if not isinstance(payload, dict) or not payload.get("draw_id"):
+        raise ValidationException("Tirage manquant")
+    allowed = {"draw_id", "picks", "stake", "player_type", "identifier", "player_name"}
+    if set(payload) - allowed:
+        raise ValidationException("Champ non autorisé : " + ", ".join(sorted(set(payload) - allowed)))
+
+    from app.services.cash_ticket import resolve_funding
+
+    service = KenoService(db, redis_client)
+    user_id, ticket_number = await resolve_funding(
+        db, redis_client, current_agent, payload.get("player_type"), str(payload.get("identifier") or ""),
+        payload.get("stake"), payload.get("player_name"),
+    )
+    bet = await service.create_bet(
+        draw_id=str(payload["draw_id"]), picks=payload.get("picks"), stake=payload.get("stake"),
+        user_id=user_id, ticket_number=ticket_number,
+        agent_id=current_agent.id, ip_address=request.client.host if request.client else None,
+    )
+    await db.commit()
+    try:
+        await service.shared_screen_ticket(current_agent.id, bet)
+    except Exception:
+        pass  # l'affichage ne bloque jamais un ticket enregistré
+    draw = await db.get(KenoDraw, bet.draw_id)
+    data = service.serialize_shared_bet(bet, draw, await service.get_config())
+    if bet.ticket_id:
+        ticket = await db.get(Ticket, bet.ticket_id)
+        data["ticket_number"] = ticket.ticket_number if ticket else None
+        data["ticket_balance"] = float(ticket.balance) if ticket else None
+    return {"success": True, "message": "Ticket Keno enregistré", "bet": data}
+
+
+@router.post("/api/keno/shared/screen")
+async def agent_keno_shared_screen(
+    request: Request,
+    current_agent: User = Depends(get_current_agent),
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    """Ticket en cours de saisie montré sur l'écran du joueur (affichage seulement)."""
+    from app.services.keno_service import KenoService
+
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    state = await KenoService(db, redis_client).shared_screen_preview(
+        current_agent.id, payload.get("draw_id"), payload.get("picks"), payload.get("stake"),
+    )
+    return {"success": True, "seq": state["seq"]}
+
+
+@router.get("/api/keno/shared/my-bets")
+async def agent_keno_shared_bets(
+    limit: int = Query(20, ge=1, le=100),
+    current_agent: User = Depends(get_current_agent),
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    """Derniers tickets de cet agent sur les tirages partagés."""
+    from app.services.keno_service import MODE_SCHEDULED, KenoService
+
+    rows = (await db.execute(
+        select(KenoBet, KenoDraw)
+        .join(KenoDraw, KenoDraw.id == KenoBet.draw_id)
+        .where(KenoBet.agent_id == current_agent.id, KenoDraw.mode == MODE_SCHEDULED)
+        .order_by(KenoBet.placed_at.desc())
+        .limit(limit)
+    )).all()
+    from app.services.cash_ticket import ticket_numbers
+
+    service = KenoService(db, redis_client)
+    config = await service.get_config()
+    numbers = await ticket_numbers(db, [bet.ticket_id for bet, _ in rows])
+    return {"bets": [{**service.serialize_shared_bet(bet, draw, config), "ticket_number": numbers.get(bet.ticket_id)}
+                     for bet, draw in rows]}
+
+
+@router.get("/api/keno/shared/bets/{bet_id}")
+async def agent_keno_shared_receipt(
+    bet_id: str,
+    current_agent: User = Depends(get_current_agent),
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    """Réimpression : uniquement les tickets pris par cet agent."""
+    from app.services.keno_service import KenoService
+
+    bet = await db.get(KenoBet, bet_id)
+    if bet is None or bet.agent_id != current_agent.id:
+        raise NotFoundException("Pari", bet_id)
+    service = KenoService(db, redis_client)
+    data = service.serialize_shared_bet(bet, await db.get(KenoDraw, bet.draw_id), await service.get_config())
+    if bet.ticket_id:
+        ticket = await db.get(Ticket, bet.ticket_id)
+        data["ticket_number"] = ticket.ticket_number if ticket else None
+    return {"bet": data}
+
+
+@router.get("/api/keno/shared/history")
+async def agent_keno_shared_history(
+    limit: int = Query(10, ge=1, le=50),
+    current_agent: User = Depends(get_current_agent),
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    from app.services.keno_service import KenoService
+
+    service = KenoService(db, redis_client)
+    config = await service.get_config()
+    return {"draws": [service.serialize_draw(d, config) for d in await service.shared_history(limit)]}
 
 
 # ==================== LUCKY WHEEL ====================
@@ -1303,7 +1601,7 @@ async def agent_lucky(
     config = config_result.scalar_one_or_none()
     segments = config.segments if config else []
 
-    today_start = datetime.combine(datetime.utcnow().date(), datetime.min.time())
+    today_start = today_bounds_utc()[0]
     plays_result = await db.execute(
         select(LuckyPlay).where(LuckyPlay.agent_id == current_agent.id, LuckyPlay.played_at >= today_start)
     )
@@ -1469,14 +1767,19 @@ async def agent_lucky_spin(
         wallet_service = WalletService(db, redis_client)
         await wallet_service.debit(user_id=user.id, amount=stake, transaction_type="BET")
 
-    elif player_type == "ticket":
+    elif player_type in (None, "", "cash", "ticket"):
+        if player_type != "ticket":
+            # espèces : le numéro de ticket est créé automatiquement (même transaction)
+            from app.services.cash_ticket import sell_cash_ticket
+
+            identifier = await sell_cash_ticket(db, redis_client, current_agent, stake, data.get("player_name"))
         ticket_service = TicketService(db, redis_client)
-        ticket = await ticket_service.get_by_number(identifier)
+        ticket = await ticket_service.get_by_number((identifier or "").strip().upper())
         if not ticket:
             raise NotFoundException("Ticket", identifier)
         if ticket.status != TicketStatus.ACTIVE:
             raise ValidationException("Ticket inactif")
-        if ticket.expires_at < datetime.utcnow():
+        if ticket.expires_at < now_utc():
             ticket.status = TicketStatus.EXPIRED
             await db.commit()
             raise ValidationException("Ticket expiré")
@@ -1494,7 +1797,7 @@ async def agent_lucky_spin(
 
     random_seed = secrets.token_hex(32)
     verification_hash = hashlib.sha256(
-        f"{random_seed}{stake}{datetime.utcnow().isoformat()}".encode()
+        f"{random_seed}{stake}{now_utc().isoformat()}".encode()
     ).hexdigest()
 
     lucky_play = LuckyPlay(
@@ -1508,7 +1811,7 @@ async def agent_lucky_spin(
         winnings=winnings,
         random_seed=random_seed,
         verification_hash=verification_hash,
-        played_at=datetime.utcnow(),
+        played_at=now_utc(),
     )
     db.add(lucky_play)
     await db.flush()
@@ -1529,7 +1832,7 @@ async def agent_lucky_spin(
             "multiplier": float(multiplier),
             "winnings": float(winnings),
             "player": player_name,
-            "played_at": datetime.utcnow().isoformat(),
+            "played_at": now_utc().isoformat(),
             "stake": float(stake),
         }
     })
@@ -1542,5 +1845,9 @@ async def agent_lucky_spin(
         "color": winning_segment["color"],
         "play_id": lucky_play.id,
         "player": player_name,
+        "stake": float(stake),
+        "ticket_number": ticket.ticket_number if ticket else None,
+        "verification_hash": verification_hash,
+        "played_at": lucky_play.played_at.isoformat() + "Z",
         "message": f"Tour terminé ! {('Gain: ' + str(winnings) + ' HTG') if winnings > 0 else 'Perdu'}",
     }

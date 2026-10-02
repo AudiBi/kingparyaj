@@ -123,7 +123,7 @@ async def spin_wheel(
     wallet_service = WalletService(db, redis_client)
     balance = await wallet_service.get_balance(current_user.id)
     
-    if balance["balance"] < spin_data.stake:
+    if balance < spin_data.stake:
         raise HTTPException(status_code=400, detail="Solde insuffisant")
     
     # Générer le résultat
@@ -231,7 +231,7 @@ async def spin_wheel(
         "color": winning_segment["color"],
         "play_id": lucky_play.id,
         "verification_hash": verification_hash,
-        "new_balance": new_balance["balance"],
+        "new_balance": float(new_balance),
         "message": message
     }
 
