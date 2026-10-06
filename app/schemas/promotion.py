@@ -18,7 +18,7 @@ class PromotionCreate(BaseModel):
     min_deposit: Optional[float] = None
     max_bonus: Optional[float] = None
     wagering_requirement: int = 1
-    eligible_games: List[str] = ["keno", "lucky"]
+    eligible_games: List[str] = ["keno", "lucky6", "horse_races"]
     total_budget: Optional[float] = None
     new_users_only: bool = False
     first_deposit_only: bool = False

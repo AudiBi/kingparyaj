@@ -60,8 +60,9 @@
     </div>
     <div class="stat-card">
         <div class="stat-icon">⭐</div>
-        <div class="stat-label">Commission</div>
-        <div class="stat-value" style="color:#8b5cf6;">{{ summary.commission|format_number }} HTG</div>
+        <div class="stat-label">Commission ({{ ('%g' % (summary.commission_rate or 0)).replace('.', ',') }} %)</div>
+        <div class="stat-value" style="color:#8b5cf6;">{{ '{:,.2f}'.format(summary.commission or 0).replace(',', ' ').replace('.', ',') }} HTG</div>
+        <div style="font-size:12px;color:#64748b;margin-top:4px;">sur {{ '{:,.2f}'.format(summary.commission_sales or 0).replace(',', ' ').replace('.', ',') }} HTG de ventes</div>
     </div>
     <div class="stat-card">
         <div class="stat-icon">📈</div>

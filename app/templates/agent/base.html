@@ -528,11 +528,11 @@
             <i class="fas fa-ticket-alt"></i> Tickets
             <span class="badge warning">{{ active_tickets_count or 0 }}</span>
         </a>
+        <a href="/agent/gains" class="nav-item {% if active == 'gains' %}active{% endif %}">
+            <i class="fas fa-hand-holding-usd"></i> Payer les gains
+        </a>
         <a href="{{ url_for('agent_keno') }}" class="nav-item {% if active == 'keno' %}active{% endif %}">
             <i class="fas fa-dice"></i> Keno
-        </a>
-        <a href="{{ url_for('agent_lucky') }}" class="nav-item {% if active == 'lucky' %}active{% endif %}">
-            <i class="fas fa-gift"></i> Lucky Wheel
         </a>
         <a href="/agent/horse-races" class="nav-item {% if active == 'horse_races' %}active{% endif %}">
             <i class="fas fa-horse"></i> Horse Races

@@ -125,6 +125,9 @@ async def agent_place_bet(
         agent_id=current_agent.id,
         ip_address=_ip(request),
     )
+    from app.services.commission_service import freeze_commission
+
+    await freeze_commission(db, redis_client, current_agent, bet, payload.player_type)  # commission figée à la vente
     await service.commit_and_publish()
     try:
         await service.screen_ticket(current_agent.id, bet)  # écran du joueur au guichet

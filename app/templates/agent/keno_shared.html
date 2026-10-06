@@ -302,7 +302,7 @@
             bureau: KP_AGENT.bureau, address: KP_AGENT.address, phone: KP_AGENT.phone, agent: KP_AGENT.name,
             ticket: b.ticket_number, code: b.bet_id, placedAt: b.placed_at, sections,
             hash: b.server_seed_hash, verifyUrl: location.host + '/keno/verifier?tirage=' + b.draw_id,
-            footer: 'Résultat sur les écrans et au guichet. Conservez ce reçu : il est exigé pour tout paiement.',
+            footer: 'Résultat sur les écrans et au guichet. Gain payable le jour du tirage, avant minuit, sur présentation de ce reçu.',
         });
     }
 
@@ -320,7 +320,7 @@
                 <td>${time(b.placed_at)}</td><td>${b.ticket_number ? '<b style="font-family:monospace">' + esc(b.ticket_number) + '</b>' : '<span class="text-muted">Compte</span>'}</td><td>#${b.draw_number}</td>
                 <td><div class="kballs">${b.picks.map(n => K.ballHtml(n, 'kn-mini' + (b.matches.includes(n) ? ' kn-hit' : ''))).join('')}</div></td>
                 <td>${money(b.stake)}</td><td>${result(b)}</td>
-                <td><button class="btn btn-secondary btn-sm" data-reprint="${esc(b.bet_id)}" title="Réimprimer"><i class="fas fa-print"></i></button></td>
+                <td><button class="btn btn-secondary btn-sm" data-reprint="${esc(b.bet_id)}" title="Réimprimer"><i class="fas fa-print"></i></button>${(b.status === 'won' || b.status === 'WON') && b.ticket_number ? ' <a class="btn btn-primary btn-sm" href="/agent/gains?ticket=' + encodeURIComponent(b.ticket_number) + '" title="Payer les gains"><i class="fas fa-hand-holding-usd"></i> Payer</a>' : ''}</td>
             </tr>`).join('') || '<tr><td colspan="7" class="text-muted">Aucun ticket</td></tr>';
             filterTickets();
             boardPicks();

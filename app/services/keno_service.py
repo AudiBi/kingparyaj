@@ -1179,6 +1179,7 @@ class KenoService(BaseService[KenoDraw, None, None]):
         le même ticket ne peut pas écraser le nouveau solde."""
         ticket = await self._get_ticket_for_update(ticket_id=ticket_id)
         ticket.balance += amount
+        ticket.keep_payable_today()  # payable jusqu'à minuit le jour du résultat
         await self.db.flush()
     
     async def get_statistics(self, user_id: str) -> Dict[str, Any]:

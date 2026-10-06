@@ -25,9 +25,9 @@
     
     <div class="stat-card">
         <div class="stat-icon purple"><i class="fas fa-trophy"></i></div>
-        <div class="stat-label">Gains distribués</div>
+        <div class="stat-label">Gains payés aux joueurs</div>
         <div class="stat-value">{{ stats.transactions.total_wins|format_number }} HTG</div>
-        <div class="stat-change down">-{{ stats.transactions.today_wins|format_number }} HTG</div>
+        <div class="stat-change down">aujourd'hui : {{ stats.transactions.today_wins|format_number }} HTG</div>
     </div>
     
     <div class="stat-card">
@@ -215,7 +215,7 @@
                         tension: 0.4
                     },
                     {
-                        label: 'Gains',
+                        label: 'Gains payés',
                         data: data.wins,
                         borderColor: '#7c3aed',
                         backgroundColor: 'rgba(124, 58, 237, 0.1)',
@@ -257,10 +257,10 @@
         new Chart(ctx, {
             type: 'doughnut',
             data: {
-                labels: ['Keno', 'Lucky Wheel'],
+                labels: ['Keno', 'Lucky6', 'Horse Races'],
                 datasets: [{
-                    data: [data.keno, data.lucky],
-                    backgroundColor: ['#059669', '#7c3aed'],
+                    data: [data.keno || 0, data.lucky6 || 0, data.horse_races || 0],
+                    backgroundColor: ['#059669', '#7c3aed', '#d97706'],
                     borderWidth: 0
                 }]
             },
@@ -324,4 +324,4 @@
             .catch(() => {});
     }, 30000);
 </script>
-{% endblock %}
+{% endblock %}

@@ -249,11 +249,11 @@ async def test_broadcast_without_redis_pubsub_falls_back_to_local_clients(monkey
     socket = _FakeSocket()
     draws.manager.all_connections.add(socket)
     try:
-        await ws.broadcast_lucky_result({"winnings": 10})   # ne doit plus planter (bug datetime)
+        await ws.broadcast_draw_result({"draw_number": 1})   # ne doit plus planter (bug datetime)
     finally:
         draws.manager.all_connections.discard(socket)
 
-    assert socket.sent and socket.sent[0]["type"] == "lucky_result"
+    assert socket.sent and socket.sent[0]["type"] == "draw_completed"
     assert socket.sent[0]["timestamp"].endswith("Z")
 
 

@@ -161,7 +161,7 @@
     if (spec.seed) h += '<div class="lbl">Seed révélé</div><div class="mono">' + esc(spec.seed) + '</div>';
     if (spec.verifyUrl) h += '<div class="lbl">Vérification</div><div class="mono">' + esc(spec.verifyUrl) + '</div>';
     h += '<hr class="sep">';
-    h += '<div class="foot">' + esc(spec.footer || 'Conservez ce reçu : il est exigé pour tout paiement.') + '<br>' +
+    h += '<div class="foot">' + esc(spec.footer || 'Gain payable le jour même, avant minuit, sur présentation de ce reçu.') + '<br>' +
       'Jeu réservé aux personnes de 18 ans et plus.<br>Jouez de façon responsable.</div>';
     h += '<div class="foot" style="font-size:13px;font-weight:900;margin-top:2mm">MERCI ET BONNE CHANCE !</div>';
     h += '<div class="cut">- - - - - - - - - - - - - - - - - - - -</div>';

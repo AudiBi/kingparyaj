@@ -41,9 +41,9 @@
     </div>
     <div class="stat-card">
         <div class="stat-icon">⭐</div>
-        <div class="stat-label">Commission</div>
-        <div class="stat-value">{{ stats.commission|format_number }} HTG</div>
-        <div class="stat-change up">Ce mois</div>
+        <div class="stat-label">Commission ({{ ('%g' % (stats.commission_rate or 0)).replace('.', ',') }} %)</div>
+        <div class="stat-value">{{ '{:,.2f}'.format(stats.commission or 0).replace(',', ' ').replace('.', ',') }} HTG</div>
+        <div class="stat-change up" title="Commission = taux × ventes du mois">Ce mois · ventes {{ '{:,.2f}'.format(stats.commission_sales or 0).replace(',', ' ').replace('.', ',') }} HTG</div>
     </div>
 </div>
 

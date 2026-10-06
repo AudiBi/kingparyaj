@@ -15,6 +15,7 @@ import base64
 
 from app.core.exceptions import AppException, NotFoundException
 from app.core.logger import get_logger
+from app.core.timezone import to_haiti
 from app.models.ticket import Ticket, TicketStatus
 from app.models.bureau import Bureau
 from app.services.base import BaseService
@@ -28,7 +29,9 @@ class TicketService(BaseService[Ticket, TicketCreate, None]):
     Permet aux joueurs sans compte de jouer au bureau.
     """
     
-    TICKET_EXPIRY_DAYS = 7
+    # Un ticket se paie LE JOUR MÊME : il expire à minuit (heure d'Haïti).
+    # (Avant : 7 jours.) Un ticket dont un pari attend son tirage n'expire pas ;
+    # un gain qui tombe après minuit le rend payable jusqu'à la fin de ce jour.
     
     def __init__(self, db: AsyncSession, redis_client: redis.Redis):
         super().__init__(db, Ticket)
@@ -70,15 +73,15 @@ class TicketService(BaseService[Ticket, TicketCreate, None]):
             player_phone=player_phone,
             balance=amount,
             initial_amount=amount,
-            expires_at=datetime.utcnow() + timedelta(days=self.TICKET_EXPIRY_DAYS),
+            expires_at=Ticket.end_of_local_day(),
             status=TicketStatus.ACTIVE
         )
         
         self.db.add(ticket)
         
         # Mettre à jour la caisse du bureau
-        bureau.cash_balance += amount
-        bureau.total_cash_in_today += amount
+        bureau.cash_balance = Bureau.cash_balance + (amount)  # atomique en base
+        bureau.total_cash_in_today = Bureau.total_cash_in_today + (amount)  # atomique en base
         
         await self.db.flush()
         
@@ -124,45 +127,80 @@ class TicketService(BaseService[Ticket, TicketCreate, None]):
             raise NotFoundException("Ticket", ticket_number)
         return ticket
     
+    async def pending_bets_count(self, ticket_id: str) -> int:
+        """Paris de ce ticket dont le résultat n'est pas encore connu
+        (tirage Keno, manche Lucky6 ou course pas encore réglés)."""
+        from app.models.enums import KenoBetStatus
+        from app.models.game import GameBet
+        from app.models.keno import KenoBet
+
+        keno = (await self.db.execute(
+            select(func.count(KenoBet.id)).where(KenoBet.ticket_id == ticket_id, KenoBet.status == KenoBetStatus.PENDING)
+        )).scalar() or 0
+        games = (await self.db.execute(
+            select(func.count(GameBet.id)).where(GameBet.ticket_id == ticket_id, GameBet.status == "PENDING")
+        )).scalar() or 0
+        return int(keno) + int(games)
+
+    async def get_for_update(self, ticket_number: str) -> Ticket:
+        """Ticket verrouillé (SELECT … FOR UPDATE) : deux paiements simultanés
+        du même ticket se suivent, le second voit le ticket déjà payé."""
+        result = await self.db.execute(
+            select(Ticket).where(Ticket.ticket_number == (ticket_number or "").strip().upper()).with_for_update()
+        )
+        ticket = result.scalar_one_or_none()
+        if not ticket:
+            raise NotFoundException("Ticket", ticket_number)
+        return ticket
+
     async def payout_ticket(
         self,
         ticket_number: str,
         agent_id: str,
-        bureau_id: str = None
+        bureau_id: str = None,
+        session_id: str = None,
     ) -> Dict[str, Any]:
-        """Paiement cash d'un ticket"""
-        
-        ticket = await self.get_or_raise_by_number(ticket_number)
-        
+        """Paiement cash d'un ticket (solde complet : gains + reste éventuel).
+
+        Sécurités : ticket verrouillé, une seule fois (statut PAID), pas de
+        paiement tant qu'un pari du ticket attend son résultat, bureau du
+        ticket, montant payé enregistré (tickets.paid_amount)."""
+
+        ticket = await self.get_for_update(ticket_number)
+
         # Vérifications
+        if ticket.status == TicketStatus.PAID:
+            when = to_haiti(ticket.paid_at).strftime("%d/%m/%Y %H:%M") if ticket.paid_at else ""
+            raise AppException(400, f"Ticket déjà payé{(' le ' + when) if when else ''}", "ALREADY_PAID")
         if ticket.status != TicketStatus.ACTIVE:
-            raise AppException(400, f"Ticket déjà {ticket.status}")
-        
-        if ticket.balance <= 0:
-            raise AppException(400, "Aucun solde à payer")
-        
+            raise AppException(400, f"Ticket {getattr(ticket.status, 'value', ticket.status)} : paiement impossible")
+
+        # Vérifier le bureau si spécifié
+        if bureau_id and ticket.bureau_id != bureau_id:
+            raise AppException(400, "Ce ticket a été vendu dans un autre bureau : il se paie dans ce bureau")
+
+        pending = await self.pending_bets_count(ticket.id)
+        if pending:  # avant l'expiration : le gain éventuel rendra le ticket payable le jour du résultat
+            raise AppException(400, f"Résultat pas encore connu pour {pending} pari(s) de ce ticket : paiement après le tirage", "PENDING_BETS")
+
         if ticket.expires_at < datetime.utcnow():
             ticket.status = TicketStatus.EXPIRED
             await self.db.flush()
-            raise AppException(400, "Ticket expiré")
-        
-        # Vérifier le bureau si spécifié
-        if bureau_id and ticket.bureau_id != bureau_id:
-            raise AppException(400, "Ce ticket n'appartient pas à ce bureau")
-        
+            raise AppException(400, "Ticket expiré : un ticket se paie le jour même")
+
+        if ticket.balance <= 0:
+            raise AppException(400, "Aucun gain à payer sur ce ticket", "NOTHING_TO_PAY")
+
         amount = ticket.balance
-        
+
         # Effectuer le paiement
-        ticket.status = TicketStatus.PAID
-        ticket.paid_at = datetime.utcnow()
-        ticket.paid_by_agent = agent_id
-        ticket.balance = Decimal("0")
-        
+        ticket.record_payout(amount, agent_id, session_id)  # solde -> 0, PAYÉ, paiement daté
+
         # Mettre à jour la caisse du bureau
         bureau = await self.db.get(Bureau, ticket.bureau_id)
         if bureau:
-            bureau.cash_balance -= amount
-            bureau.total_cash_out_today += amount
+            bureau.cash_balance = Bureau.cash_balance - (amount)  # atomique en base
+            bureau.total_cash_out_today = Bureau.total_cash_out_today + (amount)  # atomique en base
         
         await self.db.flush()
         
@@ -235,16 +273,18 @@ class TicketService(BaseService[Ticket, TicketCreate, None]):
         stats = result.one()
         
         # Paiements aujourd'hui
-        payout_result = await self.db.execute(
+        from app.models.cash_movement import KIND_PAYOUT, TicketCashMovement
+
+        payout_result = await self.db.execute(  # chaque paiement daté, partiels compris
             select(
-                func.count(Ticket.id).label("total_payouts"),
-                func.sum(Ticket.initial_amount).label("total_paid")
+                func.count(TicketCashMovement.id).label("total_payouts"),
+                func.sum(TicketCashMovement.amount).label("total_paid")
             )
             .where(
                 and_(
-                    Ticket.bureau_id == bureau_id,
-                    Ticket.paid_at >= today_start,
-                    Ticket.status == TicketStatus.PAID
+                    TicketCashMovement.bureau_id == bureau_id,
+                    TicketCashMovement.created_at >= today_start,
+                    TicketCashMovement.kind == KIND_PAYOUT,
                 )
             )
         )
@@ -266,7 +306,8 @@ class TicketService(BaseService[Ticket, TicketCreate, None]):
             select(Ticket).where(
                 and_(
                     Ticket.status == TicketStatus.ACTIVE,
-                    Ticket.expires_at < datetime.utcnow()
+                    Ticket.expires_at < datetime.utcnow(),
+                    Ticket.no_pending_bet_clause(),  # résultat encore attendu : pas d'expiration
                 )
             )
         )

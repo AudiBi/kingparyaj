@@ -1,5 +1,5 @@
 # app/workers/cleanup_worker.py
-"""Worker pour le nettoyage des données expirées - VERSION COMPLÈTE (Keno + Lucky)"""
+"""Worker pour le nettoyage des données expirées"""
 
 from celery import Task
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
@@ -16,7 +16,6 @@ from app.models.ticket import Ticket, TicketStatus
 from app.models.bureau import CashierSession
 from app.models.audit import AuditLog
 from app.models.keno import KenoDraw, KenoDrawStatus
-from app.models.lucky import LuckyPlay, LuckyWheelConfig
 from app.models.notification import Notification, NotificationStatus
 from app.models.transaction import Transaction
 
@@ -101,99 +100,6 @@ async def _cleanup_old_keno_draws_async():
         raise
 
 
-# ==================== LUCKY - NETTOYAGE ====================
-
-@celery_app.task(
-    bind=True,
-    base=CleanupTask,
-    name="app.workers.cleanup_worker.cleanup_old_lucky_plays",
-    max_retries=2
-)
-def cleanup_old_lucky_plays(self):
-    """Nettoie les anciennes parties Lucky (> 90 jours)"""
-    loop = asyncio.get_event_loop()
-    if loop.is_running():
-        return loop.create_task(_cleanup_old_lucky_plays_async())
-    else:
-        return loop.run_until_complete(_cleanup_old_lucky_plays_async())
-
-
-async def _cleanup_old_lucky_plays_async():
-    """Logique de nettoyage des parties Lucky"""
-    logger.info("🧹 Nettoyage des anciennes parties Lucky...")
-    
-    try:
-        async with AsyncSessionLocal() as db:
-            archive_date = datetime.utcnow() - timedelta(days=90)
-            
-            result = await db.execute(
-                select(LuckyPlay)
-                .where(LuckyPlay.played_at < archive_date)
-                .limit(1000)
-            )
-            old_plays = result.scalars().all()
-            
-            if old_plays:
-                for play in old_plays:
-                    play.is_deleted = True
-                    play.metadata = play.metadata or {}
-                    play.metadata["archived_at"] = datetime.utcnow().isoformat()
-                
-                await db.commit()
-                logger.info(f"📦 {len(old_plays)} parties Lucky archivées")
-                
-    except Exception as e:
-        logger.error(f"❌ Erreur nettoyage Lucky: {e}")
-        raise
-
-
-@celery_app.task(
-    bind=True,
-    base=CleanupTask,
-    name="app.workers.cleanup_worker.cleanup_inactive_wheel_configs",
-    max_retries=2
-)
-def cleanup_inactive_wheel_configs(self):
-    """Nettoie les configurations de roue inactives"""
-    loop = asyncio.get_event_loop()
-    if loop.is_running():
-        return loop.create_task(_cleanup_inactive_wheel_configs_async())
-    else:
-        return loop.run_until_complete(_cleanup_inactive_wheel_configs_async())
-
-
-async def _cleanup_inactive_wheel_configs_async():
-    """Logique de nettoyage des configs inactives"""
-    logger.info("🧹 Nettoyage des configs roue inactives...")
-    
-    try:
-        async with AsyncSessionLocal() as db:
-            cutoff_date = datetime.utcnow() - timedelta(days=30)
-            
-            result = await db.execute(
-                select(LuckyWheelConfig)
-                .where(
-                    and_(
-                        LuckyWheelConfig.is_active == False,
-                        LuckyWheelConfig.updated_at < cutoff_date
-                    )
-                )
-                .limit(100)
-            )
-            old_configs = result.scalars().all()
-            
-            if old_configs:
-                for config in old_configs:
-                    config.is_deleted = True
-                
-                await db.commit()
-                logger.info(f"🗑️ {len(old_configs)} configs roue supprimées")
-                
-    except Exception as e:
-        logger.error(f"❌ Erreur nettoyage configs: {e}")
-        raise
-
-
 # ==================== NETTOYAGE COMMUN ====================
 
 @celery_app.task(
@@ -224,7 +130,8 @@ async def _cleanup_expired_tickets_async():
                 .where(
                     and_(
                         Ticket.status == TicketStatus.ACTIVE,
-                        Ticket.expires_at < now
+                        Ticket.expires_at < now,
+                        Ticket.no_pending_bet_clause(),  # résultat encore attendu : pas d'expiration
                     )
                 )
                 .limit(1000)
@@ -580,8 +487,6 @@ def run_daily_cleanup():
     archive_old_transactions.delay()
     cleanup_duplicate_notifications.delay()
     cleanup_old_keno_draws.delay()
-    cleanup_old_lucky_plays.delay()
-    cleanup_inactive_wheel_configs.delay()
     
     logger.info("✅ Nettoyage quotidien terminé")
     return {"success": True, "tasks_scheduled": 10}

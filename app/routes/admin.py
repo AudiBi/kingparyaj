@@ -1,5 +1,7 @@
 # app/routes/admin.py
-"""Routes d'administration complètes - Parier Keno & Lucky Haïti"""
+"""Routes d'administration complètes - King Paryaj (Keno, Lucky6, Horse Races).
+
+(Lucky Wheel retirée : table lucky_plays conservée pour l'historique.)"""
 
 from fastapi import APIRouter, Body, Depends, Request, Form, HTTPException, Query, BackgroundTasks, Response
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse
@@ -34,7 +36,7 @@ from app.models.user import User, UserRole, KYCStatus
 from app.models.wallet import Wallet
 from app.models.bureau import Bureau, CashierSession
 from app.models.keno import KenoDraw, KenoBet, KenoDrawStatus, KenoBetStatus
-from app.models.lucky import LuckyPlay, LuckyWheelConfig
+from app.models.game import GameBet
 from app.models.ticket import Ticket, TicketStatus
 from app.models.transaction import Transaction, TransactionType, TransactionStatus
 from app.models.audit import AuditLog, AuditAction
@@ -44,14 +46,13 @@ from app.models.responsible import SelfExclusion, PlayerLimit
 from app.schemas.admin import (
     AdminUserCreate, AdminUserUpdate, AdminAgentCreate, AdminAgentUpdate,
     AdminBureauCreate, AdminBureauUpdate,
-    AdminKenoConfig, AdminLuckyConfig,
+    AdminKenoConfig,
     AdminPromotionCreate, AdminPromotionUpdate,
-    AdminSettings, AdminReportRequest, LuckyWheelSegment
+    AdminSettings, AdminReportRequest,
 )
 from app.services.user_service import UserService
 from app.services.wallet_service import WalletService
 from app.services.keno_service import KenoService
-from app.services.lucky_service import LuckyWheelService
 from app.services.ticket_service import TicketService
 from app.services.notification_service import NotificationService
 
@@ -315,7 +316,7 @@ async def admin_dashboard(
     s'affichait brute après la connexion. La version JSON reste disponible
     sur /admin/api/dashboard/summary.
     """
-    stats = await _get_dashboard_stats(db)
+    stats = await _get_dashboard_stats(db, redis_client)
     recent_transactions = await _get_recent_transactions(db, limit=10)
     recent_users = await _get_recent_users(db, limit=10)
     alerts = await _get_system_alerts(db, redis_client)
@@ -435,13 +436,13 @@ async def admin_dashboard_summary_api(
         str(finance_stats.total_withdrawals or 0)
     )
 
-    total_bets = Decimal(
-        str(finance_stats.total_bets or 0)
-    )
+    # Mises / gains : paris réglés de tous les jeux, tickets ET comptes
+    # (les transactions BET/WIN ne couvrent que les comptes joueurs)
+    from app.services.finance_report_service import FinanceReportService
 
-    total_wins = Decimal(
-        str(finance_stats.total_wins or 0)
-    )
+    (games_all,) = await FinanceReportService(db).game_totals([datetime(2000, 1, 1), now_utc() + timedelta(days=1)])
+    total_bets = Decimal(str(games_all["stakes"]))
+    total_wins = Decimal(str(games_all["wins"]))
 
     # Revenu brut des jeux
     game_revenue = total_bets - total_wins
@@ -533,7 +534,8 @@ async def admin_dashboard_summary_api(
 @router.get("/api/dashboard/stats")
 async def admin_dashboard_stats_api(
     admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
 ):
     """
     Statistiques pour l'auto-refresh du tableau de bord (appelée par
@@ -541,7 +543,7 @@ async def admin_dashboard_stats_api(
     ("users.total") : c'est le format que lit le JS (`data['users.total']`),
     pas des objets imbriqués.
     """
-    stats = await _get_dashboard_stats(db)
+    stats = await _get_dashboard_stats(db, redis_client)
     return {
         "users.total": stats["users"]["total"],
         "transactions.total_volume": stats["transactions"]["total_volume"],
@@ -558,8 +560,8 @@ async def admin_dashboard_charts_api(
 ):
     """
     Données pour les graphiques du tableau de bord : volume de transactions
-    par jour sur la période choisie, et répartition Keno / Lucky Wheel sur
-    la même période.
+    par jour sur la période choisie, et répartition Keno / Lucky6 / Horse Races
+    sur la même période.
     """
     today = today_haiti()
     start_date = today - timedelta(days=period - 1)
@@ -596,17 +598,27 @@ async def admin_dashboard_charts_api(
             by_day[day_key]["deposits"] = float(row.total)
         elif row.transaction_type == TransactionType.WITHDRAWAL:
             by_day[day_key]["withdrawals"] = float(row.total)
-        elif row.transaction_type == TransactionType.WIN:
-            by_day[day_key]["wins"] = float(row.total)
+
+    # Gains des joueurs par jour : paris réglés de tous les jeux, tickets ET
+    # comptes (les transactions WIN ne couvrent que les comptes joueurs)
+    from app.services.finance_report_service import FinanceReportService
+
+    days = [start_date + timedelta(days=i) for i in range(period)]
+    bounds = [local_date_start_utc(d) for d in days] + [local_date_end_utc(days[-1])]
+    for day, games in zip(days, await FinanceReportService(db).game_totals(bounds)):
+        by_day[day.isoformat()]["wins"] = games["wins_paid"]
 
     labels = list(by_day.keys())
 
     keno_result = await db.execute(
         select(func.count(KenoBet.id)).where(KenoBet.placed_at >= start_datetime)
     )
-    lucky_result = await db.execute(
-        select(func.count(LuckyPlay.id)).where(LuckyPlay.played_at >= start_datetime)
+    games_result = await db.execute(
+        select(GameBet.game_type, func.count(GameBet.id))
+        .where(GameBet.placed_at >= start_datetime)
+        .group_by(GameBet.game_type)
     )
+    by_game = {game: count for game, count in games_result.all()}
 
     return {
         "transactions": {
@@ -617,7 +629,8 @@ async def admin_dashboard_charts_api(
         },
         "games": {
             "keno": keno_result.scalar() or 0,
-            "lucky": lucky_result.scalar() or 0,
+            "lucky6": by_game.get("lucky6", 0),
+            "horse_races": by_game.get("horse_races", 0),
         },
     }
 
@@ -857,23 +870,20 @@ async def admin_user_detail(
         )
     
     # Statistiques des paris
-    bets_count = await db.execute(
-        select(func.count(KenoBet.id))
-        .where(KenoBet.user_id == user_id)
-    )
-    total_bets = bets_count.scalar() or 0
-    
-    bets_volume = await db.execute(
-        select(func.coalesce(func.sum(KenoBet.stake), 0))
-        .where(KenoBet.user_id == user_id)
-    )
-    total_volume = float(bets_volume.scalar() or 0)
-    
-    bets_wins = await db.execute(
-        select(func.coalesce(func.sum(KenoBet.winnings), 0))
-        .where(KenoBet.user_id == user_id, KenoBet.status == KenoBetStatus.WON)
-    )
-    total_wins = float(bets_wins.scalar() or 0)
+    # Tous les jeux (Keno, Lucky6, Horse Races) ; paris remboursés/annulés exclus
+    keno = (await db.execute(
+        select(func.count(KenoBet.id), func.coalesce(func.sum(KenoBet.stake), 0),
+               func.coalesce(func.sum(KenoBet.winnings).filter(KenoBet.status == KenoBetStatus.WON), 0))
+        .where(KenoBet.user_id == user_id, KenoBet.status != KenoBetStatus.REFUNDED)
+    )).one()
+    other = (await db.execute(
+        select(func.count(GameBet.id), func.coalesce(func.sum(GameBet.stake), 0),
+               func.coalesce(func.sum(GameBet.winnings).filter(GameBet.status == "WON"), 0))
+        .where(GameBet.user_id == user_id, GameBet.status.notin_(["REFUNDED", "VOID"]))
+    )).one()
+    total_bets = int(keno[0] or 0) + int(other[0] or 0)
+    total_volume = float(keno[1] or 0) + float(other[1] or 0)
+    total_wins = float(keno[2] or 0) + float(other[2] or 0)
     
     # Dernières transactions
     transactions_result = await db.execute(
@@ -1103,7 +1113,8 @@ async def admin_agents(
     bureau_id: Optional[str] = None,
     status: Optional[str] = None,
     admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
 ):
     """Liste des agents"""
 
@@ -1186,6 +1197,20 @@ async def admin_agents(
             Decimal("0")
         )
 
+    # Commission du mois (taux × ventes) par agent
+    from app.services.commission_service import CommissionService, effective_rate, get_default_rate
+
+    default_commission = await get_default_rate(db, redis_client)
+    commissions = CommissionService(db, redis_client)
+    month_sales = await commissions.sales(
+        [local_date_start_utc(today.replace(day=1)), today_end], agent_ids
+    ) if agent_ids else {}
+    empty = {"sales": Decimal("0"), "frozen": Decimal("0"), "legacy": Decimal("0")}
+    for agent in agents:
+        rate = effective_rate(agent, default_commission)
+        agent.commission_effective = float(rate)
+        agent.commission_month = float(commissions._commission(month_sales.get((0, agent.id), empty), rate))
+
     # ============================================================
     # Bureaux pour le filtre
     # ============================================================
@@ -1237,6 +1262,7 @@ async def admin_agents(
                 "pending": stats_row.pending or 0,
                 "bureaus": len(bureaus),
             },
+            "default_commission": float(default_commission),
 
             "filters": {
                 "search": search,
@@ -1353,10 +1379,35 @@ async def admin_agent_update(
         user.bureau_id = agent_data.bureau_id
     if agent_data.is_active is not None:
         user.is_active = agent_data.is_active
+    if "commission_rate" in agent_data.model_fields_set:
+        from app.services.commission_service import parse_rate
+
+        raw = (agent_data.commission_rate or "").strip()
+        user.commission_rate = parse_rate(raw) if raw else None  # vide = taux par défaut
 
     await db.commit()
 
     return {"success": True, "message": "Agent mis à jour avec succès"}
+
+
+@router.post("/api/agents/commission-default")
+async def admin_agents_commission_default(
+    request: Request,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Taux de commission par défaut des agents (% des ventes), stocké en base.
+    S'applique aux ventes À VENIR : les commissions déjà figées ne changent pas."""
+    from app.services.commission_service import set_default_rate
+
+    try:
+        payload = await request.json()
+    except Exception:
+        raise ValidationException("Requête invalide")
+    rate = await set_default_rate(db, (payload or {}).get("rate"), by=admin.id)
+    await db.commit()
+    logger.info(f"Commission agents par défaut : {rate} % (admin {admin.id})")
+    return {"success": True, "message": f"Commission par défaut : {rate} % des ventes", "rate": float(rate)}
 
 
 @router.delete("/api/agents/{agent_id}")
@@ -1578,7 +1629,8 @@ async def admin_agent_edit_page(
     request: Request,
     agent_id: str,
     admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
 ):
     """Page d'édition d'un agent"""
     result = await db.execute(
@@ -1596,9 +1648,12 @@ async def admin_agent_edit_page(
 
     agent_stats = await _get_agent_today_stats(db, agent_id)
 
+    from app.services.commission_service import get_default_rate
+
     return templates.TemplateResponse(request, "admin/agents/edit.html", {
         "active": "agents",
         "agent": agent,
+        "default_commission": float(await get_default_rate(db, redis_client)),
         "bureaus": bureaus,
         "agent_stats": agent_stats,
         "admin_name": admin.full_name or admin.email,
@@ -2131,7 +2186,8 @@ async def admin_keno_statistics_page(
             func.count(KenoBet.id).label("total_bets"),
             func.coalesce(func.sum(KenoBet.stake), 0).label("total_volume"),
             func.coalesce(func.sum(KenoBet.winnings), 0).label("total_payout"),
-        ).where(KenoBet.placed_at >= start, KenoBet.placed_at < end)
+        ).where(KenoBet.placed_at >= start, KenoBet.placed_at < end,
+                KenoBet.status.in_([KenoBetStatus.WON, KenoBetStatus.LOST]))  # paris réglés seulement
     )
     bets_row = bets_result.one()
     total_volume = float(bets_row.total_volume or 0)
@@ -2173,7 +2229,8 @@ async def admin_keno_statistics_page(
             func.coalesce(func.sum(KenoBet.stake), 0).label("volume"),
             func.coalesce(func.sum(KenoBet.winnings), 0).label("payout"),
         )
-        .where(KenoBet.placed_at >= start, KenoBet.placed_at < end)
+        .where(KenoBet.placed_at >= start, KenoBet.placed_at < end,
+               KenoBet.status.in_([KenoBetStatus.WON, KenoBetStatus.LOST]))
         .group_by(local_day(KenoBet.placed_at))
         .order_by(local_day(KenoBet.placed_at))
     )
@@ -2213,227 +2270,6 @@ async def admin_keno_statistics_page(
         "admin_role": admin.role,
         "version": "1.0.0"
     })
-
-
-# ==================== CONFIGURATION LUCKY ====================
-
-@router.get("/games/lucky/config", response_class=HTMLResponse)
-async def admin_lucky_config(
-    request: Request,
-    admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db)
-):
-    """Configuration du jeu Lucky Wheel"""
-    
-    # Récupérer la configuration active
-    result = await db.execute(
-        select(LuckyWheelConfig)
-        .where(LuckyWheelConfig.is_active == True)
-        .order_by(LuckyWheelConfig.is_default.desc())
-    )
-    config = result.scalar_one_or_none()
-    
-    if not config:
-        # Créer une configuration par défaut
-        config = LuckyWheelConfig.get_default_config()
-        db.add(config)
-        await db.commit()
-    
-    # Statistiques Lucky
-    stats = await _get_lucky_stats(db)
-    
-    return templates.TemplateResponse(request, "admin/games/lucky/config.html", {
-        "active": "lucky",
-        "config": config,
-        "stats": stats,
-        "admin_name": admin.full_name or admin.email,
-        "admin_role": admin.role,
-        "version": "1.0.0"
-    })
-
-
-@router.get("/games/lucky/statistics", response_class=HTMLResponse)
-async def admin_lucky_statistics_page(
-    request: Request,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db)
-):
-    """Statistiques détaillées du jeu Lucky Wheel"""
-    if not end_date:
-        end_date = today_haiti().isoformat()
-    if not start_date:
-        start_date = (today_haiti() - timedelta(days=30)).isoformat()
-
-    start = local_date_start_utc(start_date)
-    end = local_date_end_utc(end_date)
-
-    stats_result = await db.execute(
-        select(
-            func.count(LuckyPlay.id).label("total_plays"),
-            func.coalesce(func.sum(LuckyPlay.stake), 0).label("total_stake"),
-            func.coalesce(func.sum(LuckyPlay.winnings), 0).label("total_wins"),
-            func.coalesce(func.max(LuckyPlay.multiplier), 0).label("max_multiplier"),
-            func.coalesce(func.max(LuckyPlay.winnings), 0).label("max_win"),
-        ).where(LuckyPlay.played_at >= start, LuckyPlay.played_at < end)
-    )
-    row = stats_result.one()
-    total_stake = float(row.total_stake or 0)
-    total_wins = float(row.total_wins or 0)
-    rtp = round(total_wins / total_stake * 100, 2) if total_stake > 0 else 0
-
-    stats = {
-        "total_plays": row.total_plays or 0,
-        "total_stake": total_stake,
-        "total_wins": total_wins,
-        "rtp": rtp,
-        "max_multiplier": float(row.max_multiplier or 0),
-        "max_win": float(row.max_win or 0),
-    }
-
-    # Configuration active (pour le poids théorique de chaque segment)
-    config_result = await db.execute(
-        select(LuckyWheelConfig)
-        .where(LuckyWheelConfig.is_active == True)
-        .order_by(LuckyWheelConfig.is_default.desc())
-        .limit(1)
-    )
-    config = config_result.scalar_one_or_none()
-    theoretical_weights = {}
-    if config and config.segments:
-        total_weight = sum(s["weight"] for s in config.segments) or 1
-        theoretical_weights = {
-            s["label"]: {"weight_pct": s["weight"] / total_weight * 100, "multiplier": s["multiplier"], "color": s["color"]}
-            for s in config.segments
-        }
-
-    # Répartition réelle des segments obtenus (calculée en Python : JSON non
-    # agrégeable simplement en SQL portable)
-    segments_result = await db.execute(
-        select(LuckyPlay.result_segment).where(LuckyPlay.played_at >= start, LuckyPlay.played_at < end)
-    )
-    from collections import Counter
-    segment_counter = Counter()
-    for (result_segment,) in segments_result.all():
-        if result_segment:
-            segment_counter[result_segment.get("label", "?")] += 1
-    total_plays = sum(segment_counter.values()) or 1
-
-    segment_stats = []
-    for label, count in segment_counter.most_common():
-        theo = theoretical_weights.get(label, {})
-        segment_stats.append({
-            "label": label,
-            "multiplier": theo.get("multiplier", "-"),
-            "color": theo.get("color", "#94a3b8"),
-            "count": count,
-            "frequency": count / total_plays * 100,
-            "theoretical_weight": theo.get("weight_pct", 0),
-        })
-
-    # Évolution quotidienne
-    daily_result = await db.execute(
-        select(
-            local_day(LuckyPlay.played_at).label("day"),
-            func.count(LuckyPlay.id).label("plays"),
-            func.coalesce(func.sum(LuckyPlay.stake), 0).label("stake"),
-            func.coalesce(func.sum(LuckyPlay.winnings), 0).label("wins"),
-            func.coalesce(func.max(LuckyPlay.multiplier), 0).label("max_multiplier"),
-        )
-        .where(LuckyPlay.played_at >= start, LuckyPlay.played_at < end)
-        .group_by(local_day(LuckyPlay.played_at))
-        .order_by(local_day(LuckyPlay.played_at))
-    )
-    daily_rows = daily_result.all()
-    daily_data = []
-    for r in daily_rows:
-        day_stake = float(r.stake)
-        day_wins = float(r.wins)
-        day_rtp = round(day_wins / day_stake * 100, 2) if day_stake > 0 else 0
-        daily_data.append({
-            "date": r.day.strftime("%d/%m/%Y"),
-            "plays": r.plays,
-            "stake": day_stake,
-            "wins": day_wins,
-            "rtp": day_rtp,
-            "max_multiplier": float(r.max_multiplier or 0),
-        })
-
-    chart_data = {
-        "labels": [d["date"] for d in daily_data],
-        "plays": [d["plays"] for d in daily_data],
-        "stake": [d["stake"] for d in daily_data],
-        "wins": [d["wins"] for d in daily_data],
-        "segment_distribution": [
-            {"label": s["label"], "count": s["count"], "color": s["color"]} for s in segment_stats
-        ],
-    }
-
-    # Plus gros gains
-    big_wins_result = await db.execute(
-        select(LuckyPlay, User)
-        .join(User, LuckyPlay.user_id == User.id, isouter=True)
-        .where(LuckyPlay.played_at >= start, LuckyPlay.played_at < end, LuckyPlay.winnings > 0)
-        .order_by(LuckyPlay.winnings.desc())
-        .limit(10)
-    )
-    big_wins = []
-    for play, user in big_wins_result.all():
-        segment = play.result_segment or {}
-        big_wins.append({
-            "date": play.played_at,
-            "player": (user.full_name or user.phone) if user else None,
-            "segment": segment.get("label", "-"),
-            "color": segment.get("color", "#94a3b8"),
-            "multiplier": float(play.multiplier),
-            "amount": float(play.winnings),
-        })
-
-    return templates.TemplateResponse(request, "admin/games/lucky/statistics.html", {
-        "active": "lucky",
-        "start_date": start_date,
-        "end_date": end_date,
-        "stats": stats,
-        "segment_stats": segment_stats,
-        "daily_data": daily_data,
-        "chart_data": chart_data,
-        "big_wins": big_wins,
-        "admin_name": admin.full_name or admin.email,
-        "admin_role": admin.role,
-        "version": "1.0.0"
-    })
-
-
-@router.put("/api/lucky/config/{config_id}")
-async def admin_lucky_config_update(
-    config_id: str,
-    config_data: AdminLuckyConfig,
-    admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db),
-    redis_client: redis.Redis = Depends(get_redis)
-):
-    """Mise à jour de la configuration Lucky"""
-    
-    result = await db.execute(
-        select(LuckyWheelConfig).where(LuckyWheelConfig.id == config_id)
-    )
-    config = result.scalar_one_or_none()
-    
-    if not config:
-        raise HTTPException(404, "Configuration non trouvée")
-    
-    config.segments = config_data.segments
-    config.min_bet = config_data.min_bet
-    config.max_bet = config_data.max_bet
-    config.calculate_rtp()
-    
-    await db.commit()
-    
-    # Invalider le cache
-    await redis_client.delete("lucky:wheel:config")
-    
-    return {"success": True, "message": "Configuration Lucky mise à jour"}
 
 
 # ==================== TRANSACTIONS ====================
@@ -2761,45 +2597,75 @@ async def admin_reports_financial(
     request: Request,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    year: Optional[int] = None,
     admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
 ):
-    """Rapports financiers"""
-    
-    # Période par défaut : 30 jours
-    if not end_date:
-        end_date = today_haiti().isoformat()
-    if not start_date:
-        start_date = (today_haiti() - timedelta(days=30)).isoformat()
-    
-    start = local_date_start_utc(start_date)
-    end = local_date_end_utc(end_date)
-    
-    # Statistiques
-    stats = await _get_financial_stats(db, start, end)
-    
-    # Données journalières
-    daily_data = await _get_daily_financial_data(db, start, end)
-    
-    # Données pour les graphiques
-    chart_data = {
-        "labels": [d["date"] for d in daily_data],
-        "deposits": [d["deposits"] for d in daily_data],
-        "withdrawals": [d["withdrawals"] for d in daily_data],
-        "net": [d["net"] for d in daily_data]
-    }
-    
+    """Finances : tout l'argent qui entre et qui sort (guichets + comptes
+    joueurs) et le revenu du système, par période et par mois."""
+    data = await _financial_report(db, start_date, end_date, year, redis_client)
     return templates.TemplateResponse(request, "admin/reports/financial.html", {
         "active": "reports",
-        "start_date": start_date,
-        "end_date": end_date,
-        "summary": stats,
-        "daily_data": daily_data,
-        "chart_data": chart_data,
+        **data,
         "admin_name": admin.full_name or admin.email,
         "admin_role": admin.role,
         "version": "1.0.0"
     })
+
+
+async def _financial_report(db: AsyncSession, start_date: Optional[str], end_date: Optional[str], year: Optional[int],
+                            redis_client=None) -> dict:
+    from app.services.commission_service import CommissionService
+    from app.services.finance_report_service import FinanceReportService
+
+    today = today_haiti()
+    # Période par défaut : le mois en cours
+    try:
+        start_day = datetime.strptime(start_date, "%Y-%m-%d").date() if start_date else today.replace(day=1)
+        end_day = datetime.strptime(end_date, "%Y-%m-%d").date() if end_date else today
+    except ValueError:
+        raise ValidationException("Date invalide (format AAAA-MM-JJ)")
+    if end_day < start_day:
+        start_day, end_day = end_day, start_day
+    year = year if year and 2000 <= year <= today.year else today.year
+
+    service = FinanceReportService(db, redis_client)
+    start, end = local_date_start_utc(start_day), local_date_end_utc(end_day)
+    period = await service.period(start, end)
+    months = await service.monthly(year)
+
+    # Évolution jour par jour (jusqu'à 3 mois affichés)
+    daily = []
+    days = (end_day - start_day).days + 1
+    if days <= 93:
+        day_list = [start_day + timedelta(days=i) for i in range(days)]
+        bounds = [local_date_start_utc(d) for d in day_list] + [end]
+        for d, row in zip(day_list, await service._compute(bounds)):
+            daily.append({"date": d.strftime("%d/%m"), "in": row["in"]["total"], "out": row["out"]["total"],
+                          "revenue": row["revenue"]})
+
+    first_year = (await db.execute(select(func.min(Ticket.created_at)))).scalar()
+    return {
+        "start_date": start_day.isoformat(),
+        "end_date": end_day.isoformat(),
+        "year": year,
+        "years": list(range(today.year, min(first_year.year if first_year else today.year, today.year) - 1, -1)),
+        "period": period,
+        "months": months,
+        "year_totals": service.totals(months),
+        "bureaus": await service.by_bureau(start, end),
+        "agent_commissions": await CommissionService(db, redis_client).by_agent(start, end),
+        "snapshot": await service.snapshot(),
+        "daily": daily,
+        "presets": {
+            "month": (today.replace(day=1).isoformat(), today.isoformat()),
+            "last_month": ((today.replace(day=1) - timedelta(days=1)).replace(day=1).isoformat(),
+                           (today.replace(day=1) - timedelta(days=1)).isoformat()),
+            "days30": ((today - timedelta(days=29)).isoformat(), today.isoformat()),
+            "year": (today.replace(month=1, day=1).isoformat(), today.isoformat()),
+        },
+    }
 
 
 # ==================== AUDIT LOGS ====================
@@ -4121,66 +3987,6 @@ async def admin_keno_cancel_draw(
             **result}
 
 
-# ==================== LUCKY ====================
-
-@router.put("/api/lucky/config")
-async def admin_lucky_active_config_update(
-    config_data: AdminLuckyConfig,
-    admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db)
-):
-    """Met à jour la configuration Lucky"""
-    result = await db.execute(
-        select(LuckyWheelConfig)
-        .where(LuckyWheelConfig.is_active == True)
-        .order_by(LuckyWheelConfig.is_default.desc())
-        .limit(1)
-    )
-    config = result.scalar_one_or_none()
-    
-    if not config:
-        config = LuckyWheelConfig.get_default_config()
-        db.add(config)
-        await db.flush()
-    
-    config.name = config_data.name
-    config.description = config_data.description
-    config.min_bet = config_data.min_bet
-    config.max_bet = config_data.max_bet
-    config.calculate_rtp()
-    
-    await db.commit()
-    
-    return {"success": True, "message": "Configuration mise à jour"}
-
-
-@router.put("/api/lucky/config/{config_id}/segments")
-async def admin_lucky_segments_update(
-    config_id: str,
-    segments: List[LuckyWheelSegment] = Body(...),
-    admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db),
-    redis_client: redis.Redis = Depends(get_redis)
-):
-    """Met à jour les segments de la roue Lucky"""
-    result = await db.execute(
-        select(LuckyWheelConfig).where(LuckyWheelConfig.id == config_id)
-    )
-    config = result.scalar_one_or_none()
-    
-    if not config:
-        raise HTTPException(404, "Configuration non trouvée")
-    
-    config.segments = [s.dict() for s in segments]
-    config.calculate_rtp()
-    
-    await db.commit()
-    
-    # Invalider le cache
-    await redis_client.delete("lucky:wheel:config")
-    
-    return {"success": True, "message": "Segments mis à jour"}
-
 # ==================== API SUPPLEMENTAIRES POUR PROMOTIONS ====================
 
 @router.get("/api/promotions/statistics")
@@ -4500,13 +4306,65 @@ async def admin_audit_export_csv(
 @router.get("/api/reports/financial/export")
 async def admin_reports_financial_export(
     request: Request,
-    format: str = Query("excel"),
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    year: Optional[int] = None,
     admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
 ):
-    """Export des rapports financiers"""
-    # Implémenter l'export Excel/PDF
-    pass
+    """Export CSV (Excel) : période choisie, détail par jeu et par bureau, revenu mois par mois."""
+    data = await _financial_report(db, start_date, end_date, year, redis_client)
+    p = data["period"]
+    buf = io.StringIO()
+    w = csv.writer(buf, delimiter=";")
+    w.writerow([f"King Paryaj - Finances du {data['start_date']} au {data['end_date']}"])
+    w.writerow([])
+    w.writerow(["ARGENT QUI ENTRE", "HTG"])
+    w.writerow(["Ventes de tickets au guichet", p["in"]["ticket_sales"]])
+    w.writerow(["Recharges de tickets", p["in"]["recharges"]])
+    w.writerow(["Dépôts espèces sur comptes", p["in"]["deposits_cash"]])
+    w.writerow(["Dépôts MonCash / NatCash / autres", p["in"]["deposits_mobile"]])
+    w.writerow(["Total entrées", p["in"]["total"]])
+    w.writerow(["ARGENT QUI SORT", "HTG"])
+    w.writerow(["Paiements des tickets au guichet (partiels compris)", p["out"]["ticket_payouts"]])
+    w.writerow(["Soldes rendus à l'annulation", p["out"]["cancel_refunds"]])
+    w.writerow(["Retraits des comptes", p["out"]["withdrawals"]])
+    w.writerow(["Total sorties", p["out"]["total"]])
+    w.writerow(["Solde (entrées - sorties)", p["cash_flow"]])
+    w.writerow([])
+    w.writerow(["REVENU DU SYSTÈME", "Paris", "Mises", "Gains (payés + dus)", "Revenu", "Marge %"])
+    for g in p["games"]:
+        w.writerow([g["label"], g["bets"], g["stakes"], g["wins"], g["revenue"], g["margin"]])
+    w.writerow(["Total", "", p["stakes"], p["wins"], p["revenue"], p["margin"]])
+    w.writerow(["Gains payés aux joueurs", p["wins_paid"]])
+    w.writerow(["Gains encore dus", p["wins_due"]])
+    w.writerow(["GAINS GAGNÉS : OÙ EN SONT-ILS ?", "HTG"])
+    w.writerow(["Payés au guichet", p["wins_split"]["paid"]])
+    w.writerow(["Encore dus (tickets valables)", p["wins_split"]["due"]])
+    w.writerow(["Sur comptes joueurs (dus)", p["wins_split"]["accounts"]])
+    w.writerow(["Jamais réclamés (restent à la maison)", p["wins_split"]["unclaimed"]])
+    w.writerow(["Bonus offerts", "", "", "", p["bonus"]])
+    w.writerow(["Commissions des agents", "", "", "", p["commissions"]])
+    w.writerow(["Revenu net", "", "", "", p["net_revenue"]])
+    w.writerow([])
+    w.writerow(["COMMISSIONS DES AGENTS", "Téléphone", "Taux %", "Ventes", "Commission"])
+    for a in data["agent_commissions"]:
+        w.writerow([a["agent"], a["phone"], a["rate"], a["sales"], a["commission"]])
+    w.writerow([])
+    w.writerow(["PAR BUREAU", "Ventes tickets", "Dépôts espèces", "Gains payés", "Retraits espèces", "Entrées", "Sorties", "Solde", "Écarts de caisse"])
+    for b in data["bureaus"]:
+        w.writerow([b["bureau"], b["ticket_sales"], b["deposits"], b["ticket_payouts"], b["withdrawals"], b["in"], b["out"], b["cash_flow"], b["cash_gaps"]])
+    w.writerow([])
+    w.writerow([f"REVENU PAR MOIS {data['year']}", "Entrées", "Sorties", "Solde", "Mises", "Gains payés", "Gains dus", "Revenu", "Bonus", "Commissions", "Revenu net", "Marge %"])
+    for m in data["months"]:
+        w.writerow([m["label"], m["in"]["total"], m["out"]["total"], m["cash_flow"], m["stakes"], m["wins_paid"], m["wins_due"], m["revenue"], m["bonus"], m["commissions"], m["net_revenue"], m["margin"]])
+    t = data["year_totals"]
+    w.writerow([f"Total {data['year']}", t["in"], t["out"], t["cash_flow"], t["stakes"], t["wins_paid"], t["wins_due"], t["revenue"], t["bonus"], t["commissions"], t["net_revenue"], t["margin"]])
+    content = "\ufeff" + buf.getvalue()  # BOM : accents corrects dans Excel
+    filename = f"finances_{data['start_date']}_{data['end_date']}.csv"
+    return Response(content=content, media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 @router.get("/api/reports/game/export")
@@ -4760,6 +4618,80 @@ async def admin_ticket_qr(
     return {"success": True, "qr_code": f"data:image/png;base64,{qr_base64}"}
 
 
+# Routes « bulk » déclarées AVANT /api/tickets/{ticket_id}/... : sinon « bulk »
+# est pris pour un identifiant de ticket (404 « Ticket non trouvé »).
+@router.post("/api/tickets/bulk/payout")
+async def admin_tickets_bulk_payout(
+    ticket_ids: List[str] = Body(...),
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Paye plusieurs tickets"""
+    result = await db.execute(
+        select(Ticket).where(Ticket.id.in_(ticket_ids), Ticket.status == TicketStatus.ACTIVE).with_for_update()
+    )
+    tickets = result.scalars().all()
+    
+    total_amount = Decimal("0")
+    paid_count = skipped = 0
+    for ticket in tickets:
+        if ticket.balance <= 0 or ticket.is_expired():
+            skipped += 1
+            continue
+        if await TicketService(db, None).pending_bets_count(ticket.id):
+            skipped += 1  # pari en attente de tirage : payé plus tard
+            continue
+        amount = ticket.record_payout(ticket.balance, admin.id)  # montant payé enregistré
+        total_amount += amount
+        paid_count += 1
+        if ticket.bureau_id:
+            bureau = await db.get(Bureau, ticket.bureau_id)
+            if bureau:
+                bureau.cash_balance = Bureau.cash_balance - (amount)  # atomique en base ; (avant : débitait 0, le solde étant déjà remis à 0)
+    
+    await db.commit()
+    
+    message = f"{paid_count} ticket(s) payé(s) pour un total de {total_amount} HTG"
+    if skipped:
+        message += f" ; {skipped} ignoré(s) (sans solde, expiré ou pari en attente)"
+    return {"success": True, "message": message, "paid": paid_count, "skipped": skipped, "total": float(total_amount)}
+
+
+@router.post("/api/tickets/bulk/cancel")
+async def admin_tickets_bulk_cancel(
+    ticket_ids: List[str] = Body(...),
+    reason: str = Body(...),
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Annule plusieurs tickets"""
+    result = await db.execute(
+        select(Ticket).where(Ticket.id.in_(ticket_ids), Ticket.status == TicketStatus.ACTIVE).with_for_update()
+    )
+    tickets = result.scalars().all()
+    
+    total_amount = Decimal("0")
+    skipped = 0
+    for ticket in tickets:
+        if await TicketService(db, None).pending_bets_count(ticket.id):
+            skipped += 1  # pari en attente de tirage : pas d'annulation
+            continue
+        amount = ticket.record_cancellation(admin.id)  # sortie d'espèces datée
+        total_amount += amount
+        if ticket.bureau_id and amount > 0:
+            bureau = await db.get(Bureau, ticket.bureau_id)
+            if bureau:
+                bureau.cash_balance = Bureau.cash_balance - (amount)  # atomique en base ; (avant : débitait 0, le solde étant déjà remis à 0)
+    
+    await db.commit()
+    
+    message = f"{len(tickets) - skipped} ticket(s) annulé(s) pour un total de {total_amount} HTG"
+    if skipped:
+        message += f" ; {skipped} ignoré(s) (pari en attente de tirage)"
+    return {"success": True, "message": message, "skipped": skipped, "total": float(total_amount)}
+
+
+
 @router.post("/api/tickets/{ticket_id}/payout")
 async def admin_ticket_payout(
     ticket_id: str,
@@ -4768,7 +4700,7 @@ async def admin_ticket_payout(
 ):
     """Paye un ticket"""
     result = await db.execute(
-        select(Ticket).where(Ticket.id == ticket_id)
+        select(Ticket).where(Ticket.id == ticket_id).with_for_update()  # jamais payé deux fois
     )
     ticket = result.scalar_one_or_none()
     
@@ -4780,13 +4712,13 @@ async def admin_ticket_payout(
     
     if ticket.balance <= 0:
         raise HTTPException(400, "Aucun solde à payer")
+
+    pending = await TicketService(db, None).pending_bets_count(ticket.id)
+    if pending:
+        raise HTTPException(400, f"Résultat pas encore connu pour {pending} pari(s) de ce ticket : paiement après le tirage")
     
-    # Marquer comme payé
-    amount = ticket.balance
-    ticket.status = TicketStatus.PAID
-    ticket.paid_at = now_utc()
-    ticket.paid_by_agent = admin.id
-    ticket.balance = 0
+    # Marquer comme payé (montant payé enregistré)
+    amount = ticket.record_payout(ticket.balance, admin.id)
     
     # Mettre à jour la caisse du bureau
     if ticket.bureau_id:
@@ -4794,7 +4726,7 @@ async def admin_ticket_payout(
             select(Bureau).where(Bureau.id == ticket.bureau_id)
         )
         bureau = bureau_result.scalar_one()
-        bureau.cash_balance -= amount
+        bureau.cash_balance = Bureau.cash_balance - (amount)  # atomique en base
     
     await db.commit()
     
@@ -4810,7 +4742,7 @@ async def admin_ticket_cancel(
 ):
     """Annule un ticket"""
     result = await db.execute(
-        select(Ticket).where(Ticket.id == ticket_id)
+        select(Ticket).where(Ticket.id == ticket_id).with_for_update()
     )
     ticket = result.scalar_one_or_none()
     
@@ -4834,10 +4766,11 @@ async def admin_ticket_cancel(
     if pending_bets:
         raise HTTPException(400, f"Impossible d'annuler: {len(pending_bets)} paris en attente")
     
-    # Rembourser le solde
-    amount = ticket.balance
-    ticket.status = TicketStatus.CANCELLED
-    ticket.balance = 0
+    if await TicketService(db, None).pending_bets_count(ticket.id):
+        raise HTTPException(400, "Impossible d'annuler : un pari de ce ticket attend son tirage")
+
+    # Rembourser le solde (sortie d'espèces datée)
+    amount = ticket.record_cancellation(admin.id)
     
     # Mettre à jour la caisse du bureau (débit)
     if ticket.bureau_id:
@@ -4845,75 +4778,11 @@ async def admin_ticket_cancel(
             select(Bureau).where(Bureau.id == ticket.bureau_id)
         )
         bureau = bureau_result.scalar_one()
-        bureau.cash_balance -= amount
+        bureau.cash_balance = Bureau.cash_balance - (amount)  # atomique en base
     
     await db.commit()
     
     return {"success": True, "message": f"Ticket annulé. Remboursement de {amount} HTG"}
-
-
-@router.post("/api/tickets/bulk/payout")
-async def admin_tickets_bulk_payout(
-    ticket_ids: List[str] = Body(...),
-    admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db)
-):
-    """Paye plusieurs tickets"""
-    result = await db.execute(
-        select(Ticket).where(Ticket.id.in_(ticket_ids), Ticket.status == TicketStatus.ACTIVE)
-    )
-    tickets = result.scalars().all()
-    
-    total_amount = 0
-    for ticket in tickets:
-        if ticket.balance > 0:
-            total_amount += ticket.balance
-            ticket.status = TicketStatus.PAID
-            ticket.paid_at = now_utc()
-            ticket.paid_by_agent = admin.id
-            ticket.balance = 0
-            
-            if ticket.bureau_id:
-                bureau_result = await db.execute(
-                    select(Bureau).where(Bureau.id == ticket.bureau_id)
-                )
-                bureau = bureau_result.scalar_one()
-                bureau.cash_balance -= ticket.balance
-    
-    await db.commit()
-    
-    return {"success": True, "message": f"{len(tickets)} tickets payés pour un total de {total_amount} HTG"}
-
-
-@router.post("/api/tickets/bulk/cancel")
-async def admin_tickets_bulk_cancel(
-    ticket_ids: List[str] = Body(...),
-    reason: str = Body(...),
-    admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db)
-):
-    """Annule plusieurs tickets"""
-    result = await db.execute(
-        select(Ticket).where(Ticket.id.in_(ticket_ids), Ticket.status == TicketStatus.ACTIVE)
-    )
-    tickets = result.scalars().all()
-    
-    total_amount = 0
-    for ticket in tickets:
-        total_amount += ticket.balance
-        ticket.status = TicketStatus.CANCELLED
-        ticket.balance = 0
-        
-        if ticket.bureau_id:
-            bureau_result = await db.execute(
-                select(Bureau).where(Bureau.id == ticket.bureau_id)
-            )
-            bureau = bureau_result.scalar_one()
-            bureau.cash_balance -= ticket.balance
-    
-    await db.commit()
-    
-    return {"success": True, "message": f"{len(tickets)} tickets annulés pour un total de {total_amount} HTG"}
 
 
 @router.get("/api/tickets/export")
@@ -5207,7 +5076,7 @@ async def admin_transactions_export(
 
 # ==================== FONCTIONS AUXILIAIRES ====================
 
-async def _get_dashboard_stats(db: AsyncSession) -> dict:
+async def _get_dashboard_stats(db: AsyncSession, redis_client=None) -> dict:
     """Statistiques du tableau de bord (journée = jour civil d'Haïti)."""
     today_start, tomorrow_start = today_bounds_utc()
 
@@ -5234,11 +5103,37 @@ async def _get_dashboard_stats(db: AsyncSession) -> dict:
     )
     tx = tx_result.one()
 
-    # Paris du jour, tous jeux confondus (Keno, Lucky Wheel, Horse Races)
+    # Gains des joueurs : paris réglés de tous les jeux, tickets ET comptes
+    # (les transactions WIN ne couvrent que les comptes joueurs)
+    from app.services.finance_report_service import FinanceReportService
+
+    finance = FinanceReportService(db)
+    (today_totals,) = await finance.game_totals([today_start, tomorrow_start])
+    # Avant aujourd'hui : tout l'historique, recalculé au plus toutes les 5 min
+    # (la page se rafraîchit toutes les 30 s)
+    cache_key = f"cache:dashboard:wins_paid_before:{today_start.isoformat()}"
+    before = None
+    if redis_client is not None:
+        try:
+            raw = await redis_client.get(cache_key)
+            before = float(raw) if raw is not None else None
+        except Exception:
+            before = None
+    if before is None:
+        (history,) = await finance.game_totals([datetime(2000, 1, 1), today_start])
+        before = history["wins_paid"]
+        if redis_client is not None:
+            try:
+                await redis_client.setex(cache_key, 300, str(before))
+            except Exception:
+                pass
+    total_wins = round(before + today_totals["wins_paid"], 2)  # gains remis aux joueurs
+
+    # Paris du jour, tous jeux confondus (Keno, Lucky6, Horse Races)
     from app.models.game import GameBet
 
     today_bets = 0
-    for model, column in ((KenoBet, KenoBet.placed_at), (LuckyPlay, LuckyPlay.played_at), (GameBet, GameBet.placed_at)):
+    for model, column in ((KenoBet, KenoBet.placed_at), (GameBet, GameBet.placed_at)):
         try:
             # SAVEPOINT : si une table manque (ex. migration Horse Races pas
             # encore appliquée), seul ce comptage est ignoré, la page s'affiche.
@@ -5277,8 +5172,8 @@ async def _get_dashboard_stats(db: AsyncSession) -> dict:
         "transactions": {
             "total_volume": float(tx.volume or 0),
             "today_volume": float(tx.today_volume or 0),
-            "total_wins": float(tx.wins or 0),
-            "today_wins": float(tx.today_wins or 0)
+            "total_wins": total_wins,
+            "today_wins": today_totals["wins_paid"],
         },
         "games": {
             "today_bets": today_bets
@@ -5406,18 +5301,27 @@ async def _get_chart_data(db: AsyncSession, period: int) -> dict:
         .group_by(local_day(Transaction.created_at))
         .order_by(local_day(Transaction.created_at))
     )
-    rows = result.all()
-    
+    rows = {row.day.strftime("%d/%m"): row for row in result.all()}
+
+    # Gains des joueurs par jour : paris réglés de tous les jeux (tickets + comptes)
+    from app.services.finance_report_service import FinanceReportService
+
+    days = [today_haiti() - timedelta(days=period - 1 - i) for i in range(period)]
+    bounds = [local_date_start_utc(d) for d in days] + [local_date_end_utc(days[-1])]
+    daily_games = await FinanceReportService(db).game_totals(bounds)
+
     labels = []
     deposits = []
     withdrawals = []
     wins = []
-    
-    for row in rows:
-        labels.append(row.day.strftime("%d/%m"))
-        deposits.append(float(row.deposits))
-        withdrawals.append(float(row.withdrawals))
-        wins.append(float(row.wins))
+
+    for day, games in zip(days, daily_games):
+        key = day.strftime("%d/%m")
+        row = rows.get(key)
+        labels.append(key)
+        deposits.append(float(row.deposits) if row else 0.0)
+        withdrawals.append(float(row.withdrawals) if row else 0.0)
+        wins.append(games["wins_paid"])
     
     # Répartition des jeux
     keno_result = await db.execute(
@@ -5426,13 +5330,16 @@ async def _get_chart_data(db: AsyncSession, period: int) -> dict:
     )
     keno_count = keno_result.scalar() or 0
     
-    lucky_result = await db.execute(
-        select(func.count(LuckyPlay.id))
-        .where(LuckyPlay.played_at >= start_date)
+    games_result = await db.execute(
+        select(GameBet.game_type, func.count(GameBet.id))
+        .where(GameBet.placed_at >= start_date)
+        .group_by(GameBet.game_type)
     )
-    lucky_count = lucky_result.scalar() or 0
-    
-    total = keno_count + lucky_count
+    by_game = {game: count for game, count in games_result.all()}
+    lucky6_count = by_game.get("lucky6", 0)
+    horse_count = by_game.get("horse_races", 0)
+
+    total = keno_count + lucky6_count + horse_count
     if total == 0:
         total = 1
     
@@ -5445,7 +5352,8 @@ async def _get_chart_data(db: AsyncSession, period: int) -> dict:
         },
         "games": {
             "keno": round(keno_count / total * 100),
-            "lucky": round(lucky_count / total * 100)
+            "lucky6": round(lucky6_count / total * 100),
+            "horse_races": round(horse_count / total * 100),
         }
     }
 
@@ -5465,7 +5373,7 @@ async def _get_keno_stats(db: AsyncSession) -> dict:
             func.count(KenoBet.id).label("total_bets"),
             func.coalesce(func.sum(KenoBet.stake), 0).label("total_volume"),
             func.coalesce(func.sum(KenoBet.winnings), 0).label("total_payout")
-        ).where(KenoBet.status != KenoBetStatus.REFUNDED)
+        ).where(KenoBet.status.in_([KenoBetStatus.WON, KenoBetStatus.LOST]))  # paris réglés seulement
     )
     bets = bets_result.one()
     
@@ -5484,182 +5392,6 @@ async def _get_keno_stats(db: AsyncSession) -> dict:
         "rtp": rtp,
         "edge": edge
     }
-
-
-async def _get_lucky_stats(db: AsyncSession) -> dict:
-    """Récupère les statistiques Lucky"""
-    result = await db.execute(
-        select(
-            func.count(LuckyPlay.id).label("total_plays"),
-            func.coalesce(func.sum(LuckyPlay.stake), 0).label("total_stake"),
-            func.coalesce(func.sum(LuckyPlay.winnings), 0).label("total_wins"),
-            func.max(LuckyPlay.multiplier).label("max_multiplier")
-        )
-    )
-    stats = result.one()
-    
-    return {
-        "total_plays": stats.total_plays or 0,
-        "total_stake": float(stats.total_stake or 0),
-        "total_wins": float(stats.total_wins or 0),
-        "max_multiplier": float(stats.max_multiplier or 0)
-    }
-
-
-async def _get_financial_stats(db: AsyncSession, start_date: datetime, end_date: datetime) -> dict:
-    """Récupère les statistiques financières"""
-    
-    # Total par type
-    result = await db.execute(
-        select(
-            func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type == TransactionType.DEPOSIT), 0).label("deposits"),
-            func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type == TransactionType.WITHDRAWAL), 0).label("withdrawals"),
-            func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type == TransactionType.BET), 0).label("bets"),
-            func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type == TransactionType.WIN), 0).label("wins")
-        )
-        .where(
-            and_(
-                Transaction.created_at >= start_date,
-                Transaction.created_at < end_date,
-                Transaction.status == TransactionStatus.COMPLETED
-            )
-        )
-    )
-    stats = result.one()
-    
-    deposits = float(stats.deposits or 0)
-    withdrawals = float(stats.withdrawals or 0)
-    bets = float(stats.bets or 0)
-    wins = float(stats.wins or 0)
-    net_revenue = deposits + wins - withdrawals - bets
-    
-    return {
-        "deposits": deposits,
-        "withdrawals": withdrawals,
-        "bets_volume": bets,
-        "wins": wins,
-        "net_revenue": net_revenue,
-        "edge": round((net_revenue / (deposits + wins) * 100) if (deposits + wins) > 0 else 0, 2)
-    }
-
-
-# async def _get_daily_financial_data(db: AsyncSession, start_date: datetime, end_date: datetime) -> list:
-#     """Récupère les données financières journalières"""
-    
-#     result = await db.execute(
-#         select(
-#             local_day(Transaction.created_at).label("day"),
-#             func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type == TransactionType.DEPOSIT), 0).label("deposits"),
-#             func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type == TransactionType.WITHDRAWAL), 0).label("withdrawals"),
-#             func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type == TransactionType.BET), 0).label("bets"),
-#             func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type == TransactionType.WIN), 0).label("wins")
-#         )
-#         .where(
-#             and_(
-#                 Transaction.created_at >= start_date,
-#                 Transaction.created_at < end_date,
-#                 Transaction.status == TransactionStatus.COMPLETED
-#             )
-#         )
-#         .group_by(local_day(Transaction.created_at))
-#         .order_by(local_day(Transaction.created_at))
-#     )
-#     rows = result.all()
-    
-#     return [
-#         {
-#             "date": row.day.strftime("%d/%m/%Y"),
-#             "deposits": float(row.deposits),
-#             "withdrawals": float(row.withdrawals),
-#             "bets": float(row.bets),
-#             "wins": float(row.wins),
-#             "net": float(row.deposits + row.wins - row.withdrawals - row.bets),
-#             "edge": round((float(row.deposits + row.wins - row.withdrawals - row.bets) / (float(row.deposits + row.wins) or 1) * 100), 2)
-#         }
-#         for row in rows
-#     ]
-async def _get_daily_financial_data(
-    db: AsyncSession,
-    start: datetime,
-    end: datetime
-):
-    """Récupère les données financières regroupées par jour."""
-
-    # IMPORTANT :
-    # On construit l'expression une seule fois et on la réutilise
-    # dans SELECT, GROUP BY et ORDER BY.
-    day = local_day(Transaction.created_at).label("day")
-
-    result = await db.execute(
-        select(
-            day,
-
-            func.coalesce(
-                func.sum(
-                    Transaction.amount
-                ).filter(
-                    Transaction.transaction_type == TransactionType.DEPOSIT
-                ),
-                0
-            ).label("deposits"),
-
-            func.coalesce(
-                func.sum(
-                    Transaction.amount
-                ).filter(
-                    Transaction.transaction_type == TransactionType.WITHDRAWAL
-                ),
-                0
-            ).label("withdrawals"),
-
-            func.coalesce(
-                func.sum(
-                    Transaction.amount
-                ).filter(
-                    Transaction.transaction_type == TransactionType.BET
-                ),
-                0
-            ).label("bets"),
-
-            func.coalesce(
-                func.sum(
-                    Transaction.amount
-                ).filter(
-                    Transaction.transaction_type == TransactionType.WIN
-                ),
-                0
-            ).label("wins"),
-        )
-        .where(
-            Transaction.created_at >= start,
-            Transaction.created_at < end,
-            Transaction.status == TransactionStatus.COMPLETED,
-        )
-        .group_by(day)
-        .order_by(day)
-    )
-
-    rows = result.all()
-
-    daily = []
-    for row in rows:
-        deposits = float(row.deposits or 0)
-        withdrawals = float(row.withdrawals or 0)
-        bets = float(row.bets or 0)
-        wins = float(row.wins or 0)
-        net = deposits + wins - withdrawals - bets
-        daily.append({
-            "day": row.day,
-            # clés attendues par la route et par admin/reports/financial.html
-            "date": row.day.strftime("%d/%m/%Y"),
-            "deposits": deposits,
-            "withdrawals": withdrawals,
-            "bets": bets,
-            "wins": wins,
-            "net": net,
-            "edge": round(net / ((deposits + wins) or 1) * 100, 2),
-        })
-    return daily
 
 
 async def _send_welcome_sms(phone: str, name: str):

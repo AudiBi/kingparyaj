@@ -182,30 +182,3 @@ async def test_histories_show_the_ticket_number(client, db_session, fake_redis, 
     assert kn_hist[0]["ticket_number"] == d["bet"]["ticket_number"]
     items = (await client.get("/agent/api/keno/history")).json()["items"]
     assert items[0]["ticket_number"] == d["bet"]["ticket_number"]
-
-
-@pytest.mark.asyncio
-async def test_lucky_wheel_cash_spin_creates_ticket_and_pays_it(client, db_session, fake_redis, make_agent, monkeypatch):
-    """Lucky Wheel comme les autres jeux : espèces = ticket créé automatiquement,
-    gain crédité sur ce ticket, numéro renvoyé pour le reçu."""
-    import app.routes.agent as agent_routes
-    from app.models.lucky import LuckyWheelConfig
-
-    async def _no_broadcast(*a, **k):
-        return None
-
-    monkeypatch.setattr(agent_routes, "broadcast_lucky_result", _no_broadcast, raising=False)
-    agent = await make_agent()
-    session = await _open_session(db_session, agent)
-    db_session.add(LuckyWheelConfig(
-        name="Roue de test", segments=[{"label": "x2", "multiplier": 2, "weight": 100, "color": "#000000"}],
-        min_bet=Decimal("10"), max_bet=Decimal("10000"), is_active=True, is_default=True,
-    ))
-    await db_session.flush()
-    await _login(client, agent)
-    r = await client.post("/agent/api/lucky/spin", headers=await _headers(client), json={"player_type": "cash", "stake": 50})
-    assert r.status_code == 200, r.text
-    data = r.json()
-    assert data["ticket_number"].startswith("KNO-") and data["winnings"] == 100 and data["stake"] == 50
-    ticket = (await db_session.execute(select(Ticket).where(Ticket.ticket_number == data["ticket_number"]))).scalar_one()
-    assert ticket.balance == Decimal("100") and session.cash_in_amount == Decimal("50")

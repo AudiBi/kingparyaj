@@ -10,6 +10,7 @@ donc des objets KenoDraw/KenoBet en mémoire (non persistés) et redirigent les
 requêtes de lecture du service vers ces objets, cf. test_keno_service.py.
 """
 
+import os
 from decimal import Decimal
 from typing import AsyncGenerator, Callable
 
@@ -18,19 +19,21 @@ import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import NullPool, StaticPool
 
 from app.core.csrf import AdminCsrfMiddleware
 from app.core.database import Base, get_db
 from app.core.redis_client import get_redis
 from app.models.audit import AuditLog
 from app.models.bureau import Bureau, CashierSession
+from app.models.cash_movement import TicketCashMovement
 from app.models.enums import KYCStatus, UserRole
 from app.models.game import GameBet, GameRound
 from app.models.lucky import LuckyPlay, LuckyWheelConfig
 from app.models.keno import KenoBet, KenoDraw
 from app.models.promotion import Promotion, UserPromotion
 from app.models.responsible import PlayerLimit, SelfExclusion
+from app.models.setting import SystemSetting
 from app.models.ticket import Ticket
 from app.models.transaction import Transaction
 from app.models.user import User
@@ -69,6 +72,9 @@ TEST_TABLES = [
     # Keno : listes d'entiers en JSON sous SQLite (ARRAY sous PostgreSQL)
     KenoDraw.__table__,
     KenoBet.__table__,
+    # Mouvements d'espèces datés des tickets, réglages durables
+    TicketCashMovement.__table__,
+    SystemSetting.__table__,
 ]
 
 
@@ -123,14 +129,29 @@ class FakeRedis:
 
 @pytest_asyncio.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
-    """Session SQLite async isolée, recréée pour chaque test."""
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all, tables=TEST_TABLES)
+    """Session async isolée, recréée pour chaque test.
+
+    Par défaut SQLite en mémoire. Avec TEST_DATABASE_URL (ex.
+    postgresql+asyncpg://postgres@127.0.0.1:5433/kp_test — base JETABLE, elle
+    est vidée), les mêmes tests tournent sur PostgreSQL : enums, GROUP BY sur
+    alias, arrondis… vérifiés sur le vrai moteur de production."""
+    pg_url = os.environ.get("TEST_DATABASE_URL")
+    if pg_url:
+        engine = create_async_engine(pg_url, poolclass=NullPool)
+        from sqlalchemy import text
+
+        async with engine.begin() as conn:  # schéma neuf à chaque test (users <-> bureaus : FK circulaire)
+            await conn.execute(text("DROP SCHEMA public CASCADE"))
+            await conn.execute(text("CREATE SCHEMA public"))
+            await conn.run_sync(Base.metadata.create_all)
+    else:
+        engine = create_async_engine(
+            "sqlite+aiosqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all, tables=TEST_TABLES)
 
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with session_factory() as session:

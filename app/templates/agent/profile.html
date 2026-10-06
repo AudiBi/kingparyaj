@@ -58,8 +58,9 @@
                         <div class="stat-value" style="font-size:18px;color:#ef4444;">{{ stats.total_payouts|format_number }} HTG</div>
                     </div>
                     <div class="stat-card" style="padding:10px;box-shadow:none;border:1px solid #e2e8f0;">
-                        <div class="stat-label">Commission</div>
-                        <div class="stat-value" style="font-size:18px;color:#8b5cf6;">{{ stats.commission|format_number }} HTG</div>
+                        <div class="stat-label">Commission ({{ ('%g' % (stats.commission_rate or 0)).replace('.', ',') }} %)</div>
+                        <div class="stat-value" style="font-size:18px;color:#8b5cf6;">{{ '{:,.2f}'.format(stats.commission or 0).replace(',', ' ').replace('.', ',') }} HTG</div>
+                        <div style="font-size:11px;color:#64748b;">total, sur {{ '{:,.2f}'.format(stats.commission_sales or 0).replace(',', ' ').replace('.', ',') }} HTG de ventes</div>
                     </div>
                     <div class="stat-card" style="padding:10px;box-shadow:none;border:1px solid #e2e8f0;">
                         <div class="stat-label">Jours actifs</div>

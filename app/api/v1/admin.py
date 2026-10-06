@@ -13,13 +13,11 @@ from app.core.redis_client import get_redis
 from app.core.security import get_current_admin
 from app.schemas.user import UserResponse, UserCreate
 from app.schemas.keno import KenoDrawResponse
-from app.schemas.lucky import LuckyWheelConfigResponse
 from app.schemas.common import SuccessResponse, PaginatedResponse
 from app.services.user_service import UserService
 from app.services.keno_service import KenoService
 from app.models.user import User, UserRole
 from app.models.keno import KenoDraw, KenoDrawStatus
-from app.models.lucky import LuckyWheelConfig
 from app.models.bureau import Bureau
 from app.models.audit import AuditLog
 import redis.asyncio as redis
@@ -267,58 +265,6 @@ async def update_keno_draws_config(
     return SuccessResponse(message="Configuration des tirages mise à jour")
 
 
-@router.get("/config/lucky/wheel")
-async def get_lucky_wheel_config(
-    admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db)
-):
-    """Récupère la configuration de la roue Lucky."""
-    
-    result = await db.execute(
-        select(LuckyWheelConfig)
-        .where(LuckyWheelConfig.is_active == True)
-    )
-    configs = result.scalars().all()
-    
-    return configs
-
-
-@router.put("/config/lucky/wheel/{config_id}")
-async def update_lucky_wheel_config(
-    config_id: str,
-    segments: List[dict],
-    min_bet: float,
-    max_bet: float,
-    admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db),
-    redis_client: redis.Redis = Depends(get_redis)
-):
-    """Met à jour la configuration de la roue Lucky."""
-    
-    result = await db.execute(
-        select(LuckyWheelConfig).where(LuckyWheelConfig.id == config_id)
-    )
-    config = result.scalar_one_or_none()
-    
-    if not config:
-        raise HTTPException(status_code=404, detail="Configuration non trouvée")
-    
-    config.segments = segments
-    config.min_bet = Decimal(str(min_bet))
-    config.max_bet = Decimal(str(max_bet))
-    config.calculate_rtp()
-    
-    await db.commit()
-    
-    # Invalider le cache
-    await redis_client.delete("lucky:wheel:config")
-    
-    return SuccessResponse(
-        message=f"Configuration mise à jour - RTP: {config.theoretical_rtp * 100:.1f}%",
-        data={"rtp": config.theoretical_rtp}
-    )
-
-
 # ==================== TIROGES MANUELS ====================
 
 @router.post("/keno/draws/trigger")
@@ -350,61 +296,29 @@ async def trigger_keno_draw(
     }
 
 
-@router.get("/keno/draws/{draw_id}/reset")
-async def reset_keno_draw(
+@router.post("/keno/draws/{draw_id}/cancel")
+async def cancel_keno_draw(
     draw_id: str,
     admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
 ):
-    """Réinitialise un tirage Keno (rembourse les paris)."""
-    
-    from app.models.keno import KenoBet
-    from app.models.wallet import Wallet
-    
-    # Récupérer le tirage
-    draw_result = await db.execute(
-        select(KenoDraw).where(KenoDraw.id == draw_id)
+    """Annule un tirage Keno EN ATTENTE et rembourse ses paris.
+
+    Remplace l'ancien GET /keno/draws/{id}/reset, dangereux : sur un tirage
+    déjà réglé il remboursait la mise de TOUS les paris, gagnants compris
+    (qui gardaient leur gain), créditait les comptes sans transaction, puis
+    remettait le tirage en attente ; et étant un GET accepté avec le cookie
+    admin, un simple lien suffisait à le déclencher. Un tirage réglé ne peut
+    plus être « réinitialisé ».
+    """
+    result = await KenoService(db, redis_client).cancel_draw(draw_id, by=admin.id, reason="Annulation admin (API)")
+    await db.commit()
+    return SuccessResponse(
+        message=f"Tirage n° {result['draw_number']} annulé : {result['refunded_bets']} pari(s) remboursé(s)",
+        data=result,
     )
-    draw = draw_result.scalar_one_or_none()
-    
-    if not draw:
-        raise HTTPException(status_code=404, detail="Tirage non trouvé")
-    
-    if draw.status == KenoDrawStatus.COMPLETED:
-        # Rembourser tous les paris
-        bets_result = await db.execute(
-            select(KenoBet).where(KenoBet.draw_id == draw_id)
-        )
-        bets = bets_result.scalars().all()
-        
-        for bet in bets:
-            if bet.user_id:
-                # Rembourser le wallet
-                wallet_result = await db.execute(
-                    select(Wallet).where(Wallet.user_id == bet.user_id)
-                )
-                wallet = wallet_result.scalar_one()
-                wallet.balance += bet.stake
-            elif bet.ticket_id:
-                # Rembourser le ticket
-                from app.models.ticket import Ticket
-                ticket_result = await db.execute(
-                    select(Ticket).where(Ticket.id == bet.ticket_id)
-                )
-                ticket = ticket_result.scalar_one()
-                ticket.balance += bet.stake
-            
-            bet.status = "REFUNDED"
-        
-        draw.status = KenoDrawStatus.PENDING
-        draw.numbers = None
-        
-        await db.commit()
-    
-    return SuccessResponse(message=f"Tirage {draw_id} réinitialisé")
 
-
-# ==================== RAPPORTS D'AUDIT ====================
 
 @router.get("/audit/logs")
 async def get_audit_logs(

@@ -57,6 +57,14 @@
                 </div>
                 
                 <div class="form-group">
+                    <label>Commission (% des ventes)</label>
+                    <input type="number" name="commission_rate" class="form-control" min="0" max="50" step="0.01"
+                           value="{{ agent.commission_rate if agent.commission_rate is not none else '' }}"
+                           placeholder="Taux par défaut : {{ ('%g' % (default_commission or 0)).replace('.', ',') }} %">
+                    <div class="help-text">Laisser vide pour appliquer le taux par défaut ({{ ('%g' % (default_commission or 0)).replace('.', ',') }} %, réglable dans la liste des agents).</div>
+                </div>
+
+                <div class="form-group">
                     <label>Nouveau mot de passe</label>
                     <input type="password" name="password" class="form-control" placeholder="Laisser vide pour ne pas changer">
                     <div class="help-text">Min 8 caractères, une majuscule, une minuscule et un chiffre</div>
@@ -189,7 +197,8 @@
             email: data.get('email') || null,
             national_id: data.get('national_id') || null,
             bureau_id: data.get('bureau_id'),
-            is_active: data.get('is_active') === 'on'
+            is_active: data.get('is_active') === 'on',
+            commission_rate: (data.get('commission_rate') || '').trim()  // vide = taux par défaut
         };
         
         const password = data.get('password');
@@ -225,7 +234,7 @@
                 showToast(data.message || 'Agent mis à jour avec succès', 'success');
                 setTimeout(() => window.location.href = '/admin/agents', 1000);
             } else {
-                showToast(data.error || 'Erreur lors de la mise à jour', 'error');
+                showToast(data.error || (typeof data.detail === 'string' ? data.detail : '') || 'Erreur lors de la mise à jour', 'error');
             }
         })
         .catch(() => {

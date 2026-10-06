@@ -1,0 +1,187 @@
+<!-- app/templates/agent/gains.html : paiement des gains au guichet -->
+{% extends "agent/base.html" %}
+
+{% block title %}Payer les gains - Agent{% endblock %}
+{% block page_title %}Payer les gains{% endblock %}
+{% block page_subtitle %}Scannez ou saisissez le numéro du ticket du joueur{% endblock %}
+
+{% block extra_css %}
+<style>
+    .pg { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 380px); gap: 16px; }
+    @media (max-width: 1050px) { .pg { grid-template-columns: minmax(0, 1fr); } }
+    .pc { background: #fff; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,.06); padding: 16px; margin-bottom: 16px; }
+    .scan { display: flex; gap: 8px; }
+    .scan input { flex: 1; min-width: 0; padding: 14px; font: 800 22px 'Courier New', monospace; letter-spacing: 2px; text-transform: uppercase;
+                  border: 2px solid #cbd5e1; border-radius: 10px; }
+    .scan input:focus { outline: none; border-color: #059669; box-shadow: 0 0 0 3px rgba(5,150,105,.15); }
+    .hint { font-size: 12px; color: #64748b; margin-top: 6px; }
+    .tkhead { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; align-items: center; margin-bottom: 12px; }
+    .tkno { font: 900 24px 'Courier New', monospace; letter-spacing: 1px; }
+    .st { padding: 4px 12px; border-radius: 999px; font-weight: 800; font-size: 12px; background: #e2e8f0; }
+    .st.active { background: #dcfce7; color: #166534; } .st.paid { background: #e0e7ff; color: #3730a3; } .st.expired, .st.cancelled { background: #fee2e2; color: #991b1b; }
+    .bt { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .bt th, .bt td { padding: 8px 6px; border-bottom: 1px solid #f1f5f9; text-align: left; vertical-align: top; }
+    .bt td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .bt tr.won td { background: #ecfdf5; } .bt tr.pending td { background: #fffbeb; }
+    .tag { font-weight: 800; } .tag.won { color: #059669; } .tag.lost { color: #94a3b8; } .tag.pending { color: #b45309; } .tag.refunded { color: #2563eb; }
+    .totals { display: grid; gap: 8px; }
+    .totals div { display: flex; justify-content: space-between; font-size: 14px; }
+    .topay { margin-top: 12px; padding: 16px; border-radius: 12px; background: #064e3b; color: #ecfdf5; text-align: center; }
+    .topay small { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; opacity: .85; }
+    .topay b { display: block; font-size: 34px; font-variant-numeric: tabular-nums; margin: 4px 0; }
+    .topay.off { background: #f1f5f9; color: #334155; }
+    .topay.off b { font-size: 20px; }
+    .paybtn { font-size: 18px; font-weight: 900; letter-spacing: .04em; margin-top: 12px; }
+    .empty { text-align: center; color: #64748b; padding: 30px 10px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="pg">
+    <div>
+        <div class="pc">
+            <form id="scanForm" class="scan" autocomplete="off">
+                <input id="ticketInput" value="{{ ticket }}" placeholder="KNO-XXXX-XXXX" aria-label="Numéro du ticket" autofocus maxlength="20">
+                <button type="submit" class="btn btn-primary"><i class="fas fa-search"></i> Vérifier</button>
+            </form>
+            <div class="hint">Avec une douchette, scannez le code-barres du reçu : le ticket s'affiche tout seul.</div>
+        </div>
+
+        <div class="pc" id="detail"><div class="empty"><i class="fas fa-barcode" style="font-size:36px;"></i><br><br>Aucun ticket vérifié pour le moment.</div></div>
+    </div>
+
+    <div>
+        <div class="pc" id="payBox" style="display:none;">
+            <div class="totals" id="totals"></div>
+            <div class="topay" id="toPay"></div>
+            <button type="button" id="payBtn" class="btn btn-primary btn-block btn-lg paybtn" style="display:none;"><i class="fas fa-hand-holding-usd"></i> PAYER LE JOUEUR</button>
+            <div class="hint" id="payHint"></div>
+        </div>
+        <div class="pc">
+            <strong><i class="fas fa-history"></i> Paiements de ce poste</strong>
+            <table class="bt" style="margin-top:8px;"><tbody id="recent"><tr><td class="text-muted">Aucun paiement depuis l'ouverture de la page.</td></tr></tbody></table>
+        </div>
+    </div>
+</div>
+
+<div class="modal-overlay" id="confirmModal">
+    <div class="modal" style="max-width:420px;">
+        <h3 style="margin-bottom:8px;">Confirmer le paiement</h3>
+        <p id="confirmText" style="font-size:15px;"></p>
+        <div class="flex" style="gap:8px;margin-top:14px;">
+            <button class="btn btn-primary" id="confirmBtn"><i class="fas fa-check"></i> Payer</button>
+            <button class="btn btn-secondary" onclick="closeModal('confirmModal')">Annuler</button>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    const $ = id => document.getElementById(id);
+    const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const money = x => KPReceipt.money(x);
+    const when = iso => iso ? new Date(iso).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+    let current = null;
+    const recent = [];
+
+    function errorText(data, fallback) {
+        if (!data) return fallback;
+        if (typeof data.error === 'string') return data.error;
+        if (typeof data.detail === 'string') return data.detail;
+        if (Array.isArray(data.detail) && data.detail[0]) return String(data.detail[0].msg || '');
+        return data.message || fallback;
+    }
+    async function csrf() { return (await (await fetch('/agent/api/keno/csrf-token')).json()).csrf_token; }
+
+    function render(t) {
+        current = t;
+        const labels = { active: 'Actif', paid: 'Payé', expired: 'Expiré', cancelled: 'Annulé' };
+        $('detail').innerHTML = `
+            <div class="tkhead">
+                <div><div class="tkno">${esc(t.ticket_number)}</div>
+                    <div class="hint">${esc(t.bureau || '')} · créé le ${when(t.created_at)} · valable jusqu'au ${when(t.expires_at)}</div></div>
+                <span class="st ${esc(t.status)}">${labels[t.status] || esc(t.status)}</span>
+            </div>
+            <div class="table-responsive"><table class="bt">
+                <thead><tr><th>Jeu</th><th>Pari</th><th>Mise</th><th>Résultat</th><th style="text-align:right">Gain</th></tr></thead>
+                <tbody>${t.bets.map(b => `<tr class="${esc(b.status)}">
+                    <td><b>${esc(b.game)}</b><br><span class="hint">${esc(b.round)}</span></td>
+                    <td>${esc(b.bet)}${b.selection ? '<br><span class="hint">' + esc(b.selection) + '</span>' : ''}</td>
+                    <td class="num">${money(b.stake)}</td>
+                    <td><span class="tag ${esc(b.status)}">${esc(b.status_label)}</span>${b.detail ? '<br><span class="hint">' + esc(b.detail) + '</span>' : ''}</td>
+                    <td class="num"><b>${b.winnings > 0 ? money(b.winnings) : '—'}</b></td></tr>`).join('')
+                    || '<tr><td colspan="5" class="text-muted">Aucun pari sur ce ticket.</td></tr>'}</tbody>
+            </table></div>`;
+        $('payBox').style.display = '';
+        $('totals').innerHTML = `
+            <div><span>Mises</span><b>${money(t.total_stake)}</b></div>
+            <div><span>Gains</span><b>${money(t.total_winnings)}</b></div>
+            ${t.paid_amount > 0 ? `<div><span>Déjà payé</span><b>${money(t.paid_amount)}</b></div>` : ''}
+            <div><span>Solde du ticket</span><b>${money(t.balance)}</b></div>`;
+        if (t.can_pay) {
+            $('toPay').className = 'topay';
+            $('toPay').innerHTML = `<small>À payer au joueur</small><b>${money(t.amount_to_pay)}</b>`;
+            $('payBtn').style.display = '';
+            $('payHint').textContent = 'Comptez les espèces devant le joueur.';
+        } else {
+            $('toPay').className = 'topay off';
+            $('toPay').innerHTML = `<small>Paiement impossible</small><b>${esc(t.reason)}</b>`;
+            $('payBtn').style.display = 'none';
+            $('payHint').textContent = '';
+        }
+    }
+
+    async function lookup(number) {
+        number = (number || '').trim().toUpperCase();
+        if (!number) return;
+        $('ticketInput').value = number;
+        history.replaceState(null, '', '?ticket=' + encodeURIComponent(number));
+        try {
+            const res = await fetch('/agent/api/payouts/' + encodeURIComponent(number));
+            const data = await res.json().catch(() => null);
+            if (!res.ok) throw new Error(errorText(data, 'Ticket introuvable'));
+            render(data);
+        } catch (e) {
+            current = null;
+            $('payBox').style.display = 'none';
+            $('detail').innerHTML = `<div class="empty" style="color:#b91c1c"><i class="fas fa-exclamation-triangle" style="font-size:30px;"></i><br><br>${esc(e.message)}</div>`;
+        }
+    }
+
+    async function pay() {
+        closeModal('confirmModal');
+        $('payBtn').disabled = true;
+        try {
+            const res = await fetch('/agent/api/payouts/pay', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': await csrf() },
+                body: JSON.stringify({ ticket_number: current.ticket_number }),
+            });
+            const data = await res.json().catch(() => null);
+            if (!res.ok || !data || !data.success) throw new Error(errorText(data, 'Paiement refusé'));
+            showToast(data.message, 'success');
+            render(data.data);
+            recent.unshift({ number: data.data.ticket_number, amount: data.data.paid_now, at: new Date() });
+            $('recent').innerHTML = recent.slice(0, 10).map(r => `<tr><td><b style="font-family:monospace">${esc(r.number)}</b><br><span class="hint">${r.at.toLocaleTimeString('fr-FR')}</span></td><td class="num"><b>${money(r.amount)}</b></td></tr>`).join('');
+            if (typeof refreshCashBalance === 'function') refreshCashBalance();
+            $('ticketInput').value = ''; $('ticketInput').focus();
+        } catch (e) {
+            showToast(e.message, 'error');
+            lookup(current.ticket_number);
+        } finally { $('payBtn').disabled = false; }
+    }
+
+    $('scanForm').addEventListener('submit', e => { e.preventDefault(); lookup($('ticketInput').value); });
+    $('payBtn').addEventListener('click', () => {
+        if (!current || !current.can_pay) return;
+        $('confirmText').innerHTML = `Payer <b>${money(current.amount_to_pay)}</b> en espèces pour le ticket <b style="font-family:monospace">${esc(current.ticket_number)}</b> ?`;
+        openModal('confirmModal');
+        $('confirmBtn').focus();
+    });
+    $('confirmBtn').addEventListener('click', pay);
+    if ($('ticketInput').value) lookup($('ticketInput').value);
+})();
+</script>
+{% endblock %}

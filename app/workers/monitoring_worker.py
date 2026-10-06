@@ -1,5 +1,5 @@
 # app/workers/monitoring_worker.py
-"""Worker pour le monitoring - VERSION COMPLÈTE (Keno + Lucky)"""
+"""Worker pour le monitoring - Keno, Lucky6, Horse Races"""
 
 from celery import Task
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
@@ -33,7 +33,7 @@ AsyncSessionLocal = async_sessionmaker(
     name="app.workers.monitoring_worker.generate_performance_report"
 )
 def generate_performance_report():
-    """Génère un rapport de performance quotidien (Keno + Lucky)"""
+    """Génère un rapport de performance quotidien (Keno, Lucky6, Horse Races)"""
     loop = asyncio.get_event_loop()
     if loop.is_running():
         return loop.create_task(_generate_performance_report_async())
@@ -42,7 +42,7 @@ def generate_performance_report():
 
 
 async def _generate_performance_report_async():
-    """Logique de génération du rapport - COMPLÈTE (Keno + Lucky)"""
+    """Logique de génération du rapport (Keno, Lucky6, Horse Races)"""
     logger.info("📊 Génération du rapport de performance...")
     
     try:
@@ -52,7 +52,8 @@ async def _generate_performance_report_async():
             today_end = datetime.combine(today, datetime.max.time())
             
             from app.models.keno import KenoDraw, KenoBet
-            from app.models.lucky import LuckyPlay
+            from app.models.enums import KenoBetStatus
+            from app.models.game import GameBet
             from app.models.transaction import Transaction
             from app.models.user import User
             
@@ -78,48 +79,33 @@ async def _generate_performance_report_async():
                 .where(
                     and_(
                         KenoBet.placed_at >= today_start,
-                        KenoBet.placed_at <= today_end
+                        KenoBet.placed_at <= today_end,
+                        KenoBet.status.in_([KenoBetStatus.WON, KenoBetStatus.LOST]),  # paris réglés
                     )
                 )
             )
             keno_stats = bets_result.one()
             
-            # ==================== LUCKY ====================
-            lucky_result = await db.execute(
+            # ==================== LUCKY6 + HORSE RACES (game_bets) ====================
+            games_result = await db.execute(
                 select(
-                    func.count(LuckyPlay.id).label("total_plays"),
-                    func.coalesce(func.sum(LuckyPlay.stake), 0).label("total_stake"),
-                    func.coalesce(func.sum(LuckyPlay.winnings), 0).label("total_wins"),
-                    func.max(LuckyPlay.multiplier).label("max_multiplier"),
-                    func.max(LuckyPlay.winnings).label("max_win")
+                    GameBet.game_type,
+                    func.count(GameBet.id).label("bets"),
+                    func.coalesce(func.sum(GameBet.stake), 0).label("stake"),
+                    func.coalesce(func.sum(GameBet.winnings), 0).label("wins"),
                 )
-                .where(
-                    and_(
-                        LuckyPlay.played_at >= today_start,
-                        LuckyPlay.played_at <= today_end
-                    )
-                )
+                .where(and_(GameBet.placed_at >= today_start, GameBet.placed_at <= today_end,
+                            GameBet.status.in_(["WON", "LOST"])))  # paris réglés
+                .group_by(GameBet.game_type)
             )
-            lucky_stats = lucky_result.one()
-            
-            # Top segments Lucky
-            segments_result = await db.execute(
-                select(
-                    LuckyPlay.result_segment['label'].label("segment"),
-                    func.count(LuckyPlay.id).label("count")
-                )
-                .where(
-                    and_(
-                        LuckyPlay.played_at >= today_start,
-                        LuckyPlay.played_at <= today_end
-                    )
-                )
-                .group_by(LuckyPlay.result_segment['label'])
-                .order_by(func.count(LuckyPlay.id).desc())
-                .limit(5)
-            )
-            top_segments = segments_result.all()
-            
+            games = {
+                row.game_type: {"bets": row.bets or 0, "stake": float(row.stake), "wins": float(row.wins)}
+                for row in games_result.all()
+            }
+            empty = {"bets": 0, "stake": 0.0, "wins": 0.0}
+            lucky6_stats = games.get("lucky6", empty)
+            horse_stats = games.get("horse_races", empty)
+
             # ==================== TRANSACTIONS ====================
             tx_result = await db.execute(
                 select(
@@ -136,7 +122,11 @@ async def _generate_performance_report_async():
                     )
                 )
             )
-            deposits, withdrawals, bets_volume, wins = tx_result.one()
+            deposits, withdrawals, bets_volume, _account_wins = tx_result.one()
+            # Gains des joueurs : tous les jeux, tickets ET comptes (les transactions
+            # WIN ne couvrent que les comptes) ; revenu = mises - gains des paris réglés
+            total_stake = float(keno_stats.total_stake) + lucky6_stats["stake"] + horse_stats["stake"]
+            wins = float(keno_stats.total_wins) + lucky6_stats["wins"] + horse_stats["wins"]
             
             # ==================== UTILISATEURS ====================
             users_result = await db.execute(
@@ -159,31 +149,22 @@ async def _generate_performance_report_async():
                     "stake": float(keno_stats.total_stake),
                     "wins": float(keno_stats.total_wins)
                 },
-                "lucky": {
-                    "total_plays": lucky_stats.total_plays or 0,
-                    "total_stake": float(lucky_stats.total_stake),
-                    "total_wins": float(lucky_stats.total_wins),
-                    "max_multiplier": float(lucky_stats.max_multiplier or 0),
-                    "max_win": float(lucky_stats.max_win or 0),
-                    "top_segments": [
-                        {"segment": s.segment, "count": s.count}
-                        for s in top_segments
-                    ]
-                },
+                "lucky6": lucky6_stats,
+                "horse_races": horse_stats,
                 "transactions": {
                     "deposits": float(deposits),
                     "withdrawals": float(withdrawals),
                     "bets_volume": float(bets_volume),
                     "wins": float(wins),
-                    "net_revenue": float(deposits + wins - withdrawals - bets_volume)
+                    "net_revenue": float(total_stake - wins)
                 },
                 "users": {
                     "new": new_users
                 },
                 "summary": {
-                    "total_bets": (keno_stats.total_bets or 0) + (lucky_stats.total_plays or 0),
-                    "total_stake": float(keno_stats.total_stake + lucky_stats.total_stake),
-                    "total_wins": float(keno_stats.total_wins + lucky_stats.total_wins)
+                    "total_bets": (keno_stats.total_bets or 0) + lucky6_stats["bets"] + horse_stats["bets"],
+                    "total_stake": total_stake,
+                    "total_wins": wins
                 }
             }
             
@@ -194,7 +175,7 @@ async def _generate_performance_report_async():
                 json.dumps(report)
             )
             
-            logger.info(f"📊 Rapport généré: Keno={report['keno']['bets']} paris, Lucky={report['lucky']['total_plays']} parties")
+            logger.info(f"📊 Rapport généré: Keno={report['keno']['bets']} paris, Lucky6={report['lucky6']['bets']}, Horse Races={report['horse_races']['bets']}")
             
             # Vérifier les anomalies
             await _check_anomalies(report)
@@ -230,9 +211,6 @@ async def _check_anomalies(report: dict):
     if report["keno"]["bets"] < 10:
         anomalies.append(f"📉 Faible activité Keno: {report['keno']['bets']} paris")
     
-    # Faible activité Lucky
-    if report["lucky"]["total_plays"] < 5:
-        anomalies.append(f"📉 Faible activité Lucky: {report['lucky']['total_plays']} parties")
     
     # Taux de gain Keno anormal
     if report["keno"]["stake"] > 0:
@@ -240,11 +218,13 @@ async def _check_anomalies(report: dict):
         if win_rate > 90:
             anomalies.append(f"🏆 Taux de gains Keno anormal: {win_rate:.1f}%")
     
-    # Taux de gain Lucky anormal
-    if report["lucky"]["total_stake"] > 0:
-        win_rate = report["lucky"]["total_wins"] / report["lucky"]["total_stake"] * 100
-        if win_rate > 90:
-            anomalies.append(f"🏆 Taux de gains Lucky anormal: {win_rate:.1f}%")
+    # Taux de gain anormal Lucky6 / Horse Races
+    for key, label in (("lucky6", "Lucky6"), ("horse_races", "Horse Races")):
+        stats = report.get(key) or {}
+        if stats.get("stake", 0) > 0:
+            win_rate = stats["wins"] / stats["stake"] * 100
+            if win_rate > 90:
+                anomalies.append(f"🏆 Taux de gains {label} anormal: {win_rate:.1f}%")
     
     if anomalies:
         from app.workers.notification_worker import send_agent_alert
@@ -407,7 +387,7 @@ async def _check_performance_metrics_async():
     name="app.workers.monitoring_worker.generate_weekly_report"
 )
 def generate_weekly_report():
-    """Génère un rapport hebdomadaire (Keno + Lucky)"""
+    """Génère un rapport hebdomadaire (Keno, Lucky6, Horse Races)"""
     loop = asyncio.get_event_loop()
     if loop.is_running():
         return loop.create_task(_generate_weekly_report_async())
@@ -425,32 +405,42 @@ async def _generate_weekly_report_async():
             start_date = end_date - timedelta(days=7)
             
             from app.models.keno import KenoDraw, KenoBet
-            from app.models.lucky import LuckyPlay
+            from app.models.enums import KenoBetStatus
+            from app.models.game import GameBet
             from app.models.transaction import Transaction
             from app.models.user import User
             
             # Keno
+            # (tirages et paris comptés séparément : les sélectionner ensemble sans
+            # jointure multipliait les mises et les gains par le nombre de tirages)
+            draws_count = (await db.execute(
+                select(func.count(KenoDraw.id)).where(KenoDraw.status == "completed", KenoDraw.draw_time >= start_date)
+            )).scalar() or 0
             keno_result = await db.execute(
                 select(
-                    func.count(KenoDraw.id).filter(KenoDraw.status == "completed").label("draws"),
                     func.count(KenoBet.id).label("bets"),
                     func.coalesce(func.sum(KenoBet.stake), 0).label("stake"),
                     func.coalesce(func.sum(KenoBet.winnings), 0).label("wins")
                 )
-                .where(KenoBet.placed_at >= start_date)
+                .where(KenoBet.placed_at >= start_date, KenoBet.status.in_([KenoBetStatus.WON, KenoBetStatus.LOST]))
             )
             keno_stats = keno_result.one()
             
-            # Lucky
-            lucky_result = await db.execute(
+            # Lucky6 + Horse Races (game_bets)
+            games_result = await db.execute(
                 select(
-                    func.count(LuckyPlay.id).label("plays"),
-                    func.coalesce(func.sum(LuckyPlay.stake), 0).label("stake"),
-                    func.coalesce(func.sum(LuckyPlay.winnings), 0).label("wins")
+                    GameBet.game_type,
+                    func.count(GameBet.id).label("bets"),
+                    func.coalesce(func.sum(GameBet.stake), 0).label("stake"),
+                    func.coalesce(func.sum(GameBet.winnings), 0).label("wins"),
                 )
-                .where(LuckyPlay.played_at >= start_date)
+                .where(GameBet.placed_at >= start_date, GameBet.status.in_(["WON", "LOST"]))
+                .group_by(GameBet.game_type)
             )
-            lucky_stats = lucky_result.one()
+            games = {r.game_type: {"bets": r.bets or 0, "stake": float(r.stake), "wins": float(r.wins)} for r in games_result.all()}
+            empty = {"bets": 0, "stake": 0.0, "wins": 0.0}
+            lucky6_stats = games.get("lucky6", empty)
+            horse_stats = games.get("horse_races", empty)
             
             # Transactions
             tx_result = await db.execute(
@@ -475,16 +465,13 @@ async def _generate_weekly_report_async():
                     "end": end_date.isoformat()
                 },
                 "keno": {
-                    "draws": keno_stats.draws or 0,
+                    "draws": draws_count,
                     "bets": keno_stats.bets or 0,
                     "stake": float(keno_stats.stake),
                     "wins": float(keno_stats.wins)
                 },
-                "lucky": {
-                    "plays": lucky_stats.plays or 0,
-                    "stake": float(lucky_stats.stake),
-                    "wins": float(lucky_stats.wins)
-                },
+                "lucky6": lucky6_stats,
+                "horse_races": horse_stats,
                 "transactions": {
                     "deposits": float(tx_stats.deposits),
                     "withdrawals": float(tx_stats.withdrawals)
@@ -506,20 +493,25 @@ async def _generate_weekly_report_async():
                 if admin.email:
                     send_email_notification.delay(
                         admin.email,
-                        "📊 Rapport Hebdomadaire - Parier Keno & Lucky",
+                        "📊 Rapport Hebdomadaire - King Paryaj",
                         f"""
                         Rapport Hebdomadaire ({start_date.date()} au {end_date.date()})
                         
                         Keno:
-                        - {keno_stats.draws or 0} tirages
+                        - {draws_count} tirages
                         - {keno_stats.bets or 0} paris
                         - {float(keno_stats.stake):.0f} HTG misés
                         - {float(keno_stats.wins):.0f} HTG gagnés
                         
-                        Lucky:
-                        - {lucky_stats.plays or 0} parties
-                        - {float(lucky_stats.stake):.0f} HTG misés
-                        - {float(lucky_stats.wins):.0f} HTG gagnés
+                        Lucky6:
+                        - {lucky6_stats["bets"]} paris
+                        - {lucky6_stats["stake"]:.0f} HTG misés
+                        - {lucky6_stats["wins"]:.0f} HTG gagnés
+
+                        Horse Races:
+                        - {horse_stats["bets"]} paris
+                        - {horse_stats["stake"]:.0f} HTG misés
+                        - {horse_stats["wins"]:.0f} HTG gagnés
                         
                         Finance:
                         - Dépôts: {float(tx_stats.deposits):.0f} HTG

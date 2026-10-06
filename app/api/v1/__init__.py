@@ -1,5 +1,5 @@
 # app/api/v1/__init__.py
-"""API v1 - Routes complètes pour Parier Keno & Lucky Haïti"""
+"""API v1 - Routes complètes King Paryaj"""
 
 from fastapi import APIRouter
 
@@ -9,7 +9,6 @@ from app.api.v1 import (
     users,
     wallet,
     keno,
-    lucky,
     tickets,
     agent,
     admin,
@@ -24,7 +23,6 @@ router.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 router.include_router(users.router, prefix="/users", tags=["Users"])
 router.include_router(wallet.router, prefix="/wallet", tags=["Wallet"])
 router.include_router(keno.router, prefix="/keno", tags=["Keno"])
-router.include_router(lucky.router, prefix="/lucky", tags=["Lucky"])
 router.include_router(tickets.router, prefix="/tickets", tags=["Tickets"])
 router.include_router(agent.router, prefix="/agent", tags=["Agent"])
 router.include_router(admin.router, prefix="/admin", tags=["Admin"])
@@ -37,7 +35,6 @@ __all__ = [
     "users", 
     "wallet",
     "keno",
-    "lucky",
     "tickets",
     "agent",
     "admin",

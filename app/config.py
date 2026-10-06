@@ -107,6 +107,9 @@ class Settings(BaseSettings):
     MAX_DAILY_DEPOSIT: int = Field(default=500000)
     MAX_DAILY_LOSS: int = Field(default=100000)
     MAX_SINGLE_BET: int = Field(default=100000)
+    # Commission des agents : % des ventes (mises encaissées). Taux par défaut,
+    # modifiable par l'admin (Agents) ; un agent peut avoir son propre taux.
+    AGENT_COMMISSION_RATE: float = Field(default=0)
     
     # Rate limiting
     RATE_LIMIT_REQUESTS: int = Field(default=100)

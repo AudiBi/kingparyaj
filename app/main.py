@@ -1,5 +1,5 @@
 # app/main.py
-"""Application FastAPI - Parier Keno & Lucky Haïti
+"""Application FastAPI - King Paryaj (Keno, Lucky6, Horse Races)
 Version professionnelle avec gestion complète des workers, monitoring et sécurité
 """
 
@@ -161,7 +161,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
-    description="Plateforme de paris Keno & Lucky pour Haïti - Licence LEH",
+    description="Plateforme de paris Keno, Lucky6 et Horse Races pour Haïti - Licence LEH",
     docs_url="/api/docs" if settings.DEBUG else None,
     redoc_url="/api/redoc" if settings.DEBUG else None,
     openapi_url="/api/openapi.json" if settings.DEBUG else None,
@@ -279,7 +279,6 @@ from app.api.v1 import (
     users,
     wallet,
     keno,
-    lucky,
     tickets,
     agent,
     admin,
@@ -295,7 +294,6 @@ app.include_router(auth.router, prefix=api_v1_prefix)
 app.include_router(users.router, prefix=api_v1_prefix)
 app.include_router(wallet.router, prefix=api_v1_prefix)
 app.include_router(keno.router, prefix=api_v1_prefix)
-app.include_router(lucky.router, prefix=api_v1_prefix)
 app.include_router(tickets.router, prefix=api_v1_prefix)
 app.include_router(agent.router, prefix=api_v1_prefix)
 app.include_router(admin.router, prefix=api_v1_prefix)

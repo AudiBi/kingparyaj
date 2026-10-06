@@ -1,21 +1,18 @@
 # app/workers/__init__.py
-"""Workers Celery pour tâches asynchrones - Keno + Lucky"""
+"""Workers Celery pour tâches asynchrones - Keno, Lucky6, Horse Races"""
 
 from app.workers.celery import celery_app
 
-# ==================== DRAW WORKER (Keno + Lucky) ====================
+# ==================== DRAW WORKER ====================
 from app.workers.draw_worker import (
     # Keno
     process_draw,
     schedule_draws,
     cancel_stale_draws,
     export_draw_results_to_leh,
-    # Lucky
-    export_lucky_results_to_leh,
-    export_lucky_daily_to_leh,
 )
 
-# ==================== NOTIFICATION WORKER (Keno + Lucky) ====================
+# ==================== NOTIFICATION WORKER ====================
 from app.workers.notification_worker import (
     # Base
     send_sms_notification,
@@ -25,9 +22,6 @@ from app.workers.notification_worker import (
     # Keno
     send_bet_confirmation,
     send_win_notification,
-    # Lucky
-    send_lucky_win_notification,
-    send_lucky_daily_reminder,
     # Commun
     send_deposit_confirmation,
     send_withdrawal_confirmation,
@@ -38,13 +32,10 @@ from app.workers.notification_worker import (
     notify_expiring_tickets,
 )
 
-# ==================== CLEANUP WORKER (Keno + Lucky) ====================
+# ==================== CLEANUP WORKER ====================
 from app.workers.cleanup_worker import (
     # Keno
     cleanup_old_keno_draws,
-    # Lucky
-    cleanup_old_lucky_plays,
-    cleanup_inactive_wheel_configs,
     # Commun
     cleanup_expired_tickets,
     cleanup_expired_sessions,
@@ -57,7 +48,7 @@ from app.workers.cleanup_worker import (
     reset_daily_counts,
 )
 
-# ==================== MONITORING WORKER (Keno + Lucky) ====================
+# ==================== MONITORING WORKER ====================
 from app.workers.monitoring_worker import (
     generate_performance_report,
     generate_weekly_report,
@@ -85,10 +76,6 @@ __all__ = [
     "cancel_stale_draws",
     "export_draw_results_to_leh",
     
-    # Draw Worker - Lucky
-    "export_lucky_results_to_leh",
-    "export_lucky_daily_to_leh",
-    
     # Notification Worker - Base
     "send_sms_notification",
     "send_email_notification",
@@ -98,10 +85,6 @@ __all__ = [
     # Notification Worker - Keno
     "send_bet_confirmation",
     "send_win_notification",
-    
-    # Notification Worker - Lucky
-    "send_lucky_win_notification",
-    "send_lucky_daily_reminder",
     
     # Notification Worker - Commun
     "send_deposit_confirmation",
@@ -114,10 +97,6 @@ __all__ = [
     
     # Cleanup Worker - Keno
     "cleanup_old_keno_draws",
-    
-    # Cleanup Worker - Lucky
-    "cleanup_old_lucky_plays",
-    "cleanup_inactive_wheel_configs",
     
     # Cleanup Worker - Commun
     "cleanup_expired_tickets",

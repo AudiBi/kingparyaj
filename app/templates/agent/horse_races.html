@@ -386,7 +386,7 @@
             ticket: bet.ticket_number || (payload && payload.player_type === 'ticket' ? payload.identifier : null),
             code: bet.bet_id, placedAt: bet.placed_at, sections,
             verifyUrl: location.host + '/horse-races/mon-pari?code=' + bet.bet_id,
-            footer: 'Suivez votre pari avec le lien ci-dessus. Conservez ce reçu : il est exigé pour tout paiement.',
+            footer: 'Suivez votre pari avec le lien ci-dessus. Gain payable le jour de la course, avant minuit, sur présentation de ce reçu.',
         });
     }
 
@@ -401,7 +401,7 @@
                 <td>${b.selection.map(n => '№' + n).join(RULES[b.bet_type].ordered ? ' → ' : ' + ')}</td>
                 <td>${money(b.stake)}</td><td>${b.odds.toFixed(2)}</td>
                 <td>${b.status}${b.winnings > 0 ? ' · ' + money(b.winnings) : ''}</td>
-                <td><button class="btn btn-secondary btn-sm" data-receipt='${esc(JSON.stringify(b))}'><i class="fas fa-print"></i></button></td>
+                <td><button class="btn btn-secondary btn-sm" data-receipt='${esc(JSON.stringify(b))}'><i class="fas fa-print"></i></button>${(b.winnings > 0) && b.ticket_number ? ' <a class="btn btn-primary btn-sm" href="/agent/gains?ticket=' + encodeURIComponent(b.ticket_number) + '" title="Payer les gains"><i class="fas fa-hand-holding-usd"></i> Payer</a>' : ''}</td>
             </tr>`);
             $('myBets').innerHTML = rows.join('') || '<tr><td colspan="8" class="text-muted">Aucun pari</td></tr>';
             filterTickets();

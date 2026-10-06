@@ -1,5 +1,5 @@
 # app/workers/celery.py
-"""Configuration Celery pour les workers - VERSION COMPLÈTE (Keno + Lucky)"""
+"""Configuration Celery pour les workers (Keno, Lucky6, Horse Races)"""
 
 
 from celery import Celery
@@ -94,25 +94,9 @@ celery_app.conf.update(
             'args': (),
         },
 
-        # ==================== LUCKY ====================
-        'export-lucky-to-leh': {
-            'task': 'app.workers.draw_worker.export_lucky_daily_to_leh',
-            'schedule': crontab(hour=1, minute=30),
-            'args': (),
-        },
-        'cleanup-old-lucky-plays': {
-            'task': 'app.workers.cleanup_worker.cleanup_old_lucky_plays',
-            'schedule': crontab(hour=2, minute=30),
-            'args': (),
-        },
         'cleanup-inactive-wheel-configs': {
             'task': 'app.workers.cleanup_worker.cleanup_inactive_wheel_configs',
             'schedule': crontab(hour=3, minute=30),
-            'args': (),
-        },
-        'send-lucky-daily-reminder': {
-            'task': 'app.workers.notification_worker.send_lucky_daily_reminder',
-            'schedule': crontab(hour=10, minute=0),
             'args': (),
         },
         

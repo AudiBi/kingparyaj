@@ -4,6 +4,7 @@
 from datetime import datetime
 from decimal import Decimal
 
+from sqlalchemy import text
 from sqlalchemy import (
     Column, String, Numeric, Integer, DateTime, ForeignKey, 
     Enum, ARRAY, JSON, Boolean, CheckConstraint, Index
@@ -116,6 +117,11 @@ class KenoBet(BaseModel):
     hits = Column(Integer, default=0, nullable=False)
     multiplier = Column(Numeric(10, 2), default=0, nullable=False)
     winnings = Column(Numeric(10, 2), default=0, nullable=False)
+    # Commission de l'agent, FIGÉE au moment de la vente (taux de ce jour) ;
+    # NULL = pari antérieur (calculé au taux actuel). counts_as_sale = faux pour
+    # un gain rejoué sur le même ticket (pas d'argent nouveau encaissé).
+    commission = Column(Numeric(10, 2), nullable=True)
+    counts_as_sale = Column(Boolean, nullable=False, default=True, server_default=text("true"))
     
     # ========== Jackpot ==========
     jackpot_win = Column(Boolean, default=False, nullable=False)

@@ -17,6 +17,7 @@ Choix techniques :
 
 import enum
 
+from sqlalchemy import text, Boolean
 from sqlalchemy import (
     Column, String, Integer, Numeric, DateTime, ForeignKey, JSON,
     CheckConstraint, Index, UniqueConstraint,
@@ -157,6 +158,11 @@ class GameBet(BaseModel):
     # ========== Règlement ==========
     status = Column(String(20), default=GameBetStatus.PENDING.value, nullable=False)
     winnings = Column(Numeric(12, 2), default=0, nullable=False)
+    # Commission de l'agent, FIGÉE au moment de la vente (taux de ce jour) ;
+    # NULL = pari antérieur (calculé au taux actuel). counts_as_sale = faux pour
+    # un gain rejoué sur le même ticket (pas d'argent nouveau encaissé).
+    commission = Column(Numeric(10, 2), nullable=True)
+    counts_as_sale = Column(Boolean, nullable=False, default=True, server_default=text("true"))
     placed_at = Column(DateTime, nullable=False)
     settled_at = Column(DateTime, nullable=True)
     debit_transaction_id = Column(String(36), ForeignKey("transactions.id"), nullable=True)

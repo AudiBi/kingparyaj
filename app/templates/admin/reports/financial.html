@@ -1,179 +1,319 @@
 <!-- app/templates/admin/reports/financial.html -->
 {% extends "admin/base.html" %}
 
-{% block title %}Rapports financiers - Administration{% endblock %}
+{% macro htg(v) %}{{ '{:,.2f}'.format(v or 0).replace(',', ' ').replace('.', ',') }} HTG{% endmacro %}
+{% macro sign(v) %}{% if (v or 0) > 0 %}text-success{% elif (v or 0) < 0 %}text-danger{% endif %}{% endmacro %}
 
-{% block page_title %}Rapports financiers{% endblock %}
-{% block page_subtitle %}Vue d'ensemble des flux financiers de la plateforme{% endblock %}
+{% block title %}Finances - Administration{% endblock %}
+{% block page_title %}Finances{% endblock %}
+{% block page_subtitle %}Tout l'argent qui entre et qui sort, et le revenu du système{% endblock %}
+
+{% block extra_css %}
+<style>
+    .fin-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+    .fin-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; align-items: end; padding: 16px 20px; }
+    .fin-flow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, .8fr); gap: 16px; margin-bottom: 20px; }
+    @media (max-width: 1100px) { .fin-flow { grid-template-columns: minmax(0, 1fr); } }
+    .fin-box { background: #fff; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.06); padding: 18px 20px; border-top: 4px solid #cbd5e1; }
+    .fin-box.in { border-top-color: #059669; } .fin-box.out { border-top-color: #dc2626; } .fin-box.net { border-top-color: #2563eb; }
+    .fin-box h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: #64748b; margin: 0 0 6px; display: flex; gap: 8px; align-items: center; }
+    .fin-box .big { font-size: 28px; font-weight: 800; font-variant-numeric: tabular-nums; margin-bottom: 10px; }
+    .fin-line { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-top: 1px dashed #e2e8f0; font-size: 14px; }
+    .fin-line span:first-child { color: #475569; } .fin-line b { font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .fin-line small { color: #94a3b8; font-weight: 400; }
+    .fin-note { font-size: 12px; color: #64748b; margin-top: 8px; line-height: 1.5; }
+    .fin-section { font-size: 15px; font-weight: 800; color: #0f172a; margin: 26px 0 12px; display: flex; gap: 8px; align-items: center; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    tr.current td { background: #f0fdf4; }
+    #monthTable td:first-child, #monthTable th:first-child { white-space: nowrap; }
+    tr.total td { font-weight: 800; background: #f8fafc; border-top: 2px solid #cbd5e1; }
+    .stat-value.small { font-size: 20px; }
+    .fin-stats { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)) !important; }
+    .stat-help { font-size: 11px; color: #94a3b8; margin-top: 4px; }
+</style>
+{% endblock %}
 
 {% block content %}
-<!-- ==================== FILTRES PÉRIODE ==================== -->
+<!-- ==================== PÉRIODE ==================== -->
 <div class="table-container mb-3">
     <div class="table-header">
-        <div class="title"><i class="fas fa-calendar"></i> Période</div>
-        <div class="actions">
-            <button class="btn btn-sm btn-secondary" onclick="exportReport()">
-                <i class="fas fa-file-export"></i> Exporter
-            </button>
+        <div class="title"><i class="fas fa-calendar"></i> Période : du {{ start_date }} au {{ end_date }}</div>
+        <div class="actions fin-presets">
+            {% set p = presets %}
+            <a class="btn btn-sm btn-secondary" href="?start_date={{ p.month[0] }}&end_date={{ p.month[1] }}&year={{ year }}">Ce mois</a>
+            <a class="btn btn-sm btn-secondary" href="?start_date={{ p.last_month[0] }}&end_date={{ p.last_month[1] }}&year={{ year }}">Mois dernier</a>
+            <a class="btn btn-sm btn-secondary" href="?start_date={{ p.days30[0] }}&end_date={{ p.days30[1] }}&year={{ year }}">30 jours</a>
+            <a class="btn btn-sm btn-secondary" href="?start_date={{ p.year[0] }}&end_date={{ p.year[1] }}&year={{ year }}">Cette année</a>
+            <a class="btn btn-sm btn-primary" href="/admin/api/reports/financial/export?start_date={{ start_date }}&end_date={{ end_date }}&year={{ year }}">
+                <i class="fas fa-file-excel"></i> Exporter (Excel)
+            </a>
         </div>
     </div>
-    <div style="padding: 16px 20px;">
-        <form method="GET" action="{{ url_for('admin_reports_financial') }}" class="grid-3">
-            <div class="form-group" style="margin-bottom: 0;">
-                <label>Du</label>
-                <input type="date" name="start_date" class="form-control" value="{{ start_date }}">
-            </div>
-            <div class="form-group" style="margin-bottom: 0;">
-                <label>Au</label>
-                <input type="date" name="end_date" class="form-control" value="{{ end_date }}">
-            </div>
-            <div class="form-group" style="margin-bottom: 0;">
-                <label>&nbsp;</label>
-                <button type="submit" class="btn btn-primary w-full">
-                    <i class="fas fa-filter"></i> Appliquer
-                </button>
-            </div>
-        </form>
+    <form method="GET" action="{{ url_for('admin_reports_financial') }}" class="fin-filters">
+        <div class="form-group" style="margin-bottom:0;"><label>Du</label><input type="date" name="start_date" class="form-control" value="{{ start_date }}"></div>
+        <div class="form-group" style="margin-bottom:0;"><label>Au</label><input type="date" name="end_date" class="form-control" value="{{ end_date }}"></div>
+        <div class="form-group" style="margin-bottom:0;"><label>Année (revenu par mois)</label>
+            <select name="year" class="form-control">{% for y in years %}<option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y }}</option>{% endfor %}</select>
+        </div>
+        <button type="submit" class="btn btn-primary"><i class="fas fa-filter"></i> Afficher</button>
+    </form>
+</div>
+
+<!-- ==================== ENTRÉES / SORTIES ==================== -->
+<div class="fin-flow">
+    <div class="fin-box in">
+        <h3><i class="fas fa-arrow-down text-success"></i> Argent qui entre</h3>
+        <div class="big text-success" id="finIn">{{ htg(period['in'].total) }}</div>
+        <div class="fin-line"><span>Ventes de tickets au guichet <small>({{ period['in'].ticket_sales_count }})</small></span><b>{{ htg(period['in'].ticket_sales) }}</b></div>
+        {% if period['in'].recharges %}<div class="fin-line"><span>Recharges de tickets</span><b>{{ htg(period['in'].recharges) }}</b></div>{% endif %}
+        <div class="fin-line"><span>Dépôts en espèces sur comptes</span><b>{{ htg(period['in'].deposits_cash) }}</b></div>
+        <div class="fin-line"><span>Dépôts MonCash / NatCash / autres</span><b>{{ htg(period['in'].deposits_mobile) }}</b></div>
+    </div>
+    <div class="fin-box out">
+        <h3><i class="fas fa-arrow-up text-danger"></i> Argent qui sort</h3>
+        <div class="big text-danger" id="finOut">{{ htg(period['out'].total) }}</div>
+        <div class="fin-line"><span>Paiements des tickets au guichet <small>({{ period['out'].ticket_payouts_count }} paiement(s), partiels compris)</small></span><b id="outPayouts">{{ htg(period['out'].ticket_payouts) }}</b></div>
+        {% if period['out'].cancel_refunds %}<div class="fin-line"><span>Soldes rendus à l'annulation de tickets</span><b>{{ htg(period['out'].cancel_refunds) }}</b></div>{% endif %}
+        <div class="fin-line"><span>Retraits des comptes joueurs</span><b>{{ htg(period['out'].withdrawals) }}</b></div>
+        <div class="fin-line"><span>Écarts de caisse <small>({{ period.cash_gaps_count }} session(s))</small></span><b class="{{ sign(period.cash_gaps) }}">{{ htg(period.cash_gaps) }}</b></div>
+    </div>
+    <div class="fin-box net">
+        <h3><i class="fas fa-balance-scale" style="color:#2563eb"></i> Solde de la période</h3>
+        <div class="big {{ sign(period.cash_flow) }}" id="finFlow">{{ htg(period.cash_flow) }}</div>
+        <div class="fin-note">Entrées moins sorties. Une partie de cet argent appartient encore aux joueurs (soldes de tickets et de comptes non dépensés) : voir « Situation maintenant ».</div>
     </div>
 </div>
 
-<!-- ==================== RÉSUMÉ ==================== -->
-<div class="stats-grid">
-    <div class="stat-card">
-        <div class="stat-icon green"><i class="fas fa-arrow-down"></i></div>
-        <div class="stat-label">Dépôts</div>
-        <div class="stat-value">{{ summary.deposits|format_number }} HTG</div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-icon red"><i class="fas fa-arrow-up"></i></div>
-        <div class="stat-label">Retraits</div>
-        <div class="stat-value">{{ summary.withdrawals|format_number }} HTG</div>
-    </div>
+<!-- ==================== REVENU ==================== -->
+<div class="fin-section"><i class="fas fa-coins" style="color:#d97706"></i> Revenu du système sur la période</div>
+<div class="stats-grid fin-stats">
     <div class="stat-card">
         <div class="stat-icon orange"><i class="fas fa-dice"></i></div>
-        <div class="stat-label">Mises</div>
-        <div class="stat-value">{{ summary.bets_volume|format_number }} HTG</div>
+        <div class="stat-label">Mises des joueurs</div>
+        <div class="stat-value small">{{ htg(period.stakes) }}</div>
+        <div class="stat-help">paris réglés, tous jeux</div>
     </div>
     <div class="stat-card">
         <div class="stat-icon purple"><i class="fas fa-trophy"></i></div>
-        <div class="stat-label">Gains distribués</div>
-        <div class="stat-value">{{ summary.wins|format_number }} HTG</div>
+        <div class="stat-label">Gains payés aux joueurs</div>
+        <div class="stat-value small" id="finWins">{{ htg(period.wins_paid) }}</div>
+        <div class="stat-help">gains des paris de la période déjà remis au guichet</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon orange"><i class="fas fa-hourglass-half"></i></div>
+        <div class="stat-label">Gains encore dus</div>
+        <div class="stat-value small" id="finWinsDue" style="color:#d97706">{{ htg(period.wins_due) }}</div>
+        <div class="stat-help">tickets gagnants pas encore encaissés{% if period.wins_split.accounts %} + gains sur comptes joueurs{% endif %}</div>
     </div>
     <div class="stat-card">
         <div class="stat-icon blue"><i class="fas fa-chart-line"></i></div>
-        <div class="stat-label">Revenu net</div>
-        <div class="stat-value">{{ summary.net_revenue|format_number }} HTG</div>
+        <div class="stat-label">Revenu (mises − gains payés − dus)</div>
+        <div class="stat-value small {{ sign(period.revenue) }}" id="finRevenue">{{ htg(period.revenue) }}</div>
+        <div class="stat-help">marge {{ period.margin }} %</div>
     </div>
     <div class="stat-card">
-        <div class="stat-icon green"><i class="fas fa-percentage"></i></div>
-        <div class="stat-label">Marge (edge)</div>
-        <div class="stat-value">{{ summary.edge }}%</div>
+        <div class="stat-icon red"><i class="fas fa-gift"></i></div>
+        <div class="stat-label">Bonus offerts</div>
+        <div class="stat-value small">{{ htg(period.bonus) }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon purple"><i class="fas fa-user-tie"></i></div>
+        <div class="stat-label">Commissions des agents</div>
+        <div class="stat-value small" id="finCommissions">{{ htg(period.commissions) }}</div>
+        <div class="stat-help">% de leurs ventes</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon green"><i class="fas fa-sack-dollar"></i></div>
+        <div class="stat-label">Revenu net</div>
+        <div class="stat-value small {{ sign(period.net_revenue) }}" id="finNet">{{ htg(period.net_revenue) }}</div>
+        <div class="stat-help">revenu − bonus − commissions</div>
     </div>
 </div>
 
-<!-- ==================== GRAPHIQUE ==================== -->
+{% set ws = period.wins_split %}
+<div class="fin-box" style="margin:0 0 20px;border-top-color:#7c3aed;">
+    <h3><i class="fas fa-trophy" style="color:#7c3aed"></i> Gains gagnés sur la période : où en sont-ils ?</h3>
+    <div class="fin-line"><span>Payés au guichet <small>(paiement partiel : au prorata du solde du ticket)</small></span><b class="text-success" id="winsPaid">{{ htg(ws.paid) }}</b></div>
+    <div class="fin-line"><span>Encore dus <small>(tickets gagnants encore valables, pas encore encaissés)</small></span><b style="color:#d97706" id="winsDue">{{ htg(ws.due) }}</b></div>
+    <div class="fin-line"><span>Sur les comptes joueurs <small>(dus tant que le joueur ne les a pas retirés)</small></span><b style="color:#d97706" id="winsAccounts">{{ htg(ws.accounts) }}</b></div>
+    <div class="fin-line"><span>Jamais réclamés <small>(tickets expirés ou annulés : restent à la maison, comptés dans le revenu)</small></span><b style="color:#64748b" id="winsUnclaimed">{{ htg(ws.unclaimed) }}</b></div>
+    <div class="fin-line" style="border-top:2px solid #cbd5e1;"><span><b>Total des gains gagnés</b></span><b>{{ htg(period.wins) }}</b></div>
+    <div class="fin-note">Revenu = mises − gains payés − gains encore dus (les gains dus restent une dette envers les joueurs ; les gains jamais
+        réclamés n'en sont plus une). Cette répartition suit la date des PARIS. « Argent qui sort » suit la date de chaque PAIEMENT
+        (un gain de fin de mois peut être payé le mois suivant) et comprend tout le solde payé du ticket : les deux montants peuvent donc différer.</div>
+</div>
+
 <div class="table-container mb-3">
-    <div class="table-header">
-        <div class="title"><i class="fas fa-chart-area"></i> Évolution journalière</div>
-    </div>
-    <div style="padding: 20px;">
-        <canvas id="financialChart" height="90"></canvas>
-    </div>
-</div>
-
-<!-- ==================== DÉTAIL JOURNALIER ==================== -->
-<div class="table-container">
-    <div class="table-header">
-        <div class="title"><i class="fas fa-table"></i> Détail par jour</div>
-    </div>
+    <div class="table-header"><div class="title"><i class="fas fa-gamepad"></i> Revenu par jeu</div></div>
     <div class="table-responsive">
         <table>
-            <thead>
-                <tr>
-                    <th>Date</th>
-                    <th>Dépôts</th>
-                    <th>Retraits</th>
-                    <th>Mises</th>
-                    <th>Gains</th>
-                    <th>Net</th>
-                    <th>Edge</th>
-                </tr>
-            </thead>
+            <thead><tr><th>Jeu</th><th class="num">Paris</th><th class="num">Mises</th><th class="num">Gains (payés + dus)</th><th class="num">Revenu</th><th class="num">Marge</th></tr></thead>
             <tbody>
-                {% for day in daily_data %}
-                <tr>
-                    <td>{{ day.date }}</td>
-                    <td class="text-success">{{ day.deposits|format_number }} HTG</td>
-                    <td class="text-danger">{{ day.withdrawals|format_number }} HTG</td>
-                    <td>{{ day.bets|format_number }} HTG</td>
-                    <td>{{ day.wins|format_number }} HTG</td>
-                    <td class="{% if day.net >= 0 %}text-success{% else %}text-danger{% endif %}" style="font-weight: 600;">
-                        {{ day.net|format_number }} HTG
-                    </td>
-                    <td>{{ day.edge }}%</td>
-                </tr>
+                {% for g in period.games %}
+                <tr><td><b>{{ g.label }}</b></td><td class="num">{{ g.bets }}</td><td class="num">{{ htg(g.stakes) }}</td><td class="num">{{ htg(g.wins - g.unclaimed) }}</td>
+                    <td class="num {{ sign(g.revenue) }}"><b>{{ htg(g.revenue) }}</b></td><td class="num">{{ g.margin }} %</td></tr>
                 {% else %}
-                <tr><td colspan="7" class="text-center text-muted" style="padding: 40px;">Aucune donnée pour cette période</td></tr>
+                <tr><td colspan="6" class="text-center text-muted" style="padding:30px;">Aucun pari réglé sur cette période</td></tr>
                 {% endfor %}
             </tbody>
         </table>
     </div>
 </div>
+
+<!-- ==================== PAR MOIS ==================== -->
+<div class="fin-section"><i class="fas fa-calendar-alt" style="color:#2563eb"></i> Revenu du système par mois — {{ year }}</div>
+<div class="table-container mb-3">
+    <div style="padding:20px;"><canvas id="monthChart" height="80"></canvas></div>
+    <div class="table-responsive">
+        <table id="monthTable">
+            <thead><tr><th>Mois</th><th class="num">Entrées</th><th class="num">Sorties</th><th class="num">Solde</th><th class="num">Mises</th><th class="num">Gains payés</th><th class="num">Gains dus</th><th class="num">Revenu</th><th class="num">Bonus</th><th class="num">Commissions</th><th class="num">Revenu net</th><th class="num">Marge</th></tr></thead>
+            <tbody>
+                {% for m in months %}
+                <tr class="{% if m.current %}current{% endif %}">
+                    <td><b>{{ m.label }}</b>{% if m.current %} <span class="badge info">en cours</span>{% endif %}</td>
+                    <td class="num text-success">{{ htg(m['in'].total) }}</td><td class="num text-danger">{{ htg(m['out'].total) }}</td>
+                    <td class="num {{ sign(m.cash_flow) }}">{{ htg(m.cash_flow) }}</td>
+                    <td class="num">{{ htg(m.stakes) }}</td><td class="num">{{ htg(m.wins_paid) }}</td><td class="num" style="color:#d97706">{{ htg(m.wins_due) }}</td>
+                    <td class="num {{ sign(m.revenue) }}"><b>{{ htg(m.revenue) }}</b></td><td class="num">{{ htg(m.bonus) }}</td><td class="num">{{ htg(m.commissions) }}</td>
+                    <td class="num {{ sign(m.net_revenue) }}"><b>{{ htg(m.net_revenue) }}</b></td><td class="num">{{ m.margin }} %</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="12" class="text-center text-muted" style="padding:30px;">Aucune donnée pour {{ year }}</td></tr>
+                {% endfor %}
+                {% if months %}
+                <tr class="total">
+                    <td>Total {{ year }}</td><td class="num">{{ htg(year_totals['in']) }}</td><td class="num">{{ htg(year_totals.out) }}</td>
+                    <td class="num">{{ htg(year_totals.cash_flow) }}</td><td class="num">{{ htg(year_totals.stakes) }}</td><td class="num">{{ htg(year_totals.wins_paid) }}</td><td class="num">{{ htg(year_totals.wins_due) }}</td>
+                    <td class="num {{ sign(year_totals.revenue) }}">{{ htg(year_totals.revenue) }}</td><td class="num">{{ htg(year_totals.bonus) }}</td><td class="num">{{ htg(year_totals.commissions) }}</td>
+                    <td class="num {{ sign(year_totals.net_revenue) }}">{{ htg(year_totals.net_revenue) }}</td><td class="num">{{ year_totals.margin }} %</td>
+                </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ==================== PAR BUREAU ==================== -->
+<div class="fin-section"><i class="fas fa-store" style="color:#059669"></i> Argent par bureau sur la période</div>
+<div class="table-container mb-3">
+    <div class="table-responsive">
+        <table>
+            <thead><tr><th>Bureau</th><th class="num">Ventes tickets</th><th class="num">Dépôts espèces</th><th class="num">Gains payés</th><th class="num">Retraits espèces</th><th class="num">Entrées</th><th class="num">Sorties</th><th class="num">Solde</th><th class="num">Écarts caisse</th></tr></thead>
+            <tbody>
+                {% for b in bureaus %}
+                <tr><td><b>{{ b.bureau }}</b></td><td class="num">{{ htg(b.ticket_sales) }}</td><td class="num">{{ htg(b.deposits) }}</td>
+                    <td class="num">{{ htg(b.ticket_payouts) }}</td><td class="num">{{ htg(b.withdrawals) }}</td>
+                    <td class="num text-success">{{ htg(b['in']) }}</td><td class="num text-danger">{{ htg(b.out) }}</td>
+                    <td class="num {{ sign(b.cash_flow) }}"><b>{{ htg(b.cash_flow) }}</b></td><td class="num {{ sign(b.cash_gaps) }}">{{ htg(b.cash_gaps) }}</td></tr>
+                {% else %}
+                <tr><td colspan="9" class="text-center text-muted" style="padding:30px;">Aucun mouvement au guichet sur cette période</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ==================== COMMISSIONS DES AGENTS ==================== -->
+<div class="fin-section"><i class="fas fa-user-tie" style="color:#7c3aed"></i> Commissions des agents sur la période</div>
+<div class="table-container mb-3">
+    <div class="table-responsive">
+        <table id="commissionTable">
+            <thead><tr><th>Agent</th><th>Téléphone</th><th class="num">Taux</th><th class="num">Ventes</th><th class="num">Commission</th></tr></thead>
+            <tbody>
+                {% for a in agent_commissions %}
+                <tr><td><a href="/admin/agents/{{ a.agent_id }}"><b>{{ a.agent }}</b></a></td><td style="font-family:monospace">{{ a.phone }}</td>
+                    <td class="num">{{ ('%g' % a.rate).replace('.', ',') }} %{% if a.custom %} <span class="badge info">perso</span>{% endif %}</td>
+                    <td class="num">{{ htg(a.sales) }}</td><td class="num"><b>{{ htg(a.commission) }}</b></td></tr>
+                {% else %}
+                <tr><td colspan="5" class="text-center text-muted" style="padding:30px;">Aucun agent</td></tr>
+                {% endfor %}
+                {% if agent_commissions %}
+                <tr class="total"><td colspan="3">Total</td><td class="num">{{ htg(agent_commissions|sum(attribute='sales')) }}</td>
+                    <td class="num">{{ htg(agent_commissions|sum(attribute='commission')) }}</td></tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+    <div class="fin-note" style="padding:0 20px 14px;">Commission = taux × ventes (mises des paris encaissés par l'agent, hors paris remboursés). Le taux par défaut et les taux personnels se règlent dans <a href="/admin/agents">Agents</a>.</div>
+</div>
+
+<!-- ==================== SITUATION MAINTENANT ==================== -->
+<div class="fin-section"><i class="fas fa-clock" style="color:#7c3aed"></i> Situation maintenant</div>
+<div class="stats-grid fin-stats">
+    <div class="stat-card">
+        <div class="stat-icon green"><i class="fas fa-cash-register"></i></div>
+        <div class="stat-label">Espèces dans les caisses ouvertes</div>
+        <div class="stat-value small">{{ htg(snapshot.cash_in_drawers) }}</div>
+        <div class="stat-help">{{ snapshot.open_sessions }} session(s) ouverte(s)</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon orange"><i class="fas fa-ticket-alt"></i></div>
+        <div class="stat-label">Dû sur tickets actifs</div>
+        <div class="stat-value small">{{ htg(snapshot.tickets_due) }}</div>
+        <div class="stat-help">{{ snapshot.tickets_due_count }} ticket(s) avec un solde</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon blue"><i class="fas fa-wallet"></i></div>
+        <div class="stat-label">Soldes des comptes joueurs</div>
+        <div class="stat-value small">{{ htg(snapshot.wallets_due) }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon red"><i class="fas fa-hand-holding-usd"></i></div>
+        <div class="stat-label">Total dû aux joueurs</div>
+        <div class="stat-value small">{{ htg(snapshot.players_due) }}</div>
+        <div class="stat-help">+ {{ htg(snapshot.pending_stakes) }} de mises en attente de tirage</div>
+    </div>
+</div>
+
+{% if daily %}
+<div class="table-container mb-3">
+    <div class="table-header"><div class="title"><i class="fas fa-chart-area"></i> Jour par jour sur la période</div></div>
+    <div style="padding:20px;"><canvas id="dailyChart" height="80"></canvas></div>
+</div>
+{% endif %}
+
+<div class="fin-note" style="margin-bottom:24px;">
+    <b>Comment c'est calculé :</b> les entrées sont les ventes de tickets au guichet (date de vente) et les dépôts terminés sur les comptes joueurs ;
+    les sorties sont les gains payés sur tickets (date du paiement) et les retraits terminés. Le revenu est la différence entre les mises et les gains des paris
+    réglés (Keno, Lucky6, Horse Races et l'historique Lucky Wheel), que le joueur ait payé en espèces ou avec son compte ; le revenu net retire les bonus et les commissions des agents. Les mois suivent l'heure d'Haïti.
+</div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
-    const chartData = {{ chart_data|tojson }};
-
-    new Chart(document.getElementById('financialChart').getContext('2d'), {
-        type: 'line',
-        data: {
-            labels: chartData.labels,
-            datasets: [
-                {
-                    label: 'Dépôts',
-                    data: chartData.deposits,
-                    borderColor: '#059669',
-                    backgroundColor: 'rgba(5, 150, 105, 0.1)',
-                    fill: true,
-                    tension: 0.4
-                },
-                {
-                    label: 'Retraits',
-                    data: chartData.withdrawals,
-                    borderColor: '#ef4444',
-                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                    fill: true,
-                    tension: 0.4
-                },
-                {
-                    label: 'Net',
-                    data: chartData.net,
-                    borderColor: '#3b82f6',
-                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
-                    fill: true,
-                    tension: 0.4
-                }
-            ]
-        },
-        options: {
-            responsive: true,
-            plugins: {
-                legend: { position: 'bottom', labels: { usePointStyle: true, padding: 20 } }
+(function () {
+    const months = {{ months|tojson }};
+    const daily = {{ daily|tojson }};
+    const fmt = v => Number(v).toLocaleString('fr-FR', { maximumFractionDigits: 0 }) + ' HTG';
+    const axis = { ticks: { callback: v => Number(v).toLocaleString('fr-FR') } };
+    if (window.Chart && months.length) {
+        new Chart(document.getElementById('monthChart'), {
+            type: 'bar',
+            data: {
+                labels: months.map(m => m.label.split(' ')[0].slice(0, 4) + '.'),
+                datasets: [
+                    { label: 'Entrées', data: months.map(m => m.in.total), backgroundColor: '#10b981', borderRadius: 4 },
+                    { label: 'Sorties', data: months.map(m => m.out.total), backgroundColor: '#f87171', borderRadius: 4 },
+                    { label: 'Revenu', data: months.map(m => m.revenue), type: 'line', borderColor: '#2563eb', backgroundColor: '#2563eb', tension: .3 },
+                ],
             },
-            scales: {
-                y: {
-                    ticks: {
-                        callback: function(value) { return value.toLocaleString() + ' HTG'; }
-                    }
-                }
-            }
-        }
-    });
-
-    function exportReport() {
-        const params = new URLSearchParams({ start_date: '{{ start_date }}', end_date: '{{ end_date }}', format: 'excel' });
-        window.location.href = '/admin/api/reports/financial/export?' + params.toString();
+            options: { responsive: true, plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: c => c.dataset.label + ' : ' + fmt(c.raw) } } }, scales: { y: axis } },
+        });
     }
+    if (window.Chart && daily.length) {
+        new Chart(document.getElementById('dailyChart'), {
+            type: 'line',
+            data: {
+                labels: daily.map(d => d.date),
+                datasets: [
+                    { label: 'Entrées', data: daily.map(d => d.in), borderColor: '#059669', backgroundColor: 'rgba(5,150,105,.1)', fill: true, tension: .3 },
+                    { label: 'Sorties', data: daily.map(d => d.out), borderColor: '#dc2626', backgroundColor: 'rgba(220,38,38,.08)', fill: true, tension: .3 },
+                    { label: 'Revenu', data: daily.map(d => d.revenue), borderColor: '#2563eb', tension: .3 },
+                ],
+            },
+            options: { responsive: true, plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: c => c.dataset.label + ' : ' + fmt(c.raw) } } }, scales: { y: axis } },
+        });
+    }
+})();
 </script>
 {% endblock %}

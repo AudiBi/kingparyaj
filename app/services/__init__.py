@@ -4,7 +4,7 @@
 Tous les services sont organisés par domaine fonctionnel :
 - Authentification et utilisateurs
 - Portefeuille et transactions
-- Jeux (Keno, Lucky Wheel)
+- Jeux (Keno, Lucky6, Horse Races)
 - Tickets et bureaux
 - Audit et conformité LEH
 - Notifications
@@ -25,7 +25,6 @@ from app.services.transaction_service import TransactionService
 
 # ========== Services de jeux ==========
 from app.services.keno_service import KenoService
-from app.services.lucky_service import LuckyWheelService
 
 # ========== Services de gestion des tickets et bureaux ==========
 from app.services.ticket_service import TicketService
@@ -56,7 +55,6 @@ __all__ = [
     
     # Jeux
     "KenoService",
-    "LuckyWheelService",
     
     # Bureaux & Tickets
     "TicketService",
@@ -128,13 +126,6 @@ class ServiceFactory:
         if "keno" not in self._services:
             self._services["keno"] = KenoService(self.db, self.redis)
         return self._services["keno"]
-    
-    @property
-    def lucky(self) -> LuckyWheelService:
-        """Service Lucky Wheel"""
-        if "lucky" not in self._services:
-            self._services["lucky"] = LuckyWheelService(self.db, self.redis)
-        return self._services["lucky"]
     
     @property
     def ticket(self) -> TicketService:

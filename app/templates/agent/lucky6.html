@@ -396,7 +396,7 @@
             $('myBets').innerHTML = myBets.map((b, i) => `<tr${b.status === 'won' || b.status === 'WON' ? ' style="background:#ecfdf5"' : ''}>
                 <td>${localTime(b.placed_at)}</td><td>${b.ticket_number ? '<b style="font-family:monospace">' + esc(b.ticket_number) + '</b>' : '<span class="text-muted">Compte</span>'}</td><td>#${b.race_number || '—'}</td><td>${betLabel(b)}</td>
                 <td>${money(b.stake)}</td><td>${betResult(b)}</td>
-                <td><button class="btn btn-secondary btn-sm" data-reprint="${esc(b.bet_id)}" title="Réimprimer"><i class="fas fa-print"></i></button></td>
+                <td><button class="btn btn-secondary btn-sm" data-reprint="${esc(b.bet_id)}" title="Réimprimer"><i class="fas fa-print"></i></button>${(b.status === 'won' || b.status === 'WON') && b.ticket_number ? ' <a class="btn btn-primary btn-sm" href="/agent/gains?ticket=' + encodeURIComponent(b.ticket_number) + '" title="Payer les gains"><i class="fas fa-hand-holding-usd"></i> Payer</a>' : ''}</td>
             </tr>`).join('') || '<tr><td colspan="7" class="text-muted">Aucun pari</td></tr>';
             filterTickets();
             updateBoardPicks();

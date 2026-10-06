@@ -260,7 +260,7 @@ async def test_create_ticket_and_view_and_qr(agent_client, make_agent):
     assert ticket_number in page.text
 
 
-@pytest.mark.parametrize("path", ["/agent/history", "/agent/reports", "/agent/profile", "/agent/keno", "/agent/lucky"])
+@pytest.mark.parametrize("path", ["/agent/history", "/agent/reports", "/agent/profile", "/agent/keno"])
 @pytest.mark.asyncio
 async def test_agent_pages_render_without_error(agent_client, make_agent, path):
     """Détecte toute régression de type TemplateNotFound/erreur de contexte
@@ -285,3 +285,13 @@ async def test_agent_logout_clears_cookie(agent_client, make_agent):
 
     dashboard = await agent_client.get("/agent/dashboard", follow_redirects=False)
     assert dashboard.status_code in (401, 303)
+
+
+@pytest.mark.asyncio
+async def test_lucky_wheel_is_removed(agent_client, make_agent):
+    """Lucky Wheel retirée du projet : plus de page ni d'API de jeu."""
+    agent = await make_agent()
+    await _login(agent_client, agent)
+    assert (await agent_client.get("/agent/lucky")).status_code == 404
+    menu = (await agent_client.get("/agent/keno")).text
+    assert "Lucky Wheel" not in menu

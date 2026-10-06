@@ -25,10 +25,6 @@ from app.schemas.admin import (
     AdminKenoConfig,
     AdminKenoPaytableUpdate,
     
-    # Lucky
-    LuckyWheelSegment,
-    AdminLuckyConfig,
-    
     # Transactions
     AdminTransactionFilter,
     
@@ -104,15 +100,6 @@ from app.schemas.keno import (
     KenoResultResponse,
     KenoStatisticsResponse,
 )
-from app.schemas.lucky import (
-    LuckyWheelConfigResponse,
-    LuckyWheelConfigUpdate,
-    LuckySpinRequest,
-    LuckySpinResponse,
-    LuckySpinTicketRequest,
-    LuckyPlayHistoryResponse,
-    LuckyStatisticsResponse,
-)
 from app.schemas.ticket import (
     TicketCreate,
     TicketResponse,
@@ -178,8 +165,6 @@ __all__ = [
     "AdminBureauUpdate",
     "AdminKenoConfig",
     "AdminKenoPaytableUpdate",
-    "LuckyWheelSegment",
-    "AdminLuckyConfig",
     "AdminTransactionFilter",
     "AdminReportRequest",
     "AdminFinancialReport",
@@ -236,14 +221,6 @@ __all__ = [
     "KenoBetTicketCreate",
     "KenoResultResponse",
     "KenoStatisticsResponse",
-    # Lucky
-    "LuckyWheelConfigResponse",
-    "LuckyWheelConfigUpdate",
-    "LuckySpinRequest",
-    "LuckySpinResponse",
-    "LuckySpinTicketRequest",
-    "LuckyPlayHistoryResponse",
-    "LuckyStatisticsResponse",
     # Ticket
     "TicketCreate",
     "TicketResponse",

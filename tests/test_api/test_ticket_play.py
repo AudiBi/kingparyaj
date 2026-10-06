@@ -5,7 +5,7 @@ bureau (ticket), joue avec ce ticket, puis se fait payer en cash.
 Régression pour un bug bloquant trouvé en auditant ce parcours :
 `ticket.status != "ACTIVE"` (chaîne littérale) alors que TicketStatus.ACTIVE
 vaut "active" (minuscule) — un ticket pourtant actif était donc TOUJOURS
-rejeté par POST /keno/ticket-bets et POST /lucky/wheel/spin-ticket, qui
+rejeté par POST /keno/ticket-bets, qui
 répondaient à tort "Ticket expiré ou déjà payé". Les tests ci-dessous
 vérifient qu'un ticket actif est désormais accepté par les deux routes.
 
@@ -21,11 +21,9 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from app.api.v1 import keno as keno_module
-from app.api.v1 import lucky as lucky_module
 from app.core.database import get_db
 from app.core.redis_client import get_redis
 from app.core.security import create_access_token
-from app.models.lucky import LuckyWheelConfig
 from app.services.ticket_service import TicketService
 
 
@@ -33,7 +31,6 @@ from app.services.ticket_service import TicketService
 def ticket_play_app(db_session, fake_redis) -> FastAPI:
     app = FastAPI()
     app.include_router(keno_module.router, prefix="/api/v1")
-    app.include_router(lucky_module.router, prefix="/api/v1")
 
     async def _get_db():
         yield db_session
@@ -114,40 +111,3 @@ async def test_expired_or_paid_ticket_is_still_rejected_by_keno_route(
     assert "inactif" in response.json()["detail"]
 
 
-@pytest.mark.asyncio
-async def test_active_ticket_can_spin_the_lucky_wheel_and_get_paid_out(
-    ticket_play_client, make_agent, make_ticket, db_session, fake_redis
-):
-    agent = await make_agent()
-    ticket = await make_ticket(agent, balance=Decimal("100"))
-
-    # Roue à un seul segment (poids 100%) : résultat déterministe, quel que
-    # soit le tirage aléatoire interne.
-    config = LuckyWheelConfig(
-        name="Roue de test",
-        segments=[{"label": "x2", "multiplier": 2, "weight": 100, "color": "#000000"}],
-        min_bet=Decimal("10"),
-        max_bet=Decimal("10000"),
-        is_active=True,
-        is_default=True,
-    )
-    db_session.add(config)
-    await db_session.flush()
-
-    response = await ticket_play_client.post(
-        "/api/v1/lucky/wheel/spin-ticket",
-        params={"ticket_number": ticket["ticket_number"], "stake": 50},
-        headers=_agent_headers(agent.id),
-    )
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["success"] is True
-    assert data["multiplier"] == 2.0
-    assert data["winnings"] == 100.0
-    # Solde ticket : 100 (initial) - 50 (mise) + 100 (gain x2) = 150
-    assert data["new_balance"] == 150.0
-
-    ticket_service = TicketService(db_session, fake_redis)
-    payout = await ticket_service.payout_ticket(ticket["ticket_number"], agent_id=agent.id)
-    assert payout["amount"] == 150.0

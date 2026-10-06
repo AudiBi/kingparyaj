@@ -97,8 +97,12 @@
                             Keno
                         </label>
                         <label>
-                            <input type="checkbox" name="eligible_games" value="lucky" {% if 'lucky' in promotion.eligible_games %}checked{% endif %}>
-                            Lucky Wheel
+                            <input type="checkbox" name="eligible_games" value="lucky6" {% if 'lucky6' in promotion.eligible_games %}checked{% endif %}>
+                            Lucky6
+                        </label>
+                        <label>
+                            <input type="checkbox" name="eligible_games" value="horse_races" {% if 'horse_races' in promotion.eligible_games %}checked{% endif %}>
+                            Horse Races
                         </label>
                     </div>
                 </div>
@@ -277,7 +281,8 @@
                         <select name="config_allowed_games" class="form-control">
                             <option value="all" ${config.allowed_games === 'all' ? 'selected' : ''}>Tous les jeux</option>
                             <option value="keno" ${config.allowed_games === 'keno' ? 'selected' : ''}>Keno uniquement</option>
-                            <option value="lucky" ${config.allowed_games === 'lucky' ? 'selected' : ''}>Lucky uniquement</option>
+                            <option value="lucky6" ${config.allowed_games === 'lucky6' ? 'selected' : ''}>Lucky6 uniquement</option>
+                            <option value="horse_races" ${config.allowed_games === 'horse_races' ? 'selected' : ''}>Horse Races uniquement</option>
                         </select>
                     </div>
                 `;

@@ -25,6 +25,31 @@
         <div class="stat-label">Bureaux</div>
         <div class="stat-value" style="font-size: 20px; color: #8b5cf6;">{{ stats.bureaus }}</div>
     </div>
+    <div class="stat-card" style="padding: 12px 16px; border-left: 3px solid #059669;">
+        <div class="stat-label">Commission par défaut</div>
+        <div class="stat-value" style="font-size: 20px; color: #059669;" id="defaultCommission">{{ ('%g' % (default_commission or 0)).replace('.', ',') }} %</div>
+        <div style="font-size: 11px; color: #94a3b8;">des ventes · <a href="#" onclick="openModal('commissionModal'); return false;">modifier</a></div>
+    </div>
+</div>
+
+<!-- ==================== MODAL COMMISSION PAR DÉFAUT ==================== -->
+<div class="modal-overlay" id="commissionModal">
+    <div class="modal" style="max-width: 440px;">
+        <div class="modal-header">
+            <h2>Commission par défaut des agents</h2>
+            <button class="modal-close" onclick="closeModal('commissionModal')">&times;</button>
+        </div>
+        <p style="font-size: 14px; color: #475569;">Pourcentage des ventes (mises encaissées par l'agent) versé comme commission.
+            S'applique à tous les agents qui n'ont pas de taux personnel (modifiable dans la fiche de l'agent).</p>
+        <div class="form-group">
+            <label>Taux (%)</label>
+            <input type="number" id="commissionRateInput" class="form-control" min="0" max="50" step="0.01" value="{{ default_commission }}">
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal('commissionModal')">Annuler</button>
+            <button class="btn btn-primary" onclick="saveDefaultCommission()">Enregistrer</button>
+        </div>
+    </div>
 </div>
 
 <!-- ==================== FILTRES ==================== -->
@@ -110,6 +135,7 @@
                     <th>Téléphone</th>
                     <th>Bureau</th>
                     <th>Activité</th>
+                    <th>Commission</th>
                     <th>Statut</th>
                     <th>Date</th>
                     <th style="width: 120px;">Actions</th>
@@ -149,6 +175,12 @@
                         </div>
                     </td>
                     <td>
+                        <div style="font-size: 13px;">
+                            <div><b>{{ ('%g' % (agent.commission_effective or 0)).replace('.', ',') }} %</b>{% if agent.commission_rate is not none %} <span class="badge info">perso</span>{% endif %}</div>
+                            <div style="color: #94a3b8; font-size: 11px;">{{ '{:,.2f}'.format(agent.commission_month or 0).replace(',', ' ').replace('.', ',') }} HTG ce mois</div>
+                        </div>
+                    </td>
+                    <td>
                         {% if agent.is_active %}
                             <span class="badge success"><i class="fas fa-check-circle"></i> Actif</span>
                         {% else %}
@@ -176,7 +208,7 @@
                 </tr>
                 {% else %}
                 <tr>
-                    <td colspan="8" class="text-center text-muted" style="padding: 40px;">
+                    <td colspan="9" class="text-center text-muted" style="padding: 40px;">
                         <i class="fas fa-user-tie" style="font-size: 40px; display: block; margin-bottom: 12px; opacity: 0.3;"></i>
                         Aucun agent trouvé
                         {% if filters.search %}
@@ -278,6 +310,25 @@
 
 {% block extra_js %}
 <script>
+    // ==================== COMMISSION PAR DÉFAUT ====================
+    function saveDefaultCommission() {
+        fetch('/admin/api/agents/commission-default', {
+            method: 'POST',
+            headers: { 'X-CSRFToken': '{{ csrf_token() }}', 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rate: document.getElementById('commissionRateInput').value })
+        })
+        .then(r => r.json().then(data => ({ ok: r.ok, data })))
+        .then(({ ok, data }) => {
+            if (ok && data.success) {
+                showToast(data.message, 'success');
+                setTimeout(() => window.location.reload(), 800);
+            } else {
+                showToast(data.error || data.detail || 'Taux invalide', 'error');
+            }
+        })
+        .catch(() => showToast('Erreur réseau', 'error'));
+    }
+
     // ==================== SÉLECTION TOUS ====================
     function toggleAllAgents() {
         const checked = document.getElementById('selectAll').checked;

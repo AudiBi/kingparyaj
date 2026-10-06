@@ -107,7 +107,7 @@ async def create_ticket(
         player_phone=ticket_data.player_phone,
         balance=ticket_data.amount,
         initial_amount=ticket_data.amount,
-        expires_at=datetime.utcnow() + timedelta(days=7)
+        expires_at=Ticket.end_of_local_day(),  # payable le jour même
     )
     
     db.add(ticket)
@@ -119,7 +119,7 @@ async def create_ticket(
     session.current_balance += ticket_data.amount
     
     # Mettre à jour la caisse du bureau
-    bureau.cash_balance += ticket_data.amount
+    bureau.cash_balance = Bureau.cash_balance + (ticket_data.amount)  # atomique en base
     
     # Audit log
     audit = AuditLog(
@@ -359,7 +359,7 @@ async def recharge_ticket(
     
     # Ajouter au solde
     old_balance = ticket.balance
-    ticket.balance += recharge_data.amount
+    ticket.record_recharge(recharge_data.amount, current_agent.id, session.id)  # entrée d'espèces datée
     
     # Mettre à jour la session de caisse
     session.cash_in_count += 1
@@ -371,7 +371,7 @@ async def recharge_ticket(
         select(Bureau).where(Bureau.id == ticket.bureau_id)
     )
     bureau = bureau_result.scalar_one()
-    bureau.cash_balance += recharge_data.amount
+    bureau.cash_balance = Bureau.cash_balance + (recharge_data.amount)  # atomique en base
     
     # Audit log
     audit = AuditLog(
@@ -476,10 +476,7 @@ async def payout_ticket(
     
     # Marquer comme payé
     old_balance = ticket.balance
-    ticket.status = TicketStatus.PAID
-    ticket.paid_at = datetime.utcnow()
-    ticket.paid_by_agent = current_agent.id
-    ticket.balance = 0
+    ticket.record_payout(amount_to_pay, current_agent.id, session.id)  # paiement daté
     
     # Mettre à jour la session de caisse
     session.cash_out_count += 1
@@ -487,7 +484,7 @@ async def payout_ticket(
     session.current_balance -= amount_to_pay
     
     # Mettre à jour la caisse du bureau
-    bureau.cash_balance -= amount_to_pay
+    bureau.cash_balance = Bureau.cash_balance - (amount_to_pay)  # atomique en base
     
     # Audit log
     audit = AuditLog(
@@ -586,7 +583,7 @@ async def partial_payout_ticket(
     
     # Effectuer le paiement partiel
     old_balance = ticket.balance
-    ticket.balance -= amount
+    ticket.record_payout(amount, current_agent.id, session.id)  # paiement partiel daté ; PAYÉ si solde 0
     
     # Mettre à jour la session
     session.cash_out_count += 1
@@ -594,13 +591,7 @@ async def partial_payout_ticket(
     session.current_balance -= amount
     
     # Mettre à jour la caisse
-    bureau.cash_balance -= amount
-    
-    # Si solde devient nul, marquer comme payé
-    if ticket.balance == 0:
-        ticket.status = TicketStatus.PAID
-        ticket.paid_at = datetime.utcnow()
-        ticket.paid_by_agent = current_agent.id
+    bureau.cash_balance = Bureau.cash_balance - (amount)  # atomique en base
     
     # Audit
     audit = AuditLog(
@@ -686,13 +677,11 @@ async def cancel_ticket(
         select(Bureau).where(Bureau.id == ticket.bureau_id)
     )
     bureau = bureau_result.scalar_one()
-    bureau.cash_balance -= amount_to_refund
+    bureau.cash_balance = Bureau.cash_balance - (amount_to_refund)  # atomique en base
     
-    # Marquer comme annulé
-    ticket.status = TicketStatus.CANCELLED
-    ticket.balance = 0
-    ticket.paid_at = datetime.utcnow()
-    ticket.paid_by_agent = current_admin.id
+    # Marquer comme annulé : solde rendu au joueur, sortie d'espèces datée
+    # (ne plus poser paid_at : un ticket annulé n'est pas un ticket payé)
+    ticket.record_cancellation(current_admin.id)
     
     # Audit (ip_address est NOT NULL en base)
     audit = AuditLog(
@@ -858,15 +847,17 @@ async def get_ticket_statistics(
     created = created_result.one()
     
     # Tickets payés
-    paid_result = await db.execute(
+    from app.models.cash_movement import KIND_PAYOUT, TicketCashMovement
+
+    paid_result = await db.execute(  # chaque paiement daté, partiels compris
         select(
-            func.count(Ticket.id).label("count"),
-            func.coalesce(func.sum(Ticket.initial_amount), 0).label("total")
+            func.count(TicketCashMovement.id).label("count"),
+            func.coalesce(func.sum(TicketCashMovement.amount), 0).label("total")
         ).where(
             and_(
-                Ticket.bureau_id == bureau_id,
-                Ticket.paid_at >= start_date,
-                Ticket.status == TicketStatus.PAID
+                TicketCashMovement.bureau_id == bureau_id,
+                TicketCashMovement.created_at >= start_date,
+                TicketCashMovement.kind == KIND_PAYOUT,
             )
         )
     )

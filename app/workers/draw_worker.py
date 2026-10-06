@@ -1,5 +1,5 @@
 # app/workers/draw_worker.py
-"""Worker pour les tirages automatiques Keno et export Lucky - VERSION COMPLÈTE"""
+"""Worker pour les tirages Keno (partagés) et l'export LEH"""
 
 from celery import Task
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
@@ -18,7 +18,6 @@ from app.core.exceptions import GameException
 from app.core.timezone import now_haiti, now_utc, today_haiti, local_date_start_utc, local_date_end_utc
 from app.workers.celery import celery_app
 from app.models.keno import KenoDraw, KenoBet, KenoDrawStatus, KenoBetStatus
-from app.models.lucky import LuckyPlay
 from app.models.wallet import Wallet
 from app.models.ticket import Ticket
 from app.models.transaction import Transaction, TransactionType, TransactionStatus
@@ -329,104 +328,3 @@ async def _export_draw_results_to_leh_async(date_str: Optional[str] = None):
         raise
 
 
-# ==================== LUCKY - EXPORT LEH ====================
-
-@celery_app.task(
-    name="app.workers.draw_worker.export_lucky_results_to_leh",
-    max_retries=3
-)
-def export_lucky_results_to_leh(start_date: str, end_date: str):
-    """
-    Exporte les résultats Lucky vers la LEH.
-    À exécuter quotidiennement pour la conformité.
-    """
-    loop = asyncio.get_event_loop()
-    if loop.is_running():
-        return loop.create_task(_export_lucky_results_to_leh_async(start_date, end_date))
-    else:
-        return loop.run_until_complete(_export_lucky_results_to_leh_async(start_date, end_date))
-
-
-async def _export_lucky_results_to_leh_async(start_date: str, end_date: str):
-    """Exporte les parties Lucky vers la LEH"""
-    logger.info("📤 Export Lucky vers LEH...")
-    
-    try:
-        async with AsyncSessionLocal() as db:
-            start = local_date_start_utc(start_date)
-            end = local_date_end_utc(end_date)  # exclusive
-            
-            result = await db.execute(
-                select(LuckyPlay)
-                .where(
-                    and_(
-                        LuckyPlay.played_at >= start,
-                        LuckyPlay.played_at < end,
-                        LuckyPlay.is_deleted == False
-                    )
-                )
-            )
-            plays = result.scalars().all()
-            
-            if not plays:
-                logger.info("Aucune partie Lucky à exporter")
-                return
-            
-            export_data = {
-                "game": "lucky_wheel",
-                "period": {
-                    "start": start_date,
-                    "end": end_date
-                },
-                "total_plays": len(plays),
-                "total_stake": sum(float(p.stake) for p in plays),
-                "total_payout": sum(float(p.winnings) for p in plays),
-                "plays": [
-                    {
-                        "play_id": p.id,
-                        "user_id": p.user_id,
-                        "ticket_id": p.ticket_id,
-                        "stake": float(p.stake),
-                        "multiplier": float(p.multiplier),
-                        "winnings": float(p.winnings),
-                        "segment": p.result_segment["label"],
-                        "played_at": p.played_at.isoformat()
-                    }
-                    for p in plays
-                ]
-            }
-            
-            # Envoyer à la LEH
-            # await leh_service.export_lucky(export_data)
-            
-            # Audit log
-            audit = AuditLog(
-                action=AuditAction.DRAW_GENERATED,
-                resource_type="lucky_play",
-                ip_address="0.0.0.0",
-                new_values={"exported_to_leh": True, "count": len(plays)}
-            )
-            db.add(audit)
-            await db.commit()
-            
-            logger.info(f"✅ {len(plays)} parties Lucky exportées vers LEH")
-            
-    except Exception as e:
-        logger.error(f"❌ Erreur export Lucky: {e}")
-        raise
-
-
-@celery_app.task(
-    name="app.workers.draw_worker.export_lucky_daily_to_leh"
-)
-def export_lucky_daily_to_leh():
-    """Export quotidien des parties Lucky vers la LEH (journée d'hier, heure d'Haïti).
-
-    Planifiée à 01:30 heure d'Haïti : on exporte la journée complète de la
-    veille, et non la journée en cours (quasi vide à cette heure-là).
-    """
-    yesterday = today_haiti() - timedelta(days=1)
-    return export_lucky_results_to_leh.delay(
-        yesterday.isoformat(),
-        yesterday.isoformat()
-    )

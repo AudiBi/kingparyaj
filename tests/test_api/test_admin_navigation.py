@@ -32,10 +32,10 @@ def _view_routes():
 
 
 def _api_route_names():
-    from app.api.v1 import admin, agent, auth, horse_races, keno, lucky, payments, reports, tickets, users, wallet
+    from app.api.v1 import admin, agent, auth, horse_races, keno, payments, reports, tickets, users, wallet
 
     names = set()
-    for module in (auth, users, wallet, keno, lucky, tickets, agent, admin, reports, payments, horse_races):
+    for module in (auth, users, wallet, keno, tickets, agent, admin, reports, payments, horse_races):
         names.update(route.name for route in module.router.routes)
     return names
 

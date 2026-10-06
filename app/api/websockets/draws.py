@@ -10,7 +10,6 @@ from datetime import datetime
 from app.core.redis_client import get_redis
 from app.core.database import get_db
 from app.models.keno import KenoDraw
-from app.models.lucky import LuckyPlay
 
 router = APIRouter()
 
@@ -218,6 +217,5 @@ async def websocket_draws(
 
 from app.api.websockets.manager import (  # noqa: E402
     broadcast_draw_result,
-    broadcast_lucky_result,
     broadcast_jackpot_alert,
 )

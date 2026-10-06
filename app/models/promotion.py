@@ -45,7 +45,7 @@ class Promotion(BaseModel):
     min_deposit = Column(Numeric(10, 2), nullable=True)
     max_bonus = Column(Numeric(10, 2), nullable=True)
     wagering_requirement = Column(Integer, default=1, nullable=False)  # Mise x fois le bonus
-    eligible_games = Column(JSON, default=["keno", "lucky"], nullable=False)
+    eligible_games = Column(JSON, default=["keno", "lucky6", "horse_races"], nullable=False)
     
     # ========== Public ciblé ==========
     eligible_countries = Column(JSON, default=["HT"], nullable=False)

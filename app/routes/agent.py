@@ -1,9 +1,10 @@
 # app/routes/agent.py
-"""Routes pour les agents de bureau - panel HTML complet + API Lucky live"""
+"""Routes pour les agents de bureau - panel HTML complet.
 
-import hashlib
+(Lucky Wheel retirée du projet : les parties déjà jouées restent dans
+l'historique et les rapports — table lucky_plays conservée.)"""
+
 import json
-import secrets
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, List, Optional
@@ -34,17 +35,18 @@ from app.core.exceptions import AppException, NotFoundException, ValidationExcep
 from app.config import settings
 from app.models.user import User
 from app.models.enums import UserRole, TicketStatus, TransactionType, KenoDrawStatus, KenoBetStatus, AuditAction
-from app.models.lucky import LuckyPlay, LuckyWheelConfig
+from app.models.lucky import LuckyPlay  # historique seulement (jeu retiré)
 from app.models.bureau import Bureau, CashierSession
 from app.models.ticket import Ticket
 from app.models.transaction import Transaction
 from app.models.keno import KenoDraw, KenoBet
+from app.models.cash_movement import KIND_PAYOUT, KIND_RECHARGE, MONEY_OUT_KINDS, TicketCashMovement
 from app.schemas.wallet import DepositRequest, WithdrawRequest
 from app.services.wallet_service import WalletService
 from app.services.ticket_service import TicketService
 from app.services.user_service import UserService
 from app.services.audit_service import AuditService
-from app.api.websockets.manager import manager, broadcast_lucky_result
+from app.api.websockets.manager import manager
 
 router = APIRouter(prefix="/agent", tags=["Agent"])
 
@@ -107,13 +109,17 @@ templates.env.filters["tojson"] = lambda v, indent=None: htmlsafe_json_dumps(
 
 # ==================== HELPERS ====================
 
-async def _get_open_session(db: AsyncSession, agent_id: str) -> Optional[CashierSession]:
-    result = await db.execute(
-        select(CashierSession).where(
-            and_(CashierSession.agent_id == agent_id, CashierSession.status == "OPEN")
-        )
+async def _get_open_session(db: AsyncSession, agent_id: str, for_update: bool = False) -> Optional[CashierSession]:
+    """Session de caisse ouverte de l'agent. for_update=True pour toute opération
+    qui modifie la caisse : la ligne est verrouillée, deux opérations simultanées
+    (vente + paiement, double clic…) ne peuvent plus écraser le solde du tiroir.
+    Ordre des verrous partout : session de caisse, puis ticket."""
+    stmt = select(CashierSession).where(
+        and_(CashierSession.agent_id == agent_id, CashierSession.status == "OPEN")
     )
-    return result.scalar_one_or_none()
+    if for_update:
+        stmt = stmt.with_for_update()
+    return (await db.execute(stmt)).scalar_one_or_none()
 
 
 def _agent_view(agent: User, bureau: Optional[Bureau]) -> dict:
@@ -276,11 +282,31 @@ async def agent_logout(
 
 # ==================== DASHBOARD ====================
 
+def _require_cash(session: CashierSession, amount) -> None:
+    """Même règle partout (page Payer les gains, Caisse, API) : on ne paie pas
+    plus que ce qu'il y a dans le tiroir de l'agent."""
+    available = Decimal(str(session.current_balance or 0))
+    if Decimal(str(amount)) > available:
+        raise AppException(400, f"Caisse insuffisante : {available:.2f} HTG disponibles pour payer {Decimal(str(amount)):.2f} HTG",
+                           "CASH_INSUFFICIENT")
+
+
+async def _payout_movements(db: AsyncSession, *where, limit: Optional[int] = None):
+    """Paiements datés (et soldes rendus à l'annulation) avec leur ticket, du plus récent au plus ancien."""
+    stmt = (select(TicketCashMovement, Ticket).join(Ticket, Ticket.id == TicketCashMovement.ticket_id)
+            .where(TicketCashMovement.kind.in_(MONEY_OUT_KINDS), *where)
+            .order_by(TicketCashMovement.created_at.desc()))
+    if limit:
+        stmt = stmt.limit(limit)
+    return (await db.execute(stmt)).all()
+
+
 @router.get("/dashboard", response_class=HTMLResponse)
 async def agent_dashboard(
     request: Request,
     current_agent: User = Depends(get_current_agent),
     db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
 ):
     base = await _base_context(db, current_agent, "dashboard")
     session = base["session_open"]
@@ -296,12 +322,14 @@ async def agent_dashboard(
                 KenoBet.agent_id == current_agent.id, KenoBet.placed_at >= start, KenoBet.placed_at < end
             )
         )
-        p = await db.execute(
-            select(func.count(LuckyPlay.id)).where(
-                LuckyPlay.agent_id == current_agent.id, LuckyPlay.played_at >= start, LuckyPlay.played_at < end
+        from app.models.game import GameBet
+
+        g = await db.execute(
+            select(func.count(GameBet.id)).where(
+                GameBet.agent_id == current_agent.id, GameBet.placed_at >= start, GameBet.placed_at < end
             )
         )
-        return (b.scalar() or 0) + (p.scalar() or 0)
+        return (b.scalar() or 0) + (g.scalar() or 0)  # Keno + Lucky6 + Horse Races
 
     async def _cash_in(start, end) -> Decimal:
         t = await db.execute(
@@ -317,12 +345,19 @@ async def agent_dashboard(
                 Transaction.created_at < end,
             )
         )
-        return Decimal(str(t.scalar() or 0)) + Decimal(str(tx.scalar() or 0))
+        r = await db.execute(  # recharges de tickets encaissées par l'agent
+            select(func.coalesce(func.sum(TicketCashMovement.amount), 0)).where(
+                TicketCashMovement.agent_id == current_agent.id, TicketCashMovement.kind == KIND_RECHARGE,
+                TicketCashMovement.created_at >= start, TicketCashMovement.created_at < end,
+            )
+        )
+        return Decimal(str(t.scalar() or 0)) + Decimal(str(tx.scalar() or 0)) + Decimal(str(r.scalar() or 0))
 
     async def _cash_out(start, end) -> Decimal:
-        t = await db.execute(
-            select(func.coalesce(func.sum(Ticket.initial_amount), 0)).where(
-                Ticket.paid_by_agent == current_agent.id, Ticket.paid_at >= start, Ticket.paid_at < end
+        t = await db.execute(  # chaque paiement daté (partiels compris) et soldes rendus à l'annulation
+            select(func.coalesce(func.sum(TicketCashMovement.amount), 0)).where(
+                TicketCashMovement.agent_id == current_agent.id, TicketCashMovement.kind.in_(MONEY_OUT_KINDS),
+                TicketCashMovement.created_at >= start, TicketCashMovement.created_at < end,
             )
         )
         tx = await db.execute(
@@ -359,11 +394,8 @@ async def agent_dashboard(
     for t in recent_tickets.scalars().all():
         recent_transactions.append({"type": "deposit", "amount": float(t.initial_amount), "player": t.player_name, "time": t.created_at})
 
-    recent_paid = await db.execute(
-        select(Ticket).where(Ticket.paid_by_agent == current_agent.id).order_by(Ticket.paid_at.desc()).limit(5)
-    )
-    for t in recent_paid.scalars().all():
-        recent_transactions.append({"type": "payout", "amount": float(t.initial_amount), "player": t.player_name, "time": t.paid_at})
+    for m, t in await _payout_movements(db, TicketCashMovement.agent_id == current_agent.id, limit=5):
+        recent_transactions.append({"type": "payout", "amount": float(m.amount), "player": t.player_name, "time": m.created_at})
 
     recent_transactions.sort(key=lambda x: x["time"] or datetime.min, reverse=True)
     recent_transactions = recent_transactions[:8]
@@ -401,8 +433,14 @@ async def agent_dashboard(
         "today_tickets": today_tickets,
         "today_tickets_delta": _pct_delta(today_tickets, yesterday_tickets),
         "cash_balance": float(session.current_balance) if session else 0.0,
-        "commission": 0,
     }
+    from app.services.commission_service import CommissionService
+
+    month_start = local_date_start_utc(today.replace(day=1))
+    commission = await CommissionService(db, redis_client).for_agent(current_agent, month_start, tomorrow_start)
+    stats["commission"] = commission["commission"]
+    stats["commission_rate"] = commission["rate"]
+    stats["commission_sales"] = commission["sales"]
 
     return templates.TemplateResponse(request, "agent/dashboard.html", {
         **base,
@@ -435,14 +473,9 @@ async def agent_cashier(
         for t in tickets_result.scalars().all():
             operations.append({"type": "deposit", "amount": float(t.initial_amount), "player": t.player_name or "Ticket", "method": "cash", "time": t.created_at})
 
-        paid_result = await db.execute(
-            select(Ticket)
-            .where(Ticket.paid_by_agent == current_agent.id, Ticket.paid_at >= session.opened_at)
-            .order_by(Ticket.paid_at.desc())
-            .limit(10)
-        )
-        for t in paid_result.scalars().all():
-            operations.append({"type": "payout", "amount": float(t.initial_amount), "player": t.player_name or "Ticket", "method": "cash", "time": t.paid_at})
+        for m, t in await _payout_movements(db, TicketCashMovement.agent_id == current_agent.id,
+                                            TicketCashMovement.created_at >= session.opened_at, limit=10):
+            operations.append({"type": "payout", "amount": float(m.amount), "player": t.player_name or "Ticket", "method": "cash", "time": m.created_at})
 
         tx_result = await db.execute(
             select(Transaction)
@@ -513,7 +546,7 @@ async def agent_close_session(
     current_agent: User = Depends(get_current_agent),
     db: AsyncSession = Depends(get_db),
 ):
-    session = await _get_open_session(db, current_agent.id)
+    session = await _get_open_session(db, current_agent.id, for_update=True)
     if not session:
         raise ValidationException("Aucune session de caisse ouverte")
 
@@ -557,7 +590,7 @@ async def agent_cashier_deposit(
 ):
     """Encaissement cash au bureau : crée un ticket (joueur sans compte) ou
     crédite le compte d'un joueur existant (identifié par téléphone)."""
-    session = await _get_open_session(db, current_agent.id)
+    session = await _get_open_session(db, current_agent.id, for_update=True)
     if not session:
         raise ValidationException("Aucune session de caisse ouverte")
     if not current_agent.bureau_id:
@@ -622,8 +655,8 @@ async def agent_cashier_deposit(
         session.cash_in_amount += amount
         session.current_balance += amount
         if bureau:
-            bureau.cash_balance += amount
-            bureau.total_cash_in_today += amount
+            bureau.cash_balance = Bureau.cash_balance + (amount)  # atomique en base
+            bureau.total_cash_in_today = Bureau.total_cash_in_today + (amount)  # atomique en base
 
         await db.commit()
         return {"success": True, "message": f"Dépôt de {amount} HTG effectué pour {user.full_name}", "data": result}
@@ -639,7 +672,7 @@ async def agent_payout(
     redis_client: redis.Redis = Depends(get_redis),
 ):
     """Paiement cash au bureau : ticket (total ou partiel) ou compte joueur."""
-    session = await _get_open_session(db, current_agent.id)
+    session = await _get_open_session(db, current_agent.id, for_update=True)
     if not session:
         raise ValidationException("Aucune session de caisse ouverte")
 
@@ -656,15 +689,16 @@ async def agent_payout(
 
     if payout_type == "ticket":
         ticket_service = TicketService(db, redis_client)
-        ticket = await ticket_service.get_by_number(identifier)
-        if not ticket:
-            raise NotFoundException("Ticket", identifier)
+        ticket = await ticket_service.get_for_update(identifier)  # verrou : jamais payé deux fois
         if ticket.status != TicketStatus.ACTIVE:
             raise ValidationException(f"Ticket déjà {ticket.status.value}")
+        pending = await ticket_service.pending_bets_count(ticket.id)
+        if pending:  # avant l'expiration : le gain éventuel rendra le ticket payable le jour du résultat
+            raise ValidationException(f"Résultat pas encore connu pour {pending} pari(s) de ce ticket : paiement après le tirage")
         if ticket.expires_at < now_utc():
             ticket.status = TicketStatus.EXPIRED
             await db.commit()
-            raise ValidationException("Ticket expiré")
+            raise ValidationException("Ticket expiré : un ticket se paie le jour même")
 
         partial_amount = None
         if raw_amount is not None:
@@ -677,14 +711,15 @@ async def agent_payout(
             if partial_amount > ticket.balance:
                 raise ValidationException("Montant supérieur au solde du ticket")
 
+        _require_cash(session, partial_amount if partial_amount is not None else ticket.balance)
+
         if partial_amount is not None and partial_amount < ticket.balance:
             # Paiement partiel : le ticket reste actif avec le solde restant.
-            ticket.balance -= partial_amount
-            paid_amount = partial_amount
+            paid_amount = ticket.record_payout(partial_amount, current_agent.id, session.id)
             bureau = await db.get(Bureau, ticket.bureau_id)
             if bureau:
-                bureau.cash_balance -= paid_amount
-                bureau.total_cash_out_today += paid_amount
+                bureau.cash_balance = Bureau.cash_balance - (paid_amount)  # atomique en base
+                bureau.total_cash_out_today = Bureau.total_cash_out_today + (paid_amount)  # atomique en base
 
             audit_service = AuditService(db, redis_client)
             await audit_service.log(
@@ -696,7 +731,8 @@ async def agent_payout(
                 ip_address=request.client.host if request.client else "0.0.0.0",
             )
         else:
-            result = await ticket_service.payout_ticket(identifier, agent_id=current_agent.id, bureau_id=ticket.bureau_id)
+            result = await ticket_service.payout_ticket(identifier, agent_id=current_agent.id,
+                                                         bureau_id=current_agent.bureau_id, session_id=session.id)
             paid_amount = Decimal(str(result["amount"]))
 
         session.cash_out_count += 1
@@ -727,6 +763,7 @@ async def agent_payout(
             raise ValidationException("Montant invalide")
         if amount > balance:
             raise InsufficientBalanceException(float(amount), float(balance))
+        _require_cash(session, amount)
 
         try:
             withdraw_request = WithdrawRequest(amount=float(amount), payment_method="cash")
@@ -746,8 +783,8 @@ async def agent_payout(
         session.cash_out_amount += amount
         session.current_balance -= amount
         if bureau:
-            bureau.cash_balance -= amount
-            bureau.total_cash_out_today += amount
+            bureau.cash_balance = Bureau.cash_balance - (amount)  # atomique en base
+            bureau.total_cash_out_today = Bureau.total_cash_out_today + (amount)  # atomique en base
 
         await db.commit()
         return {"success": True, "message": f"Paiement de {amount} HTG effectué pour {user.full_name}", "data": result}
@@ -791,8 +828,9 @@ async def agent_tickets(
             select(func.count(Ticket.id)).where(Ticket.bureau_id == current_agent.bureau_id, Ticket.created_at >= today_start)
         )
         paid_today = await db.execute(
-            select(func.count(Ticket.id)).where(
-                Ticket.bureau_id == current_agent.bureau_id, Ticket.paid_at >= today_start, Ticket.status == TicketStatus.PAID
+            select(func.count(func.distinct(TicketCashMovement.ticket_id))).where(
+                TicketCashMovement.bureau_id == current_agent.bureau_id, TicketCashMovement.created_at >= today_start,
+                TicketCashMovement.kind == KIND_PAYOUT,
             )
         )
         stats["today_created"] = created_today.scalar() or 0
@@ -816,7 +854,7 @@ async def agent_create_ticket(
     if not current_agent.bureau_id:
         raise ValidationException("Agent non affecté à un bureau")
 
-    session = await _get_open_session(db, current_agent.id)
+    session = await _get_open_session(db, current_agent.id, for_update=True)
     if not session:
         raise ValidationException("Aucune session de caisse ouverte")
 
@@ -897,16 +935,18 @@ async def agent_payout_ticket_by_id(
     db: AsyncSession = Depends(get_db),
     redis_client: redis.Redis = Depends(get_redis),
 ):
-    session = await _get_open_session(db, current_agent.id)
+    session = await _get_open_session(db, current_agent.id, for_update=True)
     if not session:
         raise ValidationException("Aucune session de caisse ouverte")
 
     ticket = await db.get(Ticket, ticket_id)
     if not ticket:
         raise NotFoundException("Ticket", ticket_id)
+    _require_cash(session, ticket.balance)
 
     ticket_service = TicketService(db, redis_client)
-    result = await ticket_service.payout_ticket(ticket.ticket_number, agent_id=current_agent.id, bureau_id=ticket.bureau_id)
+    result = await ticket_service.payout_ticket(ticket.ticket_number, agent_id=current_agent.id,
+                                                bureau_id=current_agent.bureau_id, session_id=session.id)
     paid_amount = Decimal(str(result["amount"]))
 
     session.cash_out_count += 1
@@ -955,11 +995,8 @@ async def agent_history(
     for t in tickets_created.scalars().all():
         items.append({"date": t.created_at, "type": "deposit", "player": t.player_name, "amount": float(t.initial_amount), "method": "cash", "reference": t.ticket_number})
 
-    tickets_paid = await db.execute(
-        select(Ticket).where(Ticket.paid_by_agent == current_agent.id).order_by(Ticket.paid_at.desc()).limit(200)
-    )
-    for t in tickets_paid.scalars().all():
-        items.append({"date": t.paid_at, "type": "payout", "player": t.player_name, "amount": float(t.initial_amount), "method": "cash", "reference": t.ticket_number})
+    for m, t in await _payout_movements(db, TicketCashMovement.agent_id == current_agent.id, limit=200):
+        items.append({"date": m.created_at, "type": "payout", "player": t.player_name, "amount": float(m.amount), "method": "cash", "reference": t.ticket_number})
 
     tx_result = await db.execute(
         select(Transaction).where(Transaction.created_by == current_agent.id).order_by(Transaction.created_at.desc()).limit(200)
@@ -1042,6 +1079,7 @@ async def agent_reports(
     end_date: Optional[str] = None,
     current_agent: User = Depends(get_current_agent),
     db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
 ):
     base = await _base_context(db, current_agent, "reports")
 
@@ -1065,10 +1103,10 @@ async def agent_reports(
     )
     tickets_created = tickets_created_result.scalars().all()
 
-    tickets_paid_result = await db.execute(
-        select(Ticket).where(Ticket.paid_by_agent == current_agent.id, Ticket.paid_at >= range_start, Ticket.paid_at < range_end)
-    )
-    tickets_paid = tickets_paid_result.scalars().all()
+    payouts = [m for m, _t in await _payout_movements(
+        db, TicketCashMovement.agent_id == current_agent.id,
+        TicketCashMovement.created_at >= range_start, TicketCashMovement.created_at < range_end,
+    )]
 
     tx_result = await db.execute(
         select(Transaction).where(Transaction.created_by == current_agent.id, Transaction.created_at >= range_start, Transaction.created_at < range_end)
@@ -1083,11 +1121,20 @@ async def agent_reports(
     plays_result = await db.execute(
         select(LuckyPlay).where(LuckyPlay.agent_id == current_agent.id, LuckyPlay.played_at >= range_start, LuckyPlay.played_at < range_end)
     )
-    plays = plays_result.scalars().all()
+    plays = list(plays_result.scalars().all())  # historique Lucky Wheel
+    from app.models.game import GameBet
 
-    total_deposits = sum(float(t.initial_amount) for t in tickets_created)
+    game_bets = (await db.execute(
+        select(GameBet).where(GameBet.agent_id == current_agent.id, GameBet.placed_at >= range_start, GameBet.placed_at < range_end)
+    )).scalars().all()  # Lucky6 + Horse Races
+
+    recharges = (await db.execute(select(TicketCashMovement).where(
+        TicketCashMovement.agent_id == current_agent.id, TicketCashMovement.kind == KIND_RECHARGE,
+        TicketCashMovement.created_at >= range_start, TicketCashMovement.created_at < range_end,
+    ))).scalars().all()
+    total_deposits = sum(float(t.initial_amount) for t in tickets_created) + sum(float(m.amount) for m in recharges)
     total_deposits += sum(float(tx.amount) for tx in transactions if tx.transaction_type == TransactionType.DEPOSIT)
-    total_payouts = sum(float(t.initial_amount) for t in tickets_paid)
+    total_payouts = sum(float(m.amount) for m in payouts)
     total_payouts += sum(float(tx.amount) for tx in transactions if tx.transaction_type == TransactionType.WITHDRAWAL)
 
     daily, labels, dep_series, pay_series = [], [], [], []
@@ -1097,12 +1144,14 @@ async def agent_reports(
         day_end = local_date_end_utc(cursor)  # exclusive
 
         day_deposits = sum(float(t.initial_amount) for t in tickets_created if day_start <= t.created_at < day_end)
+        day_deposits += sum(float(m.amount) for m in recharges if day_start <= m.created_at < day_end)
         day_deposits += sum(float(tx.amount) for tx in transactions if tx.transaction_type == TransactionType.DEPOSIT and day_start <= tx.created_at < day_end)
 
-        day_payouts = sum(float(t.initial_amount) for t in tickets_paid if t.paid_at and day_start <= t.paid_at < day_end)
+        day_payouts = sum(float(m.amount) for m in payouts if day_start <= m.created_at < day_end)
         day_payouts += sum(float(tx.amount) for tx in transactions if tx.transaction_type == TransactionType.WITHDRAWAL and day_start <= tx.created_at < day_end)
 
-        day_bets = sum(1 for b in bets if day_start <= b.placed_at < day_end) + sum(1 for p in plays if day_start <= p.played_at < day_end)
+        day_bets = (sum(1 for b in bets if day_start <= b.placed_at < day_end) + sum(1 for p in plays if day_start <= p.played_at < day_end)
+                    + sum(1 for g in game_bets if day_start <= g.placed_at < day_end))
         day_tickets = sum(1 for t in tickets_created if day_start <= t.created_at < day_end)
 
         label = cursor.strftime("%d/%m")
@@ -1115,11 +1164,16 @@ async def agent_reports(
     summary = {
         "total_deposits": total_deposits,
         "total_payouts": total_payouts,
-        "total_bets": len(bets) + len(plays),
+        "total_bets": len(bets) + len(plays) + len(game_bets),
         "total_tickets": len(tickets_created),
-        "commission": 0,
         "net": total_deposits - total_payouts,
     }
+    from app.services.commission_service import CommissionService
+
+    commission = await CommissionService(db, redis_client).for_agent(current_agent, range_start, range_end)
+    summary["commission"] = commission["commission"]
+    summary["commission_rate"] = commission["rate"]
+    summary["commission_sales"] = commission["sales"]
 
     return templates.TemplateResponse(request, "agent/reports.html", {
         **base,
@@ -1138,6 +1192,7 @@ async def agent_profile(
     request: Request,
     current_agent: User = Depends(get_current_agent),
     db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
 ):
     base = await _base_context(db, current_agent, "profile")
 
@@ -1145,7 +1200,9 @@ async def agent_profile(
     total_tickets = total_tickets_result.scalar() or 0
 
     bets_result = await db.execute(select(func.count(KenoBet.id)).where(KenoBet.agent_id == current_agent.id))
-    plays_result = await db.execute(select(func.count(LuckyPlay.id)).where(LuckyPlay.agent_id == current_agent.id))
+    from app.models.game import GameBet
+
+    plays_result = await db.execute(select(func.count(GameBet.id)).where(GameBet.agent_id == current_agent.id))
     total_bets = (bets_result.scalar() or 0) + (plays_result.scalar() or 0)
 
     tickets_sum = await db.execute(select(func.coalesce(func.sum(Ticket.initial_amount), 0)).where(Ticket.agent_id == current_agent.id))
@@ -1157,7 +1214,8 @@ async def agent_profile(
     )
     total_deposits += float(tx_deposits_sum.scalar() or 0)
 
-    tickets_paid_sum = await db.execute(select(func.coalesce(func.sum(Ticket.initial_amount), 0)).where(Ticket.paid_by_agent == current_agent.id))
+    tickets_paid_sum = await db.execute(select(func.coalesce(func.sum(TicketCashMovement.amount), 0)).where(
+        TicketCashMovement.agent_id == current_agent.id, TicketCashMovement.kind.in_(MONEY_OUT_KINDS)))
     total_payouts = float(tickets_paid_sum.scalar() or 0)
     tx_withdraw_sum = await db.execute(
         select(func.coalesce(func.sum(Transaction.amount), 0)).where(
@@ -1170,6 +1228,11 @@ async def agent_profile(
         select(func.count(func.distinct(local_day(Ticket.created_at)))).where(Ticket.agent_id == current_agent.id)
     )
     active_days = active_days_result.scalar() or 0
+    from app.services.commission_service import CommissionService
+
+    commission = await CommissionService(db, redis_client).for_agent(
+        current_agent, datetime(2000, 1, 1), now_utc() + timedelta(days=1)
+    )
 
     return templates.TemplateResponse(request, "agent/profile.html", {
         **base,
@@ -1178,7 +1241,9 @@ async def agent_profile(
             "total_tickets": total_tickets,
             "total_deposits": total_deposits,
             "total_payouts": total_payouts,
-            "commission": 0,
+            "commission": commission["commission"],
+            "commission_rate": commission["rate"],
+            "commission_sales": commission["sales"],
             "active_days": active_days,
         },
     })
@@ -1328,6 +1393,7 @@ async def agent_place_keno_bet(
         raise ValidationException("Requête invalide")
 
     player_type = payload.get("player_type")
+    funded_by = player_type or "cash"  # pour la commission : espèces / compte = vente
     identifier = str(payload.get("identifier") or "").strip()
     draw_id = payload.get("draw_id")
     if not draw_id:
@@ -1358,6 +1424,12 @@ async def agent_place_keno_bet(
         result["ticket_balance"] = float(ticket.balance) if ticket else None
     else:
         raise ValidationException("Type de joueur invalide")
+
+    from app.services.commission_service import freeze_commission
+
+    played = await db.get(KenoBet, result["bet_id"])
+    if played is not None:
+        await freeze_commission(db, redis_client, current_agent, played, funded_by)  # commission figée à la vente
 
     # Tirage suivant préparé tout de suite (son empreinte s'affiche pour le prochain ticket)
     next_draw = await service.prepare_instant_draw(current_agent.id)
@@ -1488,6 +1560,9 @@ async def agent_keno_shared_bet(
         user_id=user_id, ticket_number=ticket_number,
         agent_id=current_agent.id, ip_address=request.client.host if request.client else None,
     )
+    from app.services.commission_service import freeze_commission
+
+    await freeze_commission(db, redis_client, current_agent, bet, payload.get("player_type"))  # commission figée à la vente
     await db.commit()
     try:
         await service.shared_screen_ticket(current_agent.id, bet)
@@ -1585,269 +1660,52 @@ async def agent_keno_shared_history(
     return {"draws": [service.serialize_draw(d, config) for d in await service.shared_history(limit)]}
 
 
-# ==================== LUCKY WHEEL ====================
+# ==================== PAIEMENT DES GAINS ====================
+# L'agent scanne le numéro du ticket (code-barres du reçu), voit les paris
+# gagnés et paie le joueur en espèces (voir app/services/payout_service.py).
 
-@router.get("/lucky", response_class=HTMLResponse)
-async def agent_lucky(
+@router.get("/gains", response_class=HTMLResponse)
+async def agent_payouts_page(
     request: Request,
+    ticket: str = "",
     current_agent: User = Depends(get_current_agent),
     db: AsyncSession = Depends(get_db),
 ):
-    base = await _base_context(db, current_agent, "lucky")
-
-    config_result = await db.execute(
-        select(LuckyWheelConfig).where(LuckyWheelConfig.is_active == True).order_by(LuckyWheelConfig.is_default.desc()).limit(1)
-    )
-    config = config_result.scalar_one_or_none()
-    segments = config.segments if config else []
-
-    today_start = today_bounds_utc()[0]
-    plays_result = await db.execute(
-        select(LuckyPlay).where(LuckyPlay.agent_id == current_agent.id, LuckyPlay.played_at >= today_start)
-    )
-    plays = plays_result.scalars().all()
-
-    today_volume = sum((p.stake for p in plays), Decimal("0"))
-    today_wins = sum((p.winnings for p in plays), Decimal("0"))
-    best_multiplier = max((p.multiplier for p in plays), default=Decimal("0"))
-
-    return templates.TemplateResponse(request, "agent/lucky.html", {
-        **base,
-        "stats": {
-            "today_plays": len(plays),
-            "today_volume": float(today_volume),
-            "today_wins": float(today_wins),
-            "best_multiplier": float(best_multiplier),
-        },
-        "segments": segments,
-    })
+    base = await _base_context(db, current_agent, "gains")
+    return templates.TemplateResponse(request, "agent/gains.html", {**base, "ticket": ticket.strip().upper()[:20]})
 
 
-# ==================== LUCKY LIVE RESULTS ====================
-
-@router.get("/api/lucky/latest")
-async def agent_lucky_latest(
-    current_user: User = Depends(get_current_agent),
-    db: AsyncSession = Depends(get_db)
-):
-    """Récupère le dernier résultat Lucky"""
-
-    result = await db.execute(
-        select(LuckyPlay)
-        .order_by(desc(LuckyPlay.played_at))
-        .limit(1)
-    )
-    play = result.scalar_one_or_none()
-
-    if not play:
-        return {"has_result": False, "message": "Aucun résultat disponible"}
-
-    # Récupérer la configuration de la roue
-    config_result = await db.execute(
-        select(LuckyWheelConfig).where(LuckyWheelConfig.id == play.wheel_config_id)
-    )
-    config = config_result.scalar_one_or_none()
-
-    # Trouver le segment
-    segment = None
-    if config and config.segments:
-        for seg in config.segments:
-            if seg["label"] == play.result_segment.get("label"):
-                segment = seg
-                break
-
-    return {
-        "has_result": True,
-        "play_id": play.id,
-        "segment": play.result_segment.get("label"),
-        "multiplier": float(play.multiplier),
-        "winnings": float(play.winnings),
-        "stake": float(play.stake),
-        "color": segment.get("color") if segment else "#94a3b8",
-        "player": play.user.full_name if play.user else "Ticket",
-        "played_at": play.played_at.isoformat()
-    }
-
-
-@router.get("/api/lucky/history")
-async def agent_lucky_history(
-    limit: int = 20,
-    current_user: User = Depends(get_current_agent),
-    db: AsyncSession = Depends(get_db)
-):
-    """Récupère l'historique des résultats Lucky"""
-
-    result = await db.execute(
-        select(LuckyPlay)
-        .order_by(desc(LuckyPlay.played_at))
-        .limit(limit)
-    )
-    plays = result.scalars().all()
-
-    history = []
-    for play in plays:
-        # Récupérer la config
-        config_result = await db.execute(
-            select(LuckyWheelConfig).where(LuckyWheelConfig.id == play.wheel_config_id)
-        )
-        config = config_result.scalar_one_or_none()
-
-        segment = None
-        if config and config.segments:
-            for seg in config.segments:
-                if seg["label"] == play.result_segment.get("label"):
-                    segment = seg
-                    break
-
-        history.append({
-            "play_id": play.id,
-            "segment": play.result_segment.get("label"),
-            "multiplier": float(play.multiplier),
-            "winnings": float(play.winnings),
-            "stake": float(play.stake),
-            "color": segment.get("color") if segment else "#94a3b8",
-            "player": play.user.full_name if play.user else "Ticket",
-            "played_at": play.played_at.isoformat()
-        })
-
-    return history
-
-
-@router.post("/api/lucky/spin")
-async def agent_lucky_spin(
-    request: Request,
-    data: dict,
-    current_user: User = Depends(get_current_agent),
+@router.get("/api/payouts/{ticket_number}")
+async def agent_payout_lookup(
+    ticket_number: str,
+    current_agent: User = Depends(get_current_agent),
     db: AsyncSession = Depends(get_db),
     redis_client: redis.Redis = Depends(get_redis),
 ):
-    """Effectue un tour de Lucky Wheel pour un joueur.
+    """Détail d'un ticket avant paiement (lecture seule)."""
+    from app.services.payout_service import PayoutService
 
-    Passe par WalletService/TicketService (au lieu de manipuler directement
-    wallet.balance/ticket.balance) pour que chaque tour génère une vraie
-    Transaction + AuditLog, comme tous les autres flux d'argent de cette
-    session - l'ancienne implémentation ne laissait aucune trace comptable.
-    """
-    current_agent = current_user
-    player_type = data.get("player_type")
-    identifier = data.get("identifier")
+    return await PayoutService(db, redis_client).summary(ticket_number, current_agent)
+
+
+@router.post("/api/payouts/pay")
+async def agent_payout_pay(
+    request: Request,
+    current_agent: User = Depends(get_current_agent),
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    """Paie les gains d'un ticket en espèces (montant calculé par le serveur)."""
+    from app.services.payout_service import PayoutService
 
     try:
-        stake = Decimal(str(data.get("stake")))
-    except (InvalidOperation, TypeError):
-        raise ValidationException("Mise invalide")
-    if stake < 10:
-        raise ValidationException("Mise minimum: 10 HTG")
-
-    session = await _get_open_session(db, current_agent.id)
-    if not session:
-        raise ValidationException("Aucune session de caisse ouverte")
-
-    config_result = await db.execute(
-        select(LuckyWheelConfig)
-        .where(LuckyWheelConfig.is_active == True)
-        .order_by(LuckyWheelConfig.is_default.desc())
-        .limit(1)
+        payload = await request.json()
+    except Exception:
+        raise ValidationException("Requête invalide")
+    if not isinstance(payload, dict) or not payload.get("ticket_number"):
+        raise ValidationException("Numéro de ticket requis")
+    result = await PayoutService(db, redis_client).pay(
+        str(payload["ticket_number"]), current_agent, request.client.host if request.client else None,
     )
-    config = config_result.scalar_one_or_none()
-    if not config:
-        raise AppException(500, "Configuration de la roue non trouvée")
-
-    user = None
-    ticket = None
-    player_name = "Anonyme"
-
-    if player_type == "account":
-        user_service = UserService(db, redis_client)
-        user = await user_service.get_by_phone(identifier)
-        if not user:
-            raise NotFoundException("Joueur", identifier)
-        player_name = user.full_name or user.phone
-
-        wallet_service = WalletService(db, redis_client)
-        await wallet_service.debit(user_id=user.id, amount=stake, transaction_type="BET")
-
-    elif player_type in (None, "", "cash", "ticket"):
-        if player_type != "ticket":
-            # espèces : le numéro de ticket est créé automatiquement (même transaction)
-            from app.services.cash_ticket import sell_cash_ticket
-
-            identifier = await sell_cash_ticket(db, redis_client, current_agent, stake, data.get("player_name"))
-        ticket_service = TicketService(db, redis_client)
-        ticket = await ticket_service.get_by_number((identifier or "").strip().upper())
-        if not ticket:
-            raise NotFoundException("Ticket", identifier)
-        if ticket.status != TicketStatus.ACTIVE:
-            raise ValidationException("Ticket inactif")
-        if ticket.expires_at < now_utc():
-            ticket.status = TicketStatus.EXPIRED
-            await db.commit()
-            raise ValidationException("Ticket expiré")
-        if ticket.balance < stake:
-            raise ValidationException("Solde du ticket insuffisant")
-        ticket.balance -= stake
-        player_name = ticket.player_name or "Ticket"
-
-    else:
-        raise ValidationException("Type de joueur invalide")
-
-    winning_segment = LuckyPlay.spin_wheel(config.segments)
-    multiplier = Decimal(str(winning_segment["multiplier"]))
-    winnings = stake * multiplier
-
-    random_seed = secrets.token_hex(32)
-    verification_hash = hashlib.sha256(
-        f"{random_seed}{stake}{now_utc().isoformat()}".encode()
-    ).hexdigest()
-
-    lucky_play = LuckyPlay(
-        user_id=user.id if user else None,
-        ticket_id=ticket.id if ticket else None,
-        agent_id=current_agent.id,
-        wheel_config_id=config.id,
-        stake=stake,
-        result_segment=winning_segment,
-        multiplier=multiplier,
-        winnings=winnings,
-        random_seed=random_seed,
-        verification_hash=verification_hash,
-        played_at=now_utc(),
-    )
-    db.add(lucky_play)
-    await db.flush()
-
-    if winnings > 0:
-        if user:
-            wallet_service = WalletService(db, redis_client)
-            await wallet_service.credit(user_id=user.id, amount=winnings, transaction_type="WIN")
-        elif ticket:
-            ticket.balance += winnings
-
     await db.commit()
-
-    await broadcast_lucky_result({
-        "type": "lucky_result",
-        "data": {
-            "segment": winning_segment["label"],
-            "multiplier": float(multiplier),
-            "winnings": float(winnings),
-            "player": player_name,
-            "played_at": now_utc().isoformat(),
-            "stake": float(stake),
-        }
-    })
-
-    return {
-        "success": True,
-        "segment": winning_segment["label"],
-        "multiplier": float(multiplier),
-        "winnings": float(winnings),
-        "color": winning_segment["color"],
-        "play_id": lucky_play.id,
-        "player": player_name,
-        "stake": float(stake),
-        "ticket_number": ticket.ticket_number if ticket else None,
-        "verification_hash": verification_hash,
-        "played_at": lucky_play.played_at.isoformat() + "Z",
-        "message": f"Tour terminé ! {('Gain: ' + str(winnings) + ' HTG') if winnings > 0 else 'Perdu'}",
-    }
+    return {"success": True, "message": f"{result['paid_now']:.2f} HTG payés — ticket {result['ticket_number']}", "data": result}

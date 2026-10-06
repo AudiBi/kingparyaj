@@ -304,10 +304,7 @@ async def payout_ticket(
     amount = ticket.balance
     
     # Payer le ticket
-    ticket.status = TicketStatus.PAID
-    ticket.paid_at = datetime.utcnow()
-    ticket.paid_by_agent = current_agent.id
-    ticket.balance = 0
+    ticket.record_payout(amount, current_agent.id, session.id)  # paiement daté
     
     # Mettre à jour la session de caisse
     session.cash_out_count += 1
@@ -319,7 +316,7 @@ async def payout_ticket(
         select(Bureau).where(Bureau.id == ticket.bureau_id)
     )
     bureau = bureau_result.scalar_one()
-    bureau.cash_balance -= amount
+    bureau.cash_balance = Bureau.cash_balance - (amount)  # atomique en base
     
     await db.commit()
     
@@ -414,7 +411,7 @@ async def agent_deposit(
         select(Bureau).where(Bureau.id == current_agent.bureau_id)
     )
     bureau = bureau_result.scalar_one()
-    bureau.cash_balance += deposit_amount
+    bureau.cash_balance = Bureau.cash_balance + (deposit_amount)  # atomique en base
 
     await db.commit()
 
@@ -489,7 +486,7 @@ async def agent_withdraw(
     session.current_balance -= withdraw_amount
 
     # Mettre à jour la caisse du bureau
-    bureau.cash_balance -= withdraw_amount
+    bureau.cash_balance = Bureau.cash_balance - (withdraw_amount)  # atomique en base
 
     await db.commit()
 
@@ -537,15 +534,18 @@ async def get_agent_statistics(
     tickets = tickets_result.one()
     
     # Tickets payés aujourd'hui
-    paid_result = await db.execute(
+    from app.models.cash_movement import KIND_PAYOUT, TicketCashMovement
+
+    paid_result = await db.execute(  # chaque paiement daté, partiels compris
         select(
-            func.count(Ticket.id).label("count"),
-            func.coalesce(func.sum(Ticket.initial_amount), 0).label("total")
+            func.count(TicketCashMovement.id).label("count"),
+            func.coalesce(func.sum(TicketCashMovement.amount), 0).label("total")
         ).where(
             and_(
-                Ticket.paid_by_agent == current_agent.id,
-                Ticket.paid_at >= today_start,
-                Ticket.paid_at <= today_end
+                TicketCashMovement.agent_id == current_agent.id,
+                TicketCashMovement.kind == KIND_PAYOUT,
+                TicketCashMovement.created_at >= today_start,
+                TicketCashMovement.created_at <= today_end
             )
         )
     )

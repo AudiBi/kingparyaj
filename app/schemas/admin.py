@@ -1,5 +1,5 @@
 # app/schemas/admin.py
-"""Schémas Pydantic pour l'administration - Parier Keno & Lucky Haïti"""
+"""Schémas Pydantic pour l'administration - King Paryaj"""
 
 from pydantic import BaseModel, Field, validator, EmailStr, field_validator
 from typing import Optional, List, Dict, Any
@@ -145,6 +145,8 @@ class AdminAgentUpdate(BaseModel):
     bureau_id: Optional[str] = None
     password: Optional[str] = Field(None, min_length=8)
     is_active: Optional[bool] = None
+    # Commission en % des ventes ; null/vide = taux par défaut
+    commission_rate: Optional[str] = None
 
 
 # ==================== BUREAUX ====================
@@ -212,47 +214,6 @@ class AdminKenoPaytableUpdate(BaseModel):
         return v
 
 
-# ==================== CONFIGURATION LUCKY ====================
-
-class LuckyWheelSegment(BaseModel):
-    """Segment de la roue de la chance"""
-    label: str = Field(..., description="Nom du segment (ex: 'x10')")
-    multiplier: float = Field(..., ge=0, description="Multiplicateur")
-    weight: int = Field(..., ge=1, description="Poids (probabilité)")
-    color: str = Field(..., description="Couleur hexadécimale (ex: '#44AAFF')")
-    
-    @field_validator('color')
-    @classmethod
-    def validate_color(cls, v: str) -> str:
-        if not re.match(r'^#[0-9A-Fa-f]{6}$', v):
-            raise ValueError('Couleur invalide. Format: #RRGGBB')
-        return v
-
-
-class AdminLuckyConfig(BaseModel):
-    """Configuration du jeu Lucky Wheel"""
-    name: str = Field(..., max_length=50)
-    description: Optional[str] = Field(None, max_length=200)
-    segments: List[LuckyWheelSegment] = Field(..., min_items=5, max_items=20)
-    min_bet: Decimal = Field(10, ge=1)
-    max_bet: Decimal = Field(10000, ge=10)
-    
-    @field_validator('segments')
-    @classmethod
-    def validate_segments(cls, v: List) -> List:
-        """Valide les segments"""
-        if not v:
-            raise ValueError('La roue doit avoir au moins 5 segments')
-        total_weight = sum(s.weight for s in v)
-        if total_weight == 0:
-            raise ValueError('Le poids total des segments doit être > 0')
-        # Vérifier les labels uniques
-        labels = [s.label for s in v]
-        if len(labels) != len(set(labels)):
-            raise ValueError('Les labels des segments doivent être uniques')
-        return v
-
-
 # ==================== TRANSACTIONS ====================
 
 class AdminTransactionFilter(BaseModel):
@@ -292,7 +253,8 @@ class AdminGameReport(BaseModel):
     """Rapport de jeu"""
     period: Dict[str, str]
     keno: Dict[str, Any]
-    lucky: Dict[str, Any]
+    lucky6: Optional[Dict[str, Any]] = None
+    horse_races: Optional[Dict[str, Any]] = None
     total_bets: int
     total_volume: float
     total_payout: float
@@ -323,7 +285,7 @@ class AdminPromotionBase(BaseModel):
     min_deposit: Optional[Decimal] = None
     max_bonus: Optional[Decimal] = None
     wagering_requirement: int = Field(1, ge=1)
-    eligible_games: List[str] = Field(["keno", "lucky"])
+    eligible_games: List[str] = Field(["keno", "lucky6", "horse_races"])
     new_users_only: bool = False
     first_deposit_only: bool = False
     total_budget: Optional[Decimal] = None

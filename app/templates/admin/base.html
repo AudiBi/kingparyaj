@@ -210,6 +210,7 @@
         .main-content {
             margin-left: var(--sidebar-width);
             flex: 1;
+            min-width: 0; /* les tableaux larges défilent au lieu d'élargir la page */
             min-height: 100vh;
             display: flex;
             flex-direction: column;
@@ -745,9 +746,6 @@
         <a href="{{ url_for('admin_keno_config') }}" class="nav-item {% if active == 'keno' %}active{% endif %}">
             <i class="fas fa-dice"></i> Keno
         </a>
-        <a href="{{ url_for('admin_lucky_config') }}" class="nav-item {% if active == 'lucky' %}active{% endif %}">
-            <i class="fas fa-gift"></i> Lucky Wheel
-        </a>
         <a href="/admin/games/horse-races" class="nav-item {% if active == 'horse_races' %}active{% endif %}">
             <i class="fas fa-horse"></i> Horse Races
         </a>
@@ -765,7 +763,7 @@
         
         <div class="nav-label">Rapports</div>
         <a href="{{ url_for('admin_reports_financial') }}" class="nav-item {% if active == 'reports' %}active{% endif %}">
-            <i class="fas fa-file-invoice"></i> Rapports
+            <i class="fas fa-coins"></i> Finances
         </a>
         <a href="{{ url_for('admin_audit_logs') }}" class="nav-item {% if active == 'audit' %}active{% endif %}">
             <i class="fas fa-clipboard-list"></i> Audit LEH

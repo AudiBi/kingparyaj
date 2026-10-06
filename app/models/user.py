@@ -55,6 +55,8 @@ class User(BaseModel):
     # ========== Rôle et affectation ==========
     role = Column(Enum(UserRole), default=UserRole.PLAYER, nullable=False)
     bureau_id = Column(String(36), ForeignKey("bureaus.id"), nullable=True)
+    # Commission de l'agent en % des ventes ; NULL = taux par défaut (admin)
+    commission_rate = Column(Numeric(5, 2), nullable=True)
     
     # ========== Métriques ==========
     total_bets_count = Column(Integer, default=0, nullable=False)

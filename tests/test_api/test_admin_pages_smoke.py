@@ -98,7 +98,6 @@ def _install_fake_keno_counts(db_session) -> None:
         "/admin/users",
         "/admin/agents",
         "/admin/bureaus",
-        "/admin/games/lucky/config",
         "/admin/transactions",
         "/admin/tickets",
         "/admin/audit/logs",

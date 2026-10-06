@@ -547,6 +547,7 @@ class RoundGameService:
                 elif bet.ticket_id:
                     ticket = await self._get_ticket_for_update(bet.ticket_id)
                     ticket.balance = (ticket.balance or Decimal("0")) + winnings
+                    ticket.keep_payable_today()  # payable jusqu'à minuit le jour du résultat
 
         race.total_payout = (race.total_payout or Decimal("0")) + total_payout
         await self._refresh_totals(race)
@@ -608,6 +609,7 @@ class RoundGameService:
             elif bet.ticket_id:
                 ticket = await self._get_ticket_for_update(bet.ticket_id)
                 ticket.balance = (ticket.balance or Decimal("0")) + Decimal(bet.stake)
+                ticket.keep_payable_today()
 
         race.status = GameRoundStatus.CANCELLED.value
         race.cancelled_at = now

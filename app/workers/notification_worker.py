@@ -1,5 +1,5 @@
 # app/workers/notification_worker.py
-"""Worker pour l'envoi de notifications - VERSION COMPLÈTE (Keno + Lucky)"""
+"""Worker pour l'envoi de notifications (Keno, Lucky6, Horse Races)"""
 
 from celery import Task
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
@@ -19,7 +19,6 @@ from app.models.notification import Notification, NotificationChannel, Notificat
 from app.models.user import User
 from app.models.ticket import Ticket
 from app.models.promotion import Promotion, PromotionStatus
-from app.models.lucky import LuckyPlay
 
 logger = get_logger(__name__)
 
@@ -211,89 +210,6 @@ def send_win_notification(phone: str, name: str, amount: float, game: str = "Ken
         f"Parier Keno Haïti"
     )
     return send_sms_notification.delay(phone, message)
-
-
-# ==================== LUCKY - NOTIFICATIONS ====================
-
-@celery_app.task(
-    name="app.workers.notification_worker.send_lucky_win_notification",
-    max_retries=3
-)
-def send_lucky_win_notification(phone: str, name: str, amount: float, segment: str):
-    """Envoie une notification de gain au Lucky Wheel"""
-    message = (
-        f"🎉 FÉLICITATIONS {name}!\n"
-        f"Vous avez gagné {amount:,.0f} HTG au Lucky Wheel!\n"
-        f"Segment: {segment}\n"
-        f"Le montant a été crédité sur votre compte.\n"
-        f"Parier Keno Haïti"
-    )
-    return send_sms_notification.delay(phone, message)
-
-
-@celery_app.task(
-    name="app.workers.notification_worker.send_lucky_daily_reminder",
-    max_retries=2
-)
-def send_lucky_daily_reminder():
-    """
-    Envoie un rappel quotidien pour jouer au Lucky Wheel.
-    Aux joueurs qui n'ont pas joué depuis 3 jours.
-    """
-    loop = asyncio.get_event_loop()
-    if loop.is_running():
-        return loop.create_task(_send_lucky_daily_reminder_async())
-    else:
-        return loop.run_until_complete(_send_lucky_daily_reminder_async())
-
-
-async def _send_lucky_daily_reminder_async():
-    """Logique d'envoi de rappel Lucky"""
-    logger.info("🎡 Envoi des rappels Lucky...")
-    
-    try:
-        async with AsyncSessionLocal() as db:
-            three_days_ago = datetime.utcnow() - timedelta(days=3)
-            
-            users_result = await db.execute(
-                select(User)
-                .where(
-                    and_(
-                        User.is_active == True,
-                        User.is_locked == False,
-                        User.phone.isnot(None)
-                    )
-                )
-                .limit(100)
-            )
-            users = users_result.scalars().all()
-            
-            for user in users:
-                plays_result = await db.execute(
-                    select(LuckyPlay)
-                    .where(
-                        and_(
-                            LuckyPlay.user_id == user.id,
-                            LuckyPlay.played_at > three_days_ago
-                        )
-                    )
-                    .limit(1)
-                )
-                recent_play = plays_result.scalar_one_or_none()
-                
-                if not recent_play:
-                    message = (
-                        f"🎡 Le Lucky Wheel vous attend!\n"
-                        f"Faites tourner la roue et gagnez jusqu'à 500x!\n"
-                        f"Jouez maintenant sur Parier Keno Haïti"
-                    )
-                    send_sms_notification.delay(user.phone, message)
-                    
-            logger.info(f"✅ Rappels Lucky envoyés")
-            
-    except Exception as e:
-        logger.error(f"❌ Erreur envoi rappels Lucky: {e}")
-        raise
 
 
 # ==================== NOTIFICATIONS COMMUNES ====================
@@ -492,7 +408,7 @@ async def _send_daily_summary_async():
             today_start = local_date_start_utc(today)
             
             from app.models.keno import KenoDraw, KenoBet
-            from app.models.lucky import LuckyPlay
+            from app.models.game import GameBet
             from app.models.transaction import Transaction
             from app.models.enums import UserRole
             
@@ -507,15 +423,15 @@ async def _send_daily_summary_async():
             )
             keno_stats = keno_result.one()
             
-            # Lucky
-            lucky_result = await db.execute(
-                select(
-                    func.count(LuckyPlay.id).label("plays"),
-                    func.coalesce(func.sum(LuckyPlay.stake), 0).label("stake")
-                )
-                .where(LuckyPlay.played_at >= today_start)
+            # Lucky6 + Horse Races
+            games_result = await db.execute(
+                select(GameBet.game_type, func.count(GameBet.id), func.coalesce(func.sum(GameBet.stake), 0))
+                .where(GameBet.placed_at >= today_start)
+                .group_by(GameBet.game_type)
             )
-            lucky_stats = lucky_result.one()
+            games = {g: (int(n or 0), float(st)) for g, n, st in games_result.all()}
+            l6 = games.get("lucky6", (0, 0.0))
+            hr = games.get("horse_races", (0, 0.0))
             
             # Transactions
             tx_result = await db.execute(
@@ -539,7 +455,8 @@ async def _send_daily_summary_async():
                     message = (
                         f"📊 Résumé quotidien - {today.isoformat()}\n"
                         f"Keno: {keno_stats.draws or 0} tirages, {keno_stats.bets or 0} paris, {float(keno_stats.stake):.0f} HTG\n"
-                        f"Lucky: {lucky_stats.plays or 0} parties, {float(lucky_stats.stake):.0f} HTG\n"
+                        f"Lucky6: {l6[0]} paris, {l6[1]:.0f} HTG\n"
+                        f"Horse Races: {hr[0]} paris, {hr[1]:.0f} HTG\n"
                         f"Dépôts: {float(tx_stats.deposits):.0f} HTG\n"
                         f"Retraits: {float(tx_stats.withdrawals):.0f} HTG\n"
                         f"Parier Keno Haïti"

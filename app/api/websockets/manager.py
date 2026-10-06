@@ -101,16 +101,6 @@ async def broadcast_draw_result(draw_result: dict):
     await publish({"type": "draw_completed", "data": draw_result, "timestamp": _timestamp()}, draw_id="all")
 
 
-async def broadcast_lucky_result(result_data: dict):
-    """Diffuse un résultat Lucky à tous les clients"""
-    await publish({"type": "lucky_result", "data": result_data, "timestamp": _timestamp()}, draw_id="all")
-
-
-async def broadcast_lucky_history(history_data: list):
-    """Diffuse l'historique Lucky"""
-    await publish({"type": "lucky_history", "data": history_data, "timestamp": _timestamp()}, draw_id="all")
-
-
 async def broadcast_jackpot_alert(jackpot_data: dict):
     """Diffuse une alerte jackpot"""
     await publish({"type": "jackpot_alert", "data": jackpot_data, "timestamp": _timestamp()}, draw_id="all")
