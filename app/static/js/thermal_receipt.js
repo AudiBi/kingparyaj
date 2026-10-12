@@ -116,6 +116,8 @@
   function body(spec) {
     var h = '<div class="rc">';
     h += '<img class="logo" src="/static/img/logo-print.png" alt="King Paryaj">';
+    h += '<div class="c shop">' + esc(spec.bureau || 'King Paryaj') + '</div>';
+    if (spec.address || spec.phone) h += '<div class="c small">' + esc([spec.address, spec.phone].filter(Boolean).join(' · ')) + '</div>';
     h += '<div class="band">' + esc(spec.game) + '</div>';
     if (spec.round) h += '<div class="sub">' + esc(spec.round) + '</div>';
     if (spec.roundTime) h += '<div class="c small">' + esc(spec.roundTime) + '</div>';
