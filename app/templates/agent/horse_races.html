@@ -375,7 +375,7 @@
 
     function showReceipt(bet, payload) {
         const r = [race, display].find(x => x && x.race_id === bet.race_id) || race || display;
-        const labels = { WIN: 'GAGNANT (1er)', PLACE: 'PLACÉ', EXACTA: 'EXACTA (1er + 2e dans l\'ordre)', TRIFECTA: 'TRIFECTA (1er + 2e + 3e dans l\'ordre)' };
+        const labels = { WIN: 'GAGNANT (1er)', PLACE: 'PLACÉ', EXACTA: 'COUPLÉ ORDRE (1er + 2e dans l\'ordre)', TRIFECTA: 'TIERCÉ ORDRE (1er + 2e + 3e dans l\'ordre)' };
         const names = bet.selection.map(n => `N° ${n} ${nameOf(n, r)}`);
         const done = bet.status && bet.status !== 'PENDING';
         const sections = [
@@ -391,7 +391,7 @@
             sections.push({ type: 'total', label: 'TOTAL PAYÉ', value: KPReceipt.money(bet.stake) });
         }
         kpShowReceipt({
-            game: 'HORSE RACES', round: r ? `Course n° ${r.race_number}` : '', roundTime: r ? (r.manual && !r.started_at ? 'Course lancée par un agent' : 'Départ à ' + localTime(r.scheduled_at)) : '',
+            game: 'COURSES DE CHEVAUX', round: r ? `Course n° ${r.race_number}` : '', roundTime: r ? (r.manual && !r.started_at ? 'Course lancée par un agent' : 'Départ à ' + localTime(r.scheduled_at)) : '',
             bureau: KP_AGENT.bureau, address: KP_AGENT.address, phone: KP_AGENT.phone, agent: KP_AGENT.name,
             ticket: bet.ticket_number || (payload && payload.player_type === 'ticket' ? payload.identifier : null),
             code: bet.bet_id, placedAt: bet.placed_at, sections,

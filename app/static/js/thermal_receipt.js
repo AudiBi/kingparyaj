@@ -121,6 +121,7 @@
     h += '<div class="band">' + esc(spec.game) + '</div>';
     if (spec.round) h += '<div class="sub">' + esc(spec.round) + '</div>';
     if (spec.roundTime) h += '<div class="c small">' + esc(spec.roundTime) + '</div>';
+    h += '<div class="sub">Date : ' + esc(dateTime(spec.placedAt)) + '</div>';
 
     var number = spec.ticket || spec.code;
     if (number) {

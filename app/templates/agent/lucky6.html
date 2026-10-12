@@ -375,9 +375,8 @@
         } else {
             sections.push({ type: 'total', label: 'TOTAL PAYÉ', value: KPReceipt.money(bet.stake) });
         }
-        if (bet.bet_type === 'SIX') sections.push({ type: 'text', text: 'Gain selon la position du 6e numéro sorti (35 boules tirées).' });
         kpShowReceipt({
-            game: 'LUCKY 6', round: `Manche n° ${bet.race_number}`, roundTime: bet.scheduled_at ? 'Tirage à ' + localTime(bet.scheduled_at) : 'Tirage lancé par un agent',
+            game: 'CHANCE 6', round: `Manche n° ${bet.race_number}`, roundTime: bet.scheduled_at ? 'Tirage à ' + localTime(bet.scheduled_at) : 'Tirage lancé par un agent',
             bureau: KP_AGENT.bureau, address: KP_AGENT.address, phone: KP_AGENT.phone, agent: KP_AGENT.name,
             ticket: bet.ticket_number || (payload && payload.player_type === 'ticket' ? payload.identifier : null),
             code: bet.bet_id, placedAt: bet.placed_at, sections,

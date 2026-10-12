@@ -585,7 +585,7 @@
         }
         const d = lastSpin, won = d.winnings > 0;
         kpShowReceipt({
-            game: 'LUCKY WHEEL', round: 'Tour de roue', roundTime: KPReceipt.dateTime(d.played_at),
+            game: 'ROUE DE LA CHANCE', round: 'Tour de roue', roundTime: KPReceipt.dateTime(d.played_at),
             bureau: KP_AGENT.bureau, address: KP_AGENT.address, phone: KP_AGENT.phone, agent: KP_AGENT.name,
             ticket: d.ticket_number, code: d.play_id, placedAt: d.played_at,
             sections: [
