@@ -85,7 +85,7 @@
       '.logo{display:block;width:' + (mm === 58 ? 20 : 26) + 'mm;height:auto;margin:0 auto .5mm;filter:grayscale(1) contrast(1.6)}' +
       '.c{text-align:center}.shop{font-size:' + (base + 2) + 'px;font-weight:900;text-transform:uppercase;letter-spacing:.3px}' +
       '.small{font-size:' + (base - 1.5) + 'px;font-weight:600}' +
-      '.band{background:#000;color:#fff;text-align:center;font-weight:900;font-size:' + (base + 6) + 'px;letter-spacing:2px;padding:.6mm 0;margin:1mm 0}' +
+      '.band{background:#000;color:#fff;text-align:center;font-weight:900;font-size:' + (base + 6) + 'px;letter-spacing:2px;padding:.6mm 0;margin:0 0 1mm}' +
       '.sub{text-align:center;font-weight:800;font-size:' + (base + 1) + 'px}' +
       '.sep{border:0;border-top:1.5px dashed #000;margin:1mm 0}' +
       '.sep2{border:0;border-top:2.5px solid #000;margin:1mm 0}' +
@@ -115,9 +115,6 @@
 
   function body(spec) {
     var h = '<div class="rc">';
-    h += '<img class="logo" src="/static/img/logo-print.png" alt="King Paryaj">';
-    h += '<div class="c shop">' + esc(spec.bureau || 'King Paryaj') + '</div>';
-    if (spec.address || spec.phone) h += '<div class="c small">' + esc([spec.address, spec.phone].filter(Boolean).join(' · ')) + '</div>';
     h += '<div class="band">' + esc(spec.game) + '</div>';
     if (spec.round) h += '<div class="sub">' + esc(spec.round) + '</div>';
     if (spec.roundTime) h += '<div class="c small">' + esc(spec.roundTime) + '</div>';
