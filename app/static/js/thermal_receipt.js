@@ -115,6 +115,7 @@
 
   function body(spec) {
     var h = '<div class="rc">';
+    h += '<img class="logo" src="/static/img/logo-print.png" alt="King Paryaj">';
     h += '<div class="band">' + esc(spec.game) + '</div>';
     if (spec.round) h += '<div class="sub">' + esc(spec.round) + '</div>';
     if (spec.roundTime) h += '<div class="c small">' + esc(spec.roundTime) + '</div>';
@@ -176,6 +177,7 @@
     try {
       var mm = paper();
       var heightMm = Math.ceil(doc.documentElement.scrollHeight * 25.4 / 96) + 1;
+      if (heightMm <= mm) heightMm = mm + 1; // jamais plus large que haut : sinon l'impression passe en paysage
       var st = doc.createElement('style');
       st.textContent = '@page{size:' + mm + 'mm ' + heightMm + 'mm;margin:0}';
       doc.head.appendChild(st);
