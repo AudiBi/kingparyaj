@@ -80,9 +80,9 @@
       '@page{size:' + mm + 'mm 297mm;margin:0}' +
       '*{box-sizing:border-box;margin:0;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
       'html,body{background:#fff;color:#000}' +
-      'body{width:' + mm + 'mm;padding:2mm ' + ((mm - printable) / 2) + 'mm 3mm;font:600 ' + base + 'px/1.2 "Arial Narrow",Arial,Helvetica,sans-serif}' +
+      'body{width:' + mm + 'mm;padding:0 ' + ((mm - printable) / 2) + 'mm;font:600 ' + base + 'px/1.2 "Arial Narrow",Arial,Helvetica,sans-serif}' +
       '.rc{width:' + printable + 'mm}' +
-      '.logo{display:block;width:' + (mm === 58 ? 20 : 26) + 'mm;height:auto;margin:0 auto 1mm;filter:grayscale(1) contrast(1.6)}' +
+      '.logo{display:block;width:' + (mm === 58 ? 20 : 26) + 'mm;height:auto;margin:0 auto .5mm;filter:grayscale(1) contrast(1.6)}' +
       '.c{text-align:center}.shop{font-size:' + (base + 2) + 'px;font-weight:900;text-transform:uppercase;letter-spacing:.3px}' +
       '.small{font-size:' + (base - 1.5) + 'px;font-weight:600}' +
       '.band{background:#000;color:#fff;text-align:center;font-weight:900;font-size:' + (base + 6) + 'px;letter-spacing:2px;padding:.6mm 0;margin:1mm 0}' +
@@ -100,7 +100,7 @@
       '.num{min-width:' + (mm === 58 ? 7 : 8.2) + 'mm;height:' + (mm === 58 ? 7 : 8.2) + 'mm;border:2px solid #000;border-radius:50%;display:flex;align-items:center;justify-content:center;' +
         'font:900 ' + (base + 1) + 'px "Courier New",monospace}' +
       '.num.on{background:#000;color:#fff}' +
-      '.total{display:flex;justify-content:space-between;align-items:baseline;font-weight:900;font-size:' + (base + 4) + 'px;margin:.5mm 0}' +
+      '.total{display:flex;justify-content:space-between;align-items:baseline;font-weight:900;font-size:' + (base + 4) + 'px;margin:.5mm 0 0}' +
       '.stamp{border:3px double #000;text-align:center;font-weight:900;font-size:' + (base + 4) + 'px;letter-spacing:2px;padding:.5mm 0;margin:1mm 0}' +
       '.stamp.won{background:#000;color:#fff;border-style:solid}' +
       '.mono{font:600 ' + (base - 2.5) + 'px/1.3 "Courier New",monospace;word-break:break-all}' +
@@ -149,14 +149,6 @@
       if (s.type === 'stamp') { h += '<div class="stamp' + (s.won ? ' won' : '') + '">' + esc(s.text) + '</div>'; return; }
     });
 
-    h += '<hr class="sep">';
-    var info = [esc(dateTime(spec.placedAt))];
-    if (spec.agent) info.unshift(esc(spec.agent));
-    h += '<div class="small">' + info.join(' · ') + '</div>';
-    if (spec.hash) h += '<div class="mono">Empreinte ' + esc(String(spec.hash).slice(0, 24)) + '…</div>';
-    if (spec.seed) h += '<div class="mono">Seed ' + esc(String(spec.seed).slice(0, 24)) + '…</div>';
-    if (spec.verifyUrl) h += '<div class="mono">' + esc(spec.verifyUrl) + '</div>';
-    h += '<div class="foot">' + esc(spec.footer || 'Gain payable le jour même, avant minuit, sur présentation de ce reçu.') + ' 18 ans et plus. Jouez responsable.</div>';
     return h + '</div>';
   }
 
@@ -185,7 +177,7 @@
   function fitPage(doc) {
     try {
       var mm = paper();
-      var heightMm = Math.ceil(doc.documentElement.scrollHeight * 25.4 / 96) + 4;
+      var heightMm = Math.ceil(doc.documentElement.scrollHeight * 25.4 / 96) + 1;
       var st = doc.createElement('style');
       st.textContent = '@page{size:' + mm + 'mm ' + heightMm + 'mm;margin:0}';
       doc.head.appendChild(st);
