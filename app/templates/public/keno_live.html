@@ -134,7 +134,10 @@
         const d = shown();
         board.setDraw(d);
         const mine = d ? mineFor(d.draw_id) : [];
-        board.setPicks(mine.length ? mine[mine.length - 1].picks : []);
+        // numéros en cours de saisie par l'agent : visibles tout de suite sur la grille (avant la validation du ticket)
+        const pv = screen && screen.preview;
+        const typing = !!(pv && d && pv.draw_id === d.draw_id);
+        board.setPicks(typing ? (pv.picks || []) : (mine.length ? mine[mine.length - 1].picks : []));
         $('drawNo').textContent = d ? 'Tirage #' + d.draw_number + (d.manual && d.status === 'pending' ? '' : ' — ' + time(d.draw_time)) : 'Keno';
         $('hash').textContent = d ? (d.server_seed ? 'Seed : ' + d.server_seed : 'Empreinte : ' + d.server_seed_hash) : '';
         renderSide();

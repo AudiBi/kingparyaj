@@ -168,7 +168,10 @@
         const r = pickRound();
         board.setRound(r);
         const mine = r ? myTicketsFor(r.race_id).filter(t => t.bet_type === 'SIX') : [];
-        const picks = mine.length ? mine[mine.length - 1].selection : [];
+        // numéros en cours de saisie par l'agent : visibles tout de suite sur la grille (avant la validation du pari)
+        const pv = screen && screen.preview;
+        const typing = !!(pv && r && pv.race_id === r.race_id);
+        const picks = typing ? (pv.selection || []) : (mine.length ? mine[mine.length - 1].selection : []);
         const key = picks.join(',');
         if (key !== board._picksKey) { board._picksKey = key; board.setPicks(picks); }
 
