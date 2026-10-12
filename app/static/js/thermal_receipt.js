@@ -80,31 +80,31 @@
       '@page{size:' + mm + 'mm 297mm;margin:0}' +
       '*{box-sizing:border-box;margin:0;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
       'html,body{background:#fff;color:#000}' +
-      'body{width:' + mm + 'mm;padding:3mm ' + ((mm - printable) / 2) + 'mm 6mm;font:600 ' + base + 'px/1.35 "Arial Narrow",Arial,Helvetica,sans-serif}' +
+      'body{width:' + mm + 'mm;padding:2mm ' + ((mm - printable) / 2) + 'mm 3mm;font:600 ' + base + 'px/1.2 "Arial Narrow",Arial,Helvetica,sans-serif}' +
       '.rc{width:' + printable + 'mm}' +
-      '.logo{display:block;width:' + (mm === 58 ? 30 : 40) + 'mm;height:auto;margin:0 auto 1.5mm;filter:grayscale(1) contrast(1.6)}' +
+      '.logo{display:block;width:' + (mm === 58 ? 20 : 26) + 'mm;height:auto;margin:0 auto 1mm;filter:grayscale(1) contrast(1.6)}' +
       '.c{text-align:center}.shop{font-size:' + (base + 2) + 'px;font-weight:900;text-transform:uppercase;letter-spacing:.3px}' +
       '.small{font-size:' + (base - 1.5) + 'px;font-weight:600}' +
-      '.band{background:#000;color:#fff;text-align:center;font-weight:900;font-size:' + (base + 9) + 'px;letter-spacing:2px;padding:1.2mm 0;margin:2mm 0 1.5mm}' +
+      '.band{background:#000;color:#fff;text-align:center;font-weight:900;font-size:' + (base + 6) + 'px;letter-spacing:2px;padding:.6mm 0;margin:1mm 0}' +
       '.sub{text-align:center;font-weight:800;font-size:' + (base + 1) + 'px}' +
-      '.sep{border:0;border-top:1.5px dashed #000;margin:2mm 0}' +
-      '.sep2{border:0;border-top:2.5px solid #000;margin:2mm 0}' +
+      '.sep{border:0;border-top:1.5px dashed #000;margin:1mm 0}' +
+      '.sep2{border:0;border-top:2.5px solid #000;margin:1mm 0}' +
       '.row{display:flex;align-items:baseline;gap:1mm}.row .l{white-space:nowrap}.row .d{flex:1;border-bottom:1.5px dotted #000;transform:translateY(-1mm)}' +
       '.row .v{white-space:nowrap;font-weight:800;text-align:right}' +
-      '.tk{border:2.5px solid #000;text-align:center;padding:1.3mm 0 1mm;margin:1.5mm 0}' +
+      '.tk{border:2.5px solid #000;text-align:center;padding:.6mm 0;margin:1mm 0}' +
       '.tk .t{font-size:' + (base - 1) + 'px;font-weight:800;letter-spacing:1px}' +
       '.tk .n{font:900 ' + (mm === 58 ? 17 : 21) + 'px/1.15 "Courier New",monospace;letter-spacing:1px}' +
       '.bc{display:block;width:100%;margin:1mm 0 .5mm}' +
-      '.lbl{font-weight:800;margin:1.5mm 0 1mm}' +
+      '.lbl{font-weight:800;margin:1mm 0 .5mm}' +
       '.nums{display:flex;flex-wrap:wrap;gap:1.2mm}' +
       '.num{min-width:' + (mm === 58 ? 7 : 8.2) + 'mm;height:' + (mm === 58 ? 7 : 8.2) + 'mm;border:2px solid #000;border-radius:50%;display:flex;align-items:center;justify-content:center;' +
         'font:900 ' + (base + 1) + 'px "Courier New",monospace}' +
       '.num.on{background:#000;color:#fff}' +
-      '.total{display:flex;justify-content:space-between;align-items:baseline;font-weight:900;font-size:' + (base + 5) + 'px;margin:1mm 0}' +
-      '.stamp{border:3px double #000;text-align:center;font-weight:900;font-size:' + (base + 6) + 'px;letter-spacing:2px;padding:1mm 0;margin:2mm 0}' +
+      '.total{display:flex;justify-content:space-between;align-items:baseline;font-weight:900;font-size:' + (base + 4) + 'px;margin:.5mm 0}' +
+      '.stamp{border:3px double #000;text-align:center;font-weight:900;font-size:' + (base + 4) + 'px;letter-spacing:2px;padding:.5mm 0;margin:1mm 0}' +
       '.stamp.won{background:#000;color:#fff;border-style:solid}' +
       '.mono{font:600 ' + (base - 2.5) + 'px/1.3 "Courier New",monospace;word-break:break-all}' +
-      '.foot{text-align:center;font-size:' + (base - 1.5) + 'px;font-weight:700;margin-top:1.5mm}' +
+      '.foot{text-align:center;font-size:' + (base - 2) + 'px;font-weight:700;margin-top:1mm}' +
       '.cut{text-align:center;font-size:' + (base - 2) + 'px;margin-top:3mm;letter-spacing:1px}';
   }
 
@@ -126,7 +126,7 @@
     if (number) {
       h += '<div class="tk"><div class="t">' + (spec.ticket ? 'TICKET N°' : 'CODE DU PARI') + '</div>' +
         '<div class="n">' + esc(spec.ticket || String(spec.code).slice(0, 8).toUpperCase()) + '</div>' +
-        barcodeSvg(spec.ticket || spec.code, 11) + '</div>';
+        barcodeSvg(spec.ticket || spec.code, 8) + '</div>';
     }
 
     (spec.sections || []).forEach(function (s) {
@@ -150,21 +150,13 @@
     });
 
     h += '<hr class="sep">';
-    var info = [];
-    if (spec.agent) info.push(['Agent', esc(spec.agent)]);
-    info.push(['Émis le', esc(dateTime(spec.placedAt))]);
-    if (spec.ticket && spec.code) info.push(['Réf. pari', esc(String(spec.code).slice(0, 8).toUpperCase())]);
-    h += info.map(function (r) { return row(r[0], r[1]); }).join('');
-    if (spec.hash) {
-      h += '<div class="lbl" style="margin-top:2mm">Empreinte du tirage (SHA-256)</div><div class="mono">' + esc(spec.hash) + '</div>';
-    }
-    if (spec.seed) h += '<div class="lbl">Seed révélé</div><div class="mono">' + esc(spec.seed) + '</div>';
-    if (spec.verifyUrl) h += '<div class="lbl">Vérification</div><div class="mono">' + esc(spec.verifyUrl) + '</div>';
-    h += '<hr class="sep">';
-    h += '<div class="foot">' + esc(spec.footer || 'Gain payable le jour même, avant minuit, sur présentation de ce reçu.') + '<br>' +
-      'Jeu réservé aux personnes de 18 ans et plus.<br>Jouez de façon responsable.</div>';
-    h += '<div class="foot" style="font-size:13px;font-weight:900;margin-top:2mm">MERCI ET BONNE CHANCE !</div>';
-    h += '<div class="cut">- - - - - - - - - - - - - - - - - - - -</div>';
+    var info = [esc(dateTime(spec.placedAt))];
+    if (spec.agent) info.unshift(esc(spec.agent));
+    h += '<div class="small">' + info.join(' · ') + '</div>';
+    if (spec.hash) h += '<div class="mono">Empreinte ' + esc(String(spec.hash).slice(0, 24)) + '…</div>';
+    if (spec.seed) h += '<div class="mono">Seed ' + esc(String(spec.seed).slice(0, 24)) + '…</div>';
+    if (spec.verifyUrl) h += '<div class="mono">' + esc(spec.verifyUrl) + '</div>';
+    h += '<div class="foot">' + esc(spec.footer || 'Gain payable le jour même, avant minuit, sur présentation de ce reçu.') + ' 18 ans et plus. Jouez responsable.</div>';
     return h + '</div>';
   }
 
