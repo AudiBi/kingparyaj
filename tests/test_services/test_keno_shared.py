@@ -1,5 +1,5 @@
 # tests/test_services/test_keno_shared.py
-"""Keno PARTAGÉ (mode par défaut) : tirages communs calés sur l'horloge,
+"""Keno PARTAGÉ en mode « à l'heure » (option manual_launch=False) : tirages communs calés sur l'horloge,
 réglages figés par tirage, paris jusqu'à la fermeture, tirage + règlement
 par le cycle automatique, état en direct pour les écrans."""
 
@@ -24,7 +24,7 @@ AGENT = "agent-guichet"
 @pytest.fixture
 async def service(db_session, fake_redis):
     # toute la journée, pour que les tests ne dépendent pas de l'heure
-    await fake_redis.set(CONFIG_KEY, json.dumps(engine.validate_config({"open_hour": 0, "close_hour": 24})))
+    await fake_redis.set(CONFIG_KEY, json.dumps(engine.validate_config({"open_hour": 0, "close_hour": 24, "manual_launch": False})))
     return KenoService(db_session, fake_redis)
 
 
@@ -43,7 +43,7 @@ def test_shared_is_the_default_mode():
     ({"interval_minutes": 1}, "Intervalle"),
     ({"ball_interval_ms": 100}, "boules"),
     ({"open_hour": 20, "close_hour": 10}, "ouverture"),
-    ({"interval_minutes": 2, "ball_interval_ms": 9000}, "plus longtemps"),
+    ({"interval_minutes": 2, "ball_interval_ms": 9000, "manual_launch": False}, "plus longtemps"),
 ])
 def test_timing_validation(change, error):
     with pytest.raises(engine.KenoConfigError, match=error):

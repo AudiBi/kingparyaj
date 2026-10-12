@@ -44,6 +44,7 @@
                 </select>
             </div>
             <div class="grid-2" id="sharedFields">
+                <label class="flex-center" style="grid-column:1/-1;"><input type="checkbox" name="manual_launch"> Lancement manuel : un agent lance le tirage quand il a vendu assez de tickets (pas d'heure). Décoché : un tirage toutes les N minutes.</label>
                 <div class="form-group"><label>Un tirage toutes les (min)</label><input class="form-control" name="interval_minutes" type="number" min="2" max="120"></div>
                 <div class="form-group"><label>Fermeture des paris avant le tirage (s)</label><input class="form-control" name="betting_close_seconds" type="number" min="0" max="300"></div>
                 <div class="form-group"><label>Ouverture (heure d'Haïti)</label><input class="form-control" name="open_hour" type="number" min="0" max="23"></div>
@@ -171,6 +172,7 @@
     function fill(c) {
         form.enabled.checked = !!c.enabled;
         form.mode.value = c.mode;
+        form.manual_launch.checked = !!c.manual_launch;
         ['min_picks', 'max_picks', 'min_bet', 'max_bet', 'max_payout', 'max_rtp'].forEach(k => form[k].value = c[k]);
         ['interval_minutes', 'betting_close_seconds', 'open_hour', 'close_hour', 'intro_ms', 'ball_interval_ms', 'outro_ms'].forEach(k => form[k].value = c[k]);
         toggleShared();
@@ -220,6 +222,7 @@
             paytable: readTable(),
         };
         ['interval_minutes', 'betting_close_seconds', 'open_hour', 'close_hour', 'intro_ms', 'ball_interval_ms', 'outro_ms'].forEach(k => payload[k] = Number(form[k].value));
+        payload.manual_launch = form.manual_launch.checked;
         const btn = document.getElementById('saveBtn');
         btn.disabled = true;
         try {

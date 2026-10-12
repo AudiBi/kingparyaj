@@ -16,6 +16,8 @@
     .hr-status.BETTING_OPEN { background: #dcfce7; color: #166534; }
     .hr-status.BETTING_CLOSED, .hr-status.RUNNING { background: #fef3c7; color: #92400e; }
     .hr-status.CANCELLED { background: #fee2e2; color: #991b1b; }
+    .hr-launch { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; }
+    .hr-launch small { display: block; color: #92400e; font-size: 12px; }
     .hr-countdown { font-variant-numeric: tabular-nums; font-size: 26px; font-weight: 800; color: #059669; }
     #raceCanvas { width: 100%; display: block; border-radius: 8px; background: #0f172a; }
     .hr-live { font-size: 12px; color: #64748b; display: flex; align-items: center; gap: 6px; }
@@ -111,6 +113,11 @@
                 </div>
             </div>
 
+            <div class="hr-launch" id="launchBox" style="display:none;">
+                <div><b id="launchInfo"></b><small id="launchHint">La course ne part que lorsqu'un agent qui y a vendu la lance : vendez autant de fiches que vous voulez avant.</small></div>
+                <button type="button" id="launchBtn" class="btn btn-danger"><i class="fas fa-play"></i> LANCER LA COURSE</button>
+            </div>
+
             <div class="bet-types" id="betTypes">
                 <button type="button" class="bet-type active" data-type="WIN">WIN<small>1er</small></button>
                 <button type="button" class="bet-type" data-type="PLACE">PLACE<small>un des choisis 1er</small></button>
@@ -174,6 +181,7 @@
         quote: '/agent/api/horse-races/quote',
         bet: '/agent/api/horse-races/bet',
         csrf: '/agent/api/horse-races/csrf-token',
+        launch: '/agent/api/horse-races/launch',
         myBets: id => `/agent/api/horse-races/races/${id}/my-bets`
     };
 
@@ -182,6 +190,7 @@
     let display = null;          // course affichée (en piste)
     let race = null;             // course qui prend les paris
     let betType = 'WIN', selection = [], quoteSeq = 0, currentOdds = null;
+    let betTotals = null;        // fiches vendues sur la course ouverte : { race_id, bets, stake, mine }
 
     const $ = id => document.getElementById(id);
     const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -350,6 +359,7 @@
             }
             showToast('Pari enregistré', 'success');
             showReceipt(data.bet, payload);
+            loadCurrent();  // compteur de fiches de la course
             // Pari suivant : la sélection est réinitialisée
             selection = [];
             renderRunners();
@@ -381,7 +391,7 @@
             sections.push({ type: 'total', label: 'TOTAL PAYÉ', value: KPReceipt.money(bet.stake) });
         }
         kpShowReceipt({
-            game: 'HORSE RACES', round: r ? `Course n° ${r.race_number}` : '', roundTime: r ? 'Départ à ' + localTime(r.scheduled_at) : '',
+            game: 'HORSE RACES', round: r ? `Course n° ${r.race_number}` : '', roundTime: r ? (r.manual && !r.started_at ? 'Course lancée par un agent' : 'Départ à ' + localTime(r.scheduled_at)) : '',
             bureau: KP_AGENT.bureau, address: KP_AGENT.address, phone: KP_AGENT.phone, agent: KP_AGENT.name,
             ticket: bet.ticket_number || (payload && payload.player_type === 'ticket' ? payload.identifier : null),
             code: bet.bet_id, placedAt: bet.placed_at, sections,
@@ -426,6 +436,8 @@
             const res = await fetch(URLS.current);
             const data = await res.json();
             clock.sync(data.server_time);
+            const open = data.betting_race;
+            betTotals = open ? { race_id: open.race_id, bets: open.total_bets || 0, stake: open.total_stake || 0, mine: open.my_bets || 0 } : null;
             live.applySnapshot(data);
         } catch (e) { /* réessai au prochain cycle */ }
     }
@@ -434,20 +446,63 @@
     function tick() {
         live.tick();
         const now = clock.now();
-        if (display && ['BETTING_OPEN', 'BETTING_CLOSED', 'SCHEDULED'].includes(display.status)) {
+        if (display && display.manual && ['BETTING_OPEN', 'BETTING_CLOSED', 'SCHEDULED'].includes(display.status)) {
+            $('countdownLabel').textContent = 'Course lancée par un agent';
+            $('countdown').textContent = totalsFor(display) ? plural(totalsFor(display).bets, 'fiche') : '';
+        } else if (display && ['BETTING_OPEN', 'BETTING_CLOSED', 'SCHEDULED'].includes(display.status)) {
             $('countdownLabel').textContent = 'Départ dans';
             $('countdown').textContent = HR.formatCountdown(HR.parseUtc(display.scheduled_at) - now);
         } else {
             $('countdownLabel').textContent = display ? HR.statusLabel(display.status) : '';
             $('countdown').textContent = '';
         }
-        if (race) {
+        updateLaunch();
+        if (race && race.manual) {
+            const t = totalsFor(race);
+            $('betCountdown').textContent = t ? plural(t.bets, 'fiche') + ' · ' + money(t.stake) : '';
+        } else if (race) {
             const left = HR.parseUtc(race.betting_closes_at) - now;
             $('betCountdown').textContent = 'Fermeture ' + HR.formatCountdown(left);
             if (left <= 0 && !$('submitBet').disabled) $('submitBet').disabled = true;
         } else {
             $('betCountdown').textContent = '';
         }
+    }
+
+    const plural = (n, word) => n + ' ' + word + (n > 1 ? 's' : '');
+    const totalsFor = r => (r && betTotals && betTotals.race_id === r.race_id) ? betTotals : null;
+
+    // Bouton « Lancer la course » : bloqué pendant la course précédente
+    let launching = false;
+    function updateLaunch() {
+        const show = !!(race && race.status === 'BETTING_OPEN');
+        $('launchBox').style.display = show ? '' : 'none';
+        if (!show) return;
+        const busy = display && display.race_id !== race.race_id && display.status === 'RUNNING';
+        const n = (totalsFor(race) || { bets: 0 }).bets;
+        $('launchInfo').textContent = 'Course #' + race.race_number + ' — ' + plural(n, 'fiche') + ' vendue' + (n > 1 ? 's' : '');
+        const myBets = (totalsFor(race) || { mine: 0 }).mine;
+        const mine = myBets > 0;
+        if (!launching) $('launchBtn').disabled = !!busy || !mine;
+        $('launchBtn').title = !mine ? 'Vendez au moins une fiche sur cette course pour pouvoir la lancer' : (busy ? 'Attendez la fin de la course en cours' : '');
+        $('launchHint').textContent = mine ? 'Vous avez vendu ' + plural(myBets, 'fiche') + ' sur cette course.' : 'Seul un agent qui a vendu une fiche sur cette course peut la lancer.';
+    }
+    async function launchRace() {
+        if (!race || launching) return;
+        const t = totalsFor(race) || { bets: 0, stake: 0 };
+        if (!confirm('Lancer la course #' + race.race_number + ' maintenant ?\n' + plural(t.bets, 'fiche') + ' (' + money(t.stake) + ').\nLes paris seront fermés : on ne pourra plus en ajouter à cette course.')) return;
+        launching = true; $('launchBtn').disabled = true;
+        try {
+            const res = await fetch(URLS.launch, {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': await freshCsrf() },
+                body: JSON.stringify({ race_id: race.race_id }),
+            });
+            const data = await res.json().catch(() => null);
+            if (!res.ok || !data || !data.success) throw new Error(errorMessage(data, 'Lancement refusé (session expirée ?)'));
+            showToast(data.message || 'Course lancée', 'success');
+        } catch (err) {
+            showToast(err.message || 'Erreur réseau', 'error');
+        } finally { launching = false; loadCurrent(); }
     }
 
     // ---------- Événements ----------
@@ -465,6 +520,7 @@
         if (btn && !btn.disabled) toggleRunner(Number(btn.dataset.number));
     });
     $('stake').addEventListener('input', () => { updatePayout(); sendScreenPreview(); });
+    $('launchBtn').addEventListener('click', launchRace);
     $('counterScreenUrl').textContent = COUNTER_SCREEN_URL;
     $('counterScreenBtn').addEventListener('click', () => {
         const w = window.open(COUNTER_SCREEN_URL, 'hrCounterScreen', 'popup,width=1280,height=720');

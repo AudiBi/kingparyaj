@@ -275,3 +275,45 @@ async def test_admin_draws_and_verifies(make_client, db_session, fake_redis, adm
     assert settled.status_code == 200
     verify = (await client.get(f"/api/v1/lucky6/rounds/{rid}/verify")).json()
     assert verify["verification"]["seed_hash_valid"] and verify["verification"]["result_valid"]
+
+
+@pytest.mark.asyncio
+async def test_agent_launches_the_open_round(make_client, db_session, fake_redis, make_agent, make_user):
+    agent = await make_agent()
+    player = await make_user(balance=Decimal("100"))
+    race = await _round(db_session, fake_redis)
+    assert race.betting_closes_at is None  # manche sans heure : un agent la lance
+    client = await make_client()
+    await _agent_login(client, agent)
+
+    for _ in range(3):  # autant de fiches que voulu avant le lancement
+        sold = await client.post("/agent/api/lucky6/bet", headers=await _token(client), json={
+            "race_id": race.id, "bet_type": "SIX", "selection": PICKS, "stake": "10",
+            "player_type": "account", "identifier": player.phone,
+        })
+        assert sold.status_code == 200, sold.text
+    state = (await client.get("/agent/api/lucky6/state")).json()
+    assert state["betting_race"]["manual"] is True and state["betting_race"]["betting_closes_at"] is None
+
+    assert (await client.post("/agent/api/lucky6/launch", json={"race_id": race.id}, follow_redirects=False)).status_code == 303  # CSRF
+    assert (await client.post("/agent/api/lucky6/launch", headers=await _token(client),
+                              json={"race_id": race.id, "balls": [1]})).status_code == 422  # champ inconnu refusé
+    stranger = await make_agent()  # un agent qui n'a rien vendu sur cette manche ne peut pas la lancer
+    stranger_client = await make_client()
+    await _agent_login(stranger_client, stranger)
+    refused = await stranger_client.post("/agent/api/lucky6/launch", headers=await _token(stranger_client), json={"race_id": race.id})
+    assert refused.status_code == 400 and "a vendu" in refused.json()["detail"]
+    assert (await client.get("/agent/api/lucky6/state")).json()["betting_race"]["my_bets"] == 3
+
+    launched = await client.post("/agent/api/lucky6/launch", headers=await _token(client), json={"race_id": race.id})
+    assert launched.status_code == 200, launched.text
+    assert launched.json()["round"]["status"] == "RUNNING"
+
+    again = await client.post("/agent/api/lucky6/launch", headers=await _token(client), json={"race_id": race.id})
+    assert again.status_code == 400
+    late = await client.post("/agent/api/lucky6/bet", headers=await _token(client), json={
+        "race_id": race.id, "bet_type": "SIX", "selection": PICKS, "stake": "10",
+        "player_type": "account", "identifier": player.phone,
+    })
+    assert late.status_code == 400
+    assert await WalletService(db_session, fake_redis).get_balance(player.id) == Decimal("70")

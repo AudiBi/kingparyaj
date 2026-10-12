@@ -43,6 +43,7 @@
                 <div class="flex" style="gap:16px;flex-wrap:wrap;margin-bottom:12px;">
                     <label class="flex-center"><input type="checkbox" name="enabled"> Lucky6 ouvert</label>
                     <label class="flex-center"><input type="checkbox" name="auto_enabled"> Manches automatiques</label>
+                    <label class="flex-center"><input type="checkbox" name="manual_launch"> Lancement manuel par un agent (pas d'heure ; décoché : une manche toutes les N minutes)</label>
                     <label class="flex-center"><input type="checkbox" name="parity_enabled"> Pari pair / impair (1re boule)</label>
                 </div>
                 <div class="grid-2">
@@ -186,7 +187,7 @@
         meta = await (await fetch(API + '/config')).json();
         const c = meta.config, f = $('configForm');
         NUM.forEach(k => f[k].value = c[k]);
-        ['enabled', 'auto_enabled', 'parity_enabled'].forEach(k => f[k].checked = !!c[k]);
+        ['enabled', 'auto_enabled', 'manual_launch', 'parity_enabled'].forEach(k => f[k].checked = !!c[k]);
         f.stake_options.value = c.stake_options.join(', ');
         f.max_rtp.value = (c.max_rtp * 100).toFixed(1);
         table = c.paytable.slice();
@@ -203,7 +204,7 @@
         const f = e.target;
         const payload = { paytable: table.map(Number) };
         NUM.forEach(k => payload[k] = Number(f[k].value));
-        ['enabled', 'auto_enabled', 'parity_enabled'].forEach(k => payload[k] = f[k].checked);
+        ['enabled', 'auto_enabled', 'manual_launch', 'parity_enabled'].forEach(k => payload[k] = f[k].checked);
         payload.stake_options = f.stake_options.value.split(/[,;\s]+/).filter(Boolean).map(Number);
         payload.max_rtp = Number(f.max_rtp.value) / 100;
         try {

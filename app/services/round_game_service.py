@@ -85,6 +85,8 @@ class RoundGameService:
         "cancelled": "Manche annulée",
         "running": "Manche déjà lancée",
         "status": "Action impossible : manche au statut {status}",
+        "launch_not_seller": "Seul un agent qui a vendu une fiche sur cette manche peut la lancer",
+        "launch_busy": "Un tirage est encore en cours : patientez la fin de l'animation avant d'en lancer un autre",
     }
 
     def __init__(self, db: AsyncSession, redis_client: redis.Redis):
@@ -234,14 +236,39 @@ class RoundGameService:
         )
         return result.scalar_one_or_none()
 
-    async def live_state(self) -> Dict[str, Any]:
+    async def live_state(self, with_totals: bool = False, agent_id: Optional[str] = None) -> Dict[str, Any]:
         """État pour les écrans : la manche à afficher (en cours, ou la
-        prochaine) et celle qui prend les paris (souvent la suivante)."""
+        prochaine) et celle qui prend les paris (souvent la suivante).
+        `with_totals` (panel agent seulement) ajoute les fiches vendues : l'agent
+        décide quand lancer la manche ; ces totaux ne sont pas publics. Avec `agent_id`,
+        `my_bets` donne ses propres fiches (seul un vendeur de la manche peut la lancer)."""
         current = await self.get_current_race()
         open_race = await self.get_open_race()
+        shown = [r for r in (current, open_race) if r is not None]
+        totals = await self.bet_totals([r.id for r in shown]) if with_totals else {}
+        mine: Dict[str, int] = {}
+        if agent_id and shown:
+            rows = await self.db.execute(
+                select(GameBet.round_id, func.count(GameBet.id))
+                .where(GameBet.round_id.in_([r.id for r in shown]), GameBet.agent_id == agent_id)
+                .group_by(GameBet.round_id)
+            )
+            mine = {rid: int(n) for rid, n in rows.all()}
+
+        def data(race: Optional[GameRound]) -> Optional[Dict[str, Any]]:
+            if race is None:
+                return None
+            out = self.serialize_race(race)
+            if with_totals:
+                out["total_bets"] = totals.get(race.id, {}).get("total_bets", 0)
+                out["total_stake"] = float(totals.get(race.id, {}).get("total_stake", 0))
+            if agent_id:
+                out["my_bets"] = mine.get(race.id, 0)
+            return out
+
         return {
-            "race": self.serialize_race(current) if current else None,
-            "betting_race": self.serialize_race(open_race) if open_race else None,
+            "race": data(current),
+            "betting_race": data(open_race),
             "server_time": _iso(now_utc()),
         }
 
@@ -325,6 +352,7 @@ class RoundGameService:
             "finished_at": _iso(race.finished_at),
             "settled_at": _iso(race.settled_at),
             "server_time": _iso(now_utc()),
+            "manual": self.is_manual(race),
             "min_bet": race.config.get("min_bet"),
             "max_bet": race.config.get("max_bet"),
             "server_seed_hash": race.server_seed_hash,
@@ -388,6 +416,11 @@ class RoundGameService:
         )
         return (result.scalar() or 0) + 1
 
+    @staticmethod
+    def is_manual(race: GameRound) -> bool:
+        """Manche sans heure de départ : elle reste ouverte jusqu'à ce qu'un agent la lance."""
+        return bool((race.config or {}).get("manual_launch"))
+
     async def create_race(
         self,
         scheduled_at: Optional[datetime] = None,
@@ -395,18 +428,28 @@ class RoundGameService:
         open_betting: bool = True,
         config: Optional[Dict[str, Any]] = None,
     ) -> GameRound:
-        """Crée une manche : seed secret (empreinte publiée), réglages figés."""
+        """Crée une manche : seed secret (empreinte publiée), réglages figés.
+
+        Sans `scheduled_at` et avec « lancement manuel » (réglage par défaut), la manche n'a
+        ni heure de départ ni heure de fermeture des paris : elle prend des paris tant qu'un
+        agent ne la lance pas (launch_race). Avec `scheduled_at`, elle part à l'heure."""
         config = self.validate_config(config) if config else await self.get_config()
         now = now_utc()
-        scheduled_at = scheduled_at or now + timedelta(minutes=int(config["interval_minutes"]))
-        closes_at = scheduled_at - timedelta(seconds=int(config["betting_close_seconds"]))
-        if closes_at <= now:
-            raise ValidationException(self.MSG["too_close"])
+        manual = bool(config.get("manual_launch")) and scheduled_at is None
+        if manual:
+            scheduled_at = now          # heure d'ouverture ; remplacée par l'heure réelle du lancement
+            closes_at = None
+        else:
+            scheduled_at = scheduled_at or now + timedelta(minutes=int(config["interval_minutes"]))
+            closes_at = scheduled_at - timedelta(seconds=int(config["betting_close_seconds"]))
+            if closes_at <= now:
+                raise ValidationException(self.MSG["too_close"])
 
         round_number = await self._next_round_number()
         server_seed = new_server_seed()
         nonce = 0
         participants, race_config = self.build_round(config, server_seed, round_number, nonce)
+        race_config["manual_launch"] = manual
         status = GameRoundStatus.BETTING_OPEN.value if open_betting else GameRoundStatus.SCHEDULED.value
         race = GameRound(
             id=str(uuid.uuid4()),
@@ -430,7 +473,10 @@ class RoundGameService:
         if open_betting:
             await self._audit_race(race, "betting_opened", created_by)
         self._emit(race, "betting_opened" if open_betting else "race_scheduled")
-        self.logger.info(f"{self.GAME_TYPE} #{round_number} créé(e) (départ {scheduled_at.isoformat()}Z)")
+        if manual:
+            self.logger.info(f"{self.GAME_TYPE} #{round_number} ouvert(e) : départ lancé par un agent")
+        else:
+            self.logger.info(f"{self.GAME_TYPE} #{round_number} créé(e) (départ {scheduled_at.isoformat()}Z)")
         return race
 
     async def open_betting(self, race_id: str, by: Optional[str] = None) -> GameRound:
@@ -480,6 +526,36 @@ class RoundGameService:
         await self._audit_race(race, "race_started", by, new_values={"result": race.result})
         self._emit(race, "race_started")
         return race
+
+    async def launch_race(self, race_id: str, by: Optional[str] = None) -> GameRound:
+        """Lancement MANUEL par un agent QUI A VENDU au moins une fiche sur cette manche :
+        les paris se ferment à cet instant, le résultat
+        (fixé par le seed engagé à la création) est dévoilé et l'animation démarre.
+
+        Le tirage précédent doit avoir fini son animation : sinon les écrans, qui montrent
+        une manche à la fois, rateraient celle-ci. La manche est verrouillée : deux agents
+        qui cliquent ensemble ne la lancent qu'une fois (le second reçoit « déjà lancée »)."""
+        sold = await self.db.execute(
+            select(func.count(GameBet.id)).where(GameBet.round_id == race_id, GameBet.agent_id == by)
+        )
+        if not by or not sold.scalar():
+            raise GameException(self.MSG["launch_not_seller"])
+        busy = await self.db.execute(
+            select(func.count(GameRound.id)).where(
+                GameRound.game_type == self.GAME_TYPE,
+                GameRound.id != race_id,
+                GameRound.status == GameRoundStatus.RUNNING.value,
+            )
+        )
+        if busy.scalar():
+            raise GameException(self.MSG["launch_busy"])
+        race = await self._get_race_for_update(race_id)
+        self._require_status(race, [
+            GameRoundStatus.SCHEDULED.value, GameRoundStatus.BETTING_OPEN.value, GameRoundStatus.BETTING_CLOSED.value,
+        ])
+        now = now_utc()
+        race.scheduled_at = now  # heure réelle du départ (historique, tri des écrans)
+        return await self.start_race(race_id, by=by, now=now)
 
     async def finish_race(self, race_id: str, by: Optional[str] = None, now: Optional[datetime] = None) -> GameRound:
         race = await self._get_race_for_update(race_id)
@@ -727,7 +803,8 @@ class RoundGameService:
         return bet
 
     # ============================================================
-    # Cycle automatique (appelé par Celery toutes les quelques secondes)
+    # Cycle automatique (Celery / boucle intégrée) : fin, règlement, manche suivante.
+    # Le départ n'est automatique qu'en mode « à l'heure » ; sinon c'est launch_race.
     # ============================================================
 
     async def tick(self, now: Optional[datetime] = None) -> Dict[str, int]:
@@ -762,6 +839,8 @@ class RoundGameService:
         for race_id in await ids([GameRound.status.in_([
             GameRoundStatus.SCHEDULED.value, GameRoundStatus.BETTING_OPEN.value, GameRoundStatus.BETTING_CLOSED.value,
         ]), GameRound.scheduled_at <= now]):
+            if self.is_manual(await self.get_race(race_id)):
+                continue  # lancée par un agent (launch_race), jamais à l'heure
             await self.start_race(race_id, now=now)
             counts["started"] += 1
 
@@ -782,7 +861,8 @@ class RoundGameService:
                 GameRoundStatus.SCHEDULED.value, GameRoundStatus.BETTING_OPEN.value,
             ])])
             if not upcoming:
-                await self.create_race(scheduled_at=self.next_scheduled_at(config, now))
+                manual = bool(config.get("manual_launch"))
+                await self.create_race(scheduled_at=None if manual else self.next_scheduled_at(config, now))
                 counts["created"] += 1
         return counts
 

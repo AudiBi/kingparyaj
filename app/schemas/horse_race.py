@@ -45,6 +45,13 @@ class HorseRaceCreate(BaseModel):
     open_betting: bool = True
 
 
+class AgentHorseRaceLaunch(BaseModel):
+    """Lancement de la course par un agent : la course vue à l'écran, rien d'autre."""
+    model_config = ConfigDict(extra="forbid")
+
+    race_id: str = Field(..., min_length=1, max_length=40)
+
+
 class HorseRaceCancel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -59,6 +66,7 @@ class HorseRaceConfigUpdate(BaseModel):
     min_bet: float = 10
     max_bet: float = 10000
     auto_enabled: bool = True
+    manual_launch: bool = True
     interval_minutes: int = 5
     betting_close_seconds: int = 15
     race_duration_ms: int = 25000

@@ -25,7 +25,7 @@ from app.services.wallet_service import WalletService
 
 @pytest_asyncio.fixture
 async def make_client(db_session, fake_redis):
-    await fake_redis.set(CONFIG_KEY, json.dumps(keno_engine.validate_config({"open_hour": 0, "close_hour": 24})))
+    await fake_redis.set(CONFIG_KEY, json.dumps(keno_engine.validate_config({"open_hour": 0, "close_hour": 24, "manual_launch": False})))
     clients = []
 
     async def _make():
@@ -180,3 +180,66 @@ async def test_instant_page_still_available_as_option(make_client, db_session, f
     await _login(client, agent)
     page = await client.get("/agent/keno")
     assert page.status_code == 200 and "keno_live.js" not in page.text
+
+
+# ========== Lancement manuel du tirage par un agent ==========
+
+@pytest.mark.asyncio
+async def test_agent_launches_the_open_draw(make_client, db_session, fake_redis, make_agent, make_user, monkeypatch):
+    from sqlalchemy import select
+
+    from app.models.enums import KenoDrawStatus
+    from app.models.keno import KenoDraw
+
+    # le lancement appelle le post-traitement du cycle : même session de test, Redis factice
+    import app.workers.draw_worker as draw_worker
+    import app.workers.keno_worker as keno_worker
+    monkeypatch.setattr(draw_worker, "redis_client", fake_redis)
+    monkeypatch.setattr(keno_worker, "_tick_async", lambda: _noop())
+
+    agent = await make_agent()
+    player = await make_user(balance=Decimal("100"))
+    service = KenoService(db_session, fake_redis)
+    draw = await service.generate_draw(draw_time=now_utc(), config={**await service.get_config(), "manual_launch": True})
+    await db_session.flush()
+    client = await make_client()
+    await _login(client, agent)
+
+    for _ in range(3):  # autant de fiches que voulu avant le lancement
+        sold = await client.post("/agent/api/keno/shared/bet", headers=await _token(client), json={
+            "draw_id": draw.id, "picks": [1, 2], "stake": 10, "player_type": "account", "identifier": player.phone,
+        })
+        assert sold.status_code == 200, sold.text
+    live = (await client.get("/agent/api/keno/live")).json()["betting_draw"]
+    assert live["manual"] is True and live["betting_closes_at"] is None and live["total_bets"] == 3
+
+    assert (await client.post("/agent/api/keno/shared/launch", json={"draw_id": draw.id}, follow_redirects=False)).status_code == 303  # CSRF
+    assert (await client.post("/agent/api/keno/shared/launch", headers=await _token(client), json={})).status_code == 400
+    assert (await client.post("/agent/api/keno/shared/launch", headers=await _token(client),
+                              json={"draw_id": draw.id, "numbers": [1]})).status_code == 400  # rien d'autre que le tirage
+
+    stranger = await make_agent()  # un agent qui n'a rien vendu sur ce tirage ne peut pas le lancer
+    stranger_client = await make_client()
+    await _login(stranger_client, stranger)
+    refused = await stranger_client.post("/agent/api/keno/shared/launch", headers=await _token(stranger_client), json={"draw_id": draw.id})
+    assert refused.status_code == 400 and "a vendu" in refused.json()["detail"]
+    assert (await client.get("/agent/api/keno/live")).json()["betting_draw"]["my_bets"] == 3
+    assert (await stranger_client.get("/agent/api/keno/live")).json()["betting_draw"]["my_bets"] == 0
+
+    launched = await client.post("/agent/api/keno/shared/launch", headers=await _token(client), json={"draw_id": draw.id})
+    assert launched.status_code == 200, launched.text
+    assert launched.json()["draw_number"] == draw.draw_number
+    await db_session.refresh(draw)
+    assert draw.status == KenoDrawStatus.COMPLETED and len(draw.numbers) == 20
+
+    again = await client.post("/agent/api/keno/shared/launch", headers=await _token(client), json={"draw_id": draw.id})
+    assert again.status_code == 400 and "déjà" in again.json()["detail"]
+    late = await client.post("/agent/api/keno/shared/bet", headers=await _token(client), json={
+        "draw_id": draw.id, "picks": [1], "stake": 10, "player_type": "account", "identifier": player.phone,
+    })
+    assert late.status_code == 400  # les tickets sont fermés une fois le tirage lancé
+    assert (await db_session.execute(select(KenoDraw).where(KenoDraw.id == draw.id))).scalar_one().total_bets == 3
+
+
+async def _noop():
+    return None

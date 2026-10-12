@@ -182,7 +182,13 @@
         <div class="title"><i class="fas fa-clock"></i> Prochain tirage Keno</div>
     </div>
     <div style="padding:12px 16px;text-align:center;">
-        {% if next_draw %}
+        {% if next_draw and next_draw_manual %}
+        <div class="bg-gradient-to-r from-green-500 to-green-700 text-white rounded-lg p-4">
+            <p class="text-sm opacity-80">TIRAGE OUVERT</p>
+            <p class="text-2xl font-bold">En attente du lancement</p>
+            <p class="text-sm opacity-80 mt-1">Tirage #{{ next_draw.draw_number }} — lancé par un agent depuis la page Keno</p>
+        </div>
+        {% elif next_draw %}
         <div id="countdownContainer" class="bg-gradient-to-r from-green-500 to-green-700 text-white rounded-lg p-4">
             <p class="text-sm opacity-80">PROCHAIN TIRAGE</p>
             <p id="countdownDisplay" class="text-4xl font-bold font-mono">--:--:--</p>
@@ -216,7 +222,7 @@
     }
     
     // ==================== COMPTE À REBOURS ====================
-    {% if next_draw %}
+    {% if next_draw and not next_draw_manual %}
     const targetTime = '{{ next_draw.draw_time.isoformat() }}Z';
     
     function updateCountdown() {

@@ -48,7 +48,8 @@ async def test_run_once_creates_games_without_celery(wired, db_session, monkeypa
     rounds = (await db_session.execute(select(GameRound.game_type, GameRound.status))).all()
     assert ("lucky6", "BETTING_OPEN") in rounds and ("horse_races", "BETTING_OPEN") in rounds
     draws = (await db_session.execute(select(KenoDraw))).scalars().all()
-    assert len(draws) == 2 and all(d.mode == "scheduled" for d in draws)
+    # lancement manuel (réglage par défaut) : un seul tirage ouvert, sans heure, qui attend un agent
+    assert len(draws) == 1 and draws[0].mode == "scheduled" and draws[0].config["manual_launch"] is True
     assert ks  # module importé
 
 

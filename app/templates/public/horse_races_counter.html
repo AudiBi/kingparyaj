@@ -322,9 +322,15 @@
     function tick() {
         live.tick();
         const now = clock.now();
-        if (display && ['BETTING_OPEN', 'BETTING_CLOSED', 'SCHEDULED'].includes(display.status)) {
+        if (display && display.manual && ['BETTING_OPEN', 'BETTING_CLOSED', 'SCHEDULED'].includes(display.status)) {
+            $('countLabel').textContent = display.status === 'BETTING_OPEN' ? 'Paris ouverts — départ lancé par un agent' : HR.statusLabel(display.status);
+            $('count').textContent = display.status === 'BETTING_OPEN' ? 'En attente' : '';
+        } else if (display && ['BETTING_OPEN', 'BETTING_CLOSED', 'SCHEDULED'].includes(display.status)) {
             $('countLabel').textContent = display.status === 'BETTING_OPEN' ? 'Paris fermés dans' : 'Départ dans';
             $('count').textContent = HR.formatCountdown(HR.parseUtc(display.status === 'BETTING_OPEN' ? display.betting_closes_at : display.scheduled_at) - now);
+        } else if (betting && betting.manual) {
+            $('countLabel').textContent = `Course #${betting.race_number} : paris ouverts, départ lancé par un agent`;
+            $('count').textContent = 'En attente';
         } else if (betting) {
             $('countLabel').textContent = `Course #${betting.race_number} : paris fermés dans`;
             $('count').textContent = HR.formatCountdown(HR.parseUtc(betting.betting_closes_at) - now);

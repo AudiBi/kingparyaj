@@ -195,6 +195,9 @@ DEFAULT_PAYTABLE = [10000, 7500, 5000, 2500, 1000, 500, 300, 200, 150, 100,
 DEFAULT_CONFIG: Dict[str, Any] = {
     "enabled": True,
     "auto_enabled": True,
+    # True (par défaut) : la manche n'a PAS d'heure ; elle reste ouverte tant qu'un agent ne la
+    # lance pas (autant de fiches que souhaité). False : tirage à l'heure, toutes les N minutes.
+    "manual_launch": True,
     "interval_minutes": 5,          # une manche partagée toutes les N minutes
     "betting_close_seconds": 15,    # paris fermés N secondes avant le tirage
     "intro_ms": 4000,               # présentation avant la 1re boule
@@ -230,7 +233,7 @@ def validate_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
             raise ValidationException(f"{label} : entre {low} et {high}")
         return value
 
-    for key in ("enabled", "auto_enabled", "parity_enabled"):
+    for key in ("enabled", "auto_enabled", "manual_launch", "parity_enabled"):
         merged[key] = bool(merged[key])
     merged["interval_minutes"] = as_int("interval_minutes", 2, 120, "Intervalle (minutes)")
     merged["betting_close_seconds"] = as_int("betting_close_seconds", 0, 300, "Fermeture des paris (secondes)")
@@ -241,7 +244,7 @@ def validate_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     merged["close_hour"] = as_int("close_hour", 1, 24, "Heure de fermeture")
     if merged["open_hour"] >= merged["close_hour"]:
         raise ValidationException("L'heure d'ouverture doit précéder l'heure de fermeture")
-    if draw_duration_ms(merged) + merged["betting_close_seconds"] * 1000 >= merged["interval_minutes"] * 60000:
+    if not merged["manual_launch"] and draw_duration_ms(merged) + merged["betting_close_seconds"] * 1000 >= merged["interval_minutes"] * 60000:
         raise ValidationException("Le tirage dure plus longtemps que l'intervalle entre deux manches")
 
     try:
@@ -312,6 +315,7 @@ def validate_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 def public_config(config: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "enabled": config["enabled"],
+        "manual_launch": config["manual_launch"],
         "total_numbers": TOTAL_NUMBERS,
         "picks": PICKS,
         "drawn_count": DRAWN_COUNT,

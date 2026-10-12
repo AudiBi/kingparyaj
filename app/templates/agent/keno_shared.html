@@ -3,7 +3,7 @@
 
 {% block title %}Keno - Agent{% endblock %}
 {% block page_title %}Keno{% endblock %}
-{% block page_subtitle %}Tirage partagé — 20 numéros sur 80 toutes les {{ keno_config.interval_minutes }} minutes{% endblock %}
+{% block page_subtitle %}{% if keno_config.manual_launch %}Tirage partagé — 20 numéros sur 80, lancé par un agent{% else %}Tirage partagé — 20 numéros sur 80 toutes les {{ keno_config.interval_minutes }} minutes{% endif %}{% endblock %}
 
 {% block extra_css %}
 <link rel="stylesheet" href="/static/css/keno_live.css">
@@ -17,6 +17,9 @@
     .kst { padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; background: #e2e8f0; color: #1e293b; }
     .kst.open { background: #dcfce7; color: #166534; } .kst.closed, .kst.drawing, .kst.intro { background: #fef3c7; color: #92400e; }
     .kst.cancelled { background: #fee2e2; color: #991b1b; }
+    .klaunch { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; }
+    .klaunch b { font-size: 14px; }
+    .klaunch small { display: block; color: #92400e; font-size: 12px; }
     .kcd { font-variant-numeric: tabular-nums; font-size: 24px; font-weight: 800; color: #059669; }
     .klive { font-size: 12px; color: #64748b; display: flex; align-items: center; gap: 6px; }
     .klive i { width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; display: inline-block; }
@@ -111,6 +114,10 @@
                     <div id="betDraw" class="text-muted">Aucun tirage ouvert</div>
                     <div id="betCd" class="kcd" style="font-size:18px;"></div>
                 </div>
+            </div>
+            <div class="klaunch" id="launchBox" style="display:none;">
+                <div><b id="launchInfo"></b><small id="launchHint">Le tirage ne part que lorsqu'un agent qui y a vendu le lance : vendez autant de tickets que vous voulez avant.</small></div>
+                <button type="button" id="launchBtn" class="btn btn-danger"><i class="fas fa-play"></i> LANCER LE TIRAGE</button>
             </div>
             <div class="kpicker" id="picker" aria-label="Numéros de 1 à 80"></div>
             <div class="kchosen" id="chosen"></div>
@@ -232,7 +239,7 @@
         $('sumSpots').textContent = picks.length;
         const top = entries.length ? entries[0][1] : null;
         $('sumMax').textContent = top && stake ? money(Math.min(Math.floor(Math.round(stake * top * 10000) / 100) / 100, r.max_payout)) : '—';
-        const ok = betting && cfg && cfg.enabled && K.parseUtc(betting.betting_closes_at) > clock.now()
+        const ok = betting && cfg && cfg.enabled && (betting.manual || K.parseUtc(betting.betting_closes_at) > clock.now())
             && picks.length >= betting.min_picks && picks.length <= betting.max_picks && entries.length
             && stake && stake >= betting.min_bet && stake <= betting.max_bet && (playerType() === 'cash' || $('identifier').value.trim());
         $('betBtn').disabled = !ok;
@@ -269,6 +276,7 @@
             if (!res.ok || !data || !data.success) throw new Error(errorText(data, 'Ticket refusé'));
             showToast('Ticket enregistré pour le tirage #' + data.bet.draw_number, 'success');
             showReceipt(data.bet);
+            loadState();
             // Ticket suivant : les boules choisies sont réinitialisées
             picks = [];
             renderPicks();
@@ -298,7 +306,7 @@
             sections.push({ type: 'total', label: 'TOTAL PAYÉ', value: KPReceipt.money(b.stake) });
         }
         kpShowReceipt({
-            game: 'KENO', round: `Tirage n° ${b.draw_number}`, roundTime: 'Tirage à ' + time(b.draw_time),
+            game: 'KENO', round: `Tirage n° ${b.draw_number}`, roundTime: b.draw_time ? 'Tirage à ' + time(b.draw_time) : 'Tirage lancé par un agent',
             bureau: KP_AGENT.bureau, address: KP_AGENT.address, phone: KP_AGENT.phone, agent: KP_AGENT.name,
             ticket: b.ticket_number, code: b.bet_id, placedAt: b.placed_at, sections,
             hash: b.server_seed_hash, verifyUrl: location.host + '/keno/verifier?tirage=' + b.draw_id,
@@ -358,6 +366,38 @@
         } catch (e) { /* réessai */ }
     }
 
+    const plural = (n, word) => n + ' ' + word + (n > 1 ? 's' : '');
+
+    // Bouton « Lancer le tirage » : visible tant qu'un tirage ouvert attend, bloqué pendant l'animation du précédent
+    function updateLaunch(pr) {
+        const show = !!(betting && cfg && cfg.enabled);
+        $('launchBox').style.display = show ? '' : 'none';
+        if (!show) return;
+        const busy = pr && (pr.phase === 'intro' || pr.phase === 'drawing' || pr.phase === 'closed');
+        $('launchInfo').textContent = 'Tirage #' + betting.draw_number + ' — ' + plural(betting.total_bets || 0, 'ticket') + ' vendu' + ((betting.total_bets || 0) > 1 ? 's' : '');
+        const mine = (betting.my_bets || 0) > 0;
+        if (!launching) $('launchBtn').disabled = !!busy || !mine;
+        $('launchBtn').title = !mine ? 'Vendez au moins un ticket sur ce tirage pour pouvoir le lancer' : (busy ? 'Attendez la fin du tirage en cours' : '');
+        $('launchHint').textContent = mine ? 'Vous avez vendu ' + plural(betting.my_bets, 'ticket') + ' sur ce tirage.' : 'Seul un agent qui a vendu un ticket sur ce tirage peut le lancer.';
+    }
+    let launching = false;
+    async function launchDraw() {
+        if (!betting || launching) return;
+        const n = betting.total_bets || 0;
+        if (!confirm('Lancer le tirage #' + betting.draw_number + ' maintenant ?\n' + plural(n, 'ticket') + ' (' + money(betting.total_amount || 0) + ').\nLes tickets seront fermés : on ne pourra plus en ajouter à ce tirage.')) return;
+        launching = true; $('launchBtn').disabled = true;
+        try {
+            const res = await fetch('/agent/api/keno/shared/launch', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': await csrf() }, body: JSON.stringify({ draw_id: betting.draw_id }),
+            });
+            const data = await res.json().catch(() => null);
+            if (!res.ok || !data || !data.success) throw new Error(errorText(data, 'Lancement refusé'));
+            showToast(data.message || 'Tirage lancé', 'success');
+        } catch (err) {
+            showToast(err.message || 'Erreur', 'error');
+        } finally { launching = false; loadState(); }
+    }
+
     function tick() {
         board.render();
         const now = clock.now();
@@ -365,12 +405,20 @@
         $('liveNo').textContent = live ? '#' + live.draw_number : '—';
         const labels = { open: 'Paris ouverts', closed: 'Paris fermés', intro: 'Tirage', drawing: 'Tirage en cours', done: 'Tirage terminé', cancelled: 'Annulé', none: 'Aucun tirage' };
         $('liveSt').className = 'kst ' + pr.phase; $('liveSt').textContent = labels[pr.phase] || '';
-        if (live && (pr.phase === 'open' || pr.phase === 'closed')) {
+        if (live && live.manual && pr.phase === 'open') {
+            const same = betting && betting.draw_id === live.draw_id;
+            $('liveLabel').textContent = 'Tirage lancé par un agent';
+            $('liveCd').textContent = same ? plural(betting.total_bets || 0, 'ticket') : '';
+        } else if (live && (pr.phase === 'open' || pr.phase === 'closed')) {
             $('liveLabel').textContent = 'Tirage dans'; $('liveCd').textContent = K.countdown(K.parseUtc(live.draw_time) - now);
         } else { $('liveLabel').textContent = ''; $('liveCd').textContent = pr.phase === 'drawing' ? pr.revealed + ' / 20' : ''; }
         if (pr.phase === 'done' && live && live.status === 'completed' && !tick.reloaded) { tick.reloaded = true; setTimeout(loadState, 1500); }
         if (pr.phase !== 'done') tick.reloaded = false;
-        if (betting) {
+        updateLaunch(pr);
+        if (betting && betting.manual) {
+            $('betDraw').textContent = 'Tirage #' + betting.draw_number + ' — ouvert jusqu\'au lancement';
+            $('betCd').textContent = plural(betting.total_bets || 0, 'ticket') + ' · ' + money(betting.total_amount || 0);
+        } else if (betting) {
             const left = K.parseUtc(betting.betting_closes_at) - now;
             $('betDraw').textContent = 'Tirage #' + betting.draw_number + ' à ' + time(betting.draw_time);
             $('betCd').textContent = 'Fermeture ' + K.countdown(left);
@@ -395,6 +443,7 @@
     $('identifier').addEventListener('input', updateForm);
     document.querySelectorAll('input[name="player_type"]').forEach(r => r.addEventListener('change', () => { syncPlayerType(); updateForm(); }));
     $('betForm').addEventListener('submit', submitBet);
+    $('launchBtn').addEventListener('click', launchDraw);
     $('myBets').addEventListener('click', async e => {
         const b = e.target.closest('[data-reprint]');
         if (!b) return;

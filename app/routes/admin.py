@@ -2130,6 +2130,11 @@ async def admin_keno_draws_page(
         .limit(1)
     )
     next_draw_time = next_draw_result.scalar_one_or_none()
+    waiting_for_agent = False
+    if next_draw_time is None:  # tirage ouvert sans heure : il attend qu'un agent le lance
+        waiting_for_agent = bool((await db.execute(
+            select(func.count(KenoDraw.id)).where(KenoDraw.status == KenoDrawStatus.PENDING, KenoDraw.mode == "scheduled")
+        )).scalar())
 
     return templates.TemplateResponse(request, "admin/games/keno/draws.html", {
         "active": "keno",
@@ -2139,7 +2144,7 @@ async def admin_keno_draws_page(
             "pending": stats_row.pending or 0,
             "completed": stats_row.completed or 0,
             "today": stats_row.today or 0,
-            "next_draw": next_draw_time.strftime("%d/%m %H:%M") if next_draw_time else None,
+            "next_draw": next_draw_time.strftime("%d/%m %H:%M") if next_draw_time else ("Lancé par un agent" if waiting_for_agent else None),
         },
         "pagination": {
             "page": page,

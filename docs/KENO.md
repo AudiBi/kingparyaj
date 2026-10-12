@@ -2,10 +2,32 @@
 
 Keno joué **uniquement au bureau, par un agent**. Deux modes (admin → Jeux → Keno) :
 
-- **Partagé (par défaut)** : un tirage commun à tous les bureaux toutes les 5 minutes (réglable), calé sur l'horloge ;
+- **Partagé (par défaut)** : un tirage commun à tous les bureaux, **lancé par un agent** (ou, en option, toutes les 5 minutes calé sur l'horloge) ;
 - **Instantané (option)** : un ticket = un tirage.
 
-## Keno partagé
+## Lancement manuel par un agent (par défaut)
+
+Pour vendre autant de tickets que souhaité, **le tirage partagé n'a plus d'heure** : il reste ouvert
+jusqu'à ce qu'un agent clique sur **LANCER LE TIRAGE** (panel agent `/agent/keno`).
+
+- Un seul tirage est ouvert à la fois (`ensure_open_draw`, appelé par `keno_tick`). Son empreinte est publiée
+  dès l'ouverture ; les numéros sont fixés par le seed engagé à ce moment-là, donc **lancer plus tôt ou plus
+  tard ne change pas le résultat**.
+- `POST /agent/api/keno/shared/launch` (+ CSRF, seul champ accepté : `draw_id`) : ferme les tickets, tire les
+  20 numéros, règle les tickets (une seule fois : verrou + `WIN-KENO-<pari>`), puis le tirage suivant s'ouvre
+  aussitôt. `draw_time` prend l'heure réelle du lancement. L'action est journalisée au nom de l'agent
+  (`keno_draw_launched`).
+- **Seul un agent qui a vendu au moins un ticket sur ce tirage peut le lancer** (plusieurs agents peuvent avoir vendu : chacun
+  peut alors lancer). Les autres voient le bouton désactivé ; le serveur refuse aussi.
+- On ne peut pas lancer un tirage pendant l'animation du précédent (le bouton est bloqué, le serveur refuse aussi).
+- Le panel agent affiche le nombre de tickets et les mises du tirage ouvert ; ces totaux ne sont pas diffusés
+  sur les écrans publics. Les écrans affichent « en attente du lancement » au lieu d'un compte à rebours.
+- Le nettoyage des tirages « périmés » ne touche pas un tirage ouvert en attente d'un agent.
+- Réglage admin « Lancement manuel » (`manual_launch`, coché par défaut) : décoché, on retrouve le mode
+  ci-dessous (un tirage toutes les N minutes, à l'heure). Le mode est **figé dans chaque tirage** à sa création :
+  changer le réglage ne fait jamais partir seul un tirage ouvert.
+
+## Keno partagé (mode « à l'heure », option)
 
 - Les tirages sont créés à l'avance (les 2 prochains), avec leur empreinte publiée et leurs **réglages figés**
   (`keno_draws.config` : table de paiement, limites de mise et de numéros, gain maximum, rythme des écrans).

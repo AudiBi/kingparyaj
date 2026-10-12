@@ -155,6 +155,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # « scheduled » (par défaut) : tirages PARTAGÉS par tous les bureaux, toutes les N minutes
     # « instant » : un tirage par ticket, au bureau (option)
     "mode": "scheduled",
+    # True (par défaut) : le tirage partagé n'a PAS d'heure ; il reste ouvert tant qu'un agent
+    # ne le lance pas (autant de tickets que souhaité). False : tirage à l'heure, toutes les N minutes.
+    "manual_launch": True,
     "interval_minutes": 5,      # un tirage partagé toutes les N minutes (calé sur l'horloge)
     "betting_close_seconds": 10,  # paris fermés N secondes avant le tirage
     "open_hour": 8,             # heures des tirages partagés (heure d'Haïti)
@@ -177,7 +180,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 # création : un changement de l'admin ne touche jamais un tirage qui a des paris.
 FROZEN_KEYS = (
     "min_picks", "max_picks", "min_bet", "max_bet", "max_payout", "paytable",
-    "betting_close_seconds", "intro_ms", "ball_interval_ms", "outro_ms",
+    "betting_close_seconds", "intro_ms", "ball_interval_ms", "outro_ms", "manual_launch",
 )
 
 
@@ -255,7 +258,7 @@ def validate_config(config: Dict[str, Any]) -> Dict[str, Any]:
         timing[key] = value
     if timing["open_hour"] >= timing["close_hour"]:
         raise KenoConfigError("L'heure d'ouverture doit précéder l'heure de fermeture")
-    if draw_duration_ms(timing) + timing["betting_close_seconds"] * 1000 >= timing["interval_minutes"] * 60000:
+    if not merged.get("manual_launch", True) and draw_duration_ms(timing) + timing["betting_close_seconds"] * 1000 >= timing["interval_minutes"] * 60000:
         raise KenoConfigError("Le tirage dure plus longtemps que l'intervalle entre deux tirages")
     if not 1 <= min_picks <= max_picks <= HARD_MAX_PICKS:
         raise KenoConfigError(f"Numéros : il faut 1 ≤ minimum ≤ maximum ≤ {HARD_MAX_PICKS}")
@@ -289,6 +292,7 @@ def validate_config(config: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "enabled": bool(merged.get("enabled", True)),
         "mode": merged["mode"],
+        "manual_launch": bool(merged.get("manual_launch", True)),
         **timing,
         "min_picks": min_picks,
         "max_picks": max_picks,
@@ -305,7 +309,7 @@ def public_config(config: Dict[str, Any]) -> Dict[str, Any]:
     """Ce qui est affiché au bureau / sur l'écran (avec le taux réel)."""
     paytable = parse_paytable(config["paytable"])
     return {
-        **{k: config[k] for k in ("enabled", "mode", "min_picks", "max_picks", "min_bet", "max_bet", "stake_options", "max_payout",
+        **{k: config[k] for k in ("enabled", "mode", "manual_launch", "min_picks", "max_picks", "min_bet", "max_bet", "stake_options", "max_payout",
                                   "interval_minutes", "betting_close_seconds", "intro_ms", "ball_interval_ms", "outro_ms")},
         "total_numbers": TOTAL_NUMBERS,
         "drawn_count": DRAWN_COUNT,
