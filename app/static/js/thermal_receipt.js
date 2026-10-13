@@ -82,23 +82,23 @@
       'html,body{background:#fff;color:#000}' +
       'body{width:' + mm + 'mm;padding:0 ' + ((mm - printable) / 2) + 'mm;font:600 ' + base + 'px/1.2 "Arial Narrow",Arial,Helvetica,sans-serif}' +
       '.rc{width:' + printable + 'mm}' +
-      '.logo{display:block;width:' + (mm === 58 ? 20 : 26) + 'mm;height:auto;margin:0 auto .5mm;filter:grayscale(1) contrast(1.6)}' +
+      '.logo{display:block;width:' + (mm === 58 ? 12 : 16) + 'mm;height:auto;margin:0 auto .3mm;filter:grayscale(1) contrast(1.6)}' +
       '.c{text-align:center}.shop{font-size:' + (base + 2) + 'px;font-weight:900;text-transform:uppercase;letter-spacing:.3px}' +
       '.small{font-size:' + (base - 1.5) + 'px;font-weight:600}' +
-      '.band{background:#000;color:#fff;text-align:center;font-weight:900;font-size:' + (base + 6) + 'px;letter-spacing:2px;padding:.6mm 0;margin:0 0 1mm}' +
+      '.band{background:#000;color:#fff;text-align:center;font-weight:900;font-size:' + (base + 3) + 'px;letter-spacing:2px;padding:.3mm 0;margin:.5mm 0}' +
       '.sub{text-align:center;font-weight:800;font-size:' + (base + 1) + 'px}' +
       '.sep{border:0;border-top:1.5px dashed #000;margin:1mm 0}' +
       '.sep2{border:0;border-top:2.5px solid #000;margin:1mm 0}' +
       '.row{display:flex;align-items:baseline;gap:1mm}.row .l{white-space:nowrap}.row .d{flex:1;border-bottom:1.5px dotted #000;transform:translateY(-1mm)}' +
       '.row .v{white-space:nowrap;font-weight:800;text-align:right}' +
-      '.tk{border:2.5px solid #000;text-align:center;padding:.6mm 0;margin:1mm 0}' +
+      '.tk{border:2.5px solid #000;text-align:center;padding:.3mm 0;margin:.5mm 0}' +
       '.tk .t{font-size:' + (base - 1) + 'px;font-weight:800;letter-spacing:1px}' +
       '.tk .n{font:900 ' + (mm === 58 ? 17 : 21) + 'px/1.15 "Courier New",monospace;letter-spacing:1px}' +
       '.bc{display:block;width:100%;margin:1mm 0 .5mm}' +
       '.lbl{font-weight:800;margin:1mm 0 .5mm}' +
       '.nums{display:flex;flex-wrap:wrap;gap:1.2mm}' +
-      '.num{min-width:' + (mm === 58 ? 7 : 8.2) + 'mm;height:' + (mm === 58 ? 7 : 8.2) + 'mm;border:2px solid #000;border-radius:50%;display:flex;align-items:center;justify-content:center;' +
-        'font:900 ' + (base + 1) + 'px "Courier New",monospace}' +
+      '.num{min-width:' + (mm === 58 ? 5.6 : 6.4) + 'mm;height:' + (mm === 58 ? 5.6 : 6.4) + 'mm;border:2px solid #000;border-radius:50%;display:flex;align-items:center;justify-content:center;' +
+        'font:900 ' + (base - 0.5) + 'px "Courier New",monospace}' +
       '.num.on{background:#000;color:#fff}' +
       '.total{display:flex;justify-content:space-between;align-items:baseline;font-weight:900;font-size:' + (base + 4) + 'px;margin:.5mm 0 0}' +
       '.stamp{border:3px double #000;text-align:center;font-weight:900;font-size:' + (base + 4) + 'px;letter-spacing:2px;padding:.5mm 0;margin:1mm 0}' +
@@ -121,13 +121,12 @@
     h += '<div class="band">' + esc(spec.game) + '</div>';
     if (spec.round) h += '<div class="sub">' + esc(spec.round) + '</div>';
     if (spec.roundTime) h += '<div class="c small">' + esc(spec.roundTime) + '</div>';
-    h += '<div class="sub">Date : ' + esc(dateTime(spec.placedAt)) + '</div>';
+    h += '<div class="c small" style="font-weight:800">Date : ' + esc(dateTime(spec.placedAt)) + '</div>';
 
     var number = spec.ticket || spec.code;
     if (number) {
-      h += '<div class="tk"><div class="t">' + (spec.ticket ? 'TICKET N°' : 'CODE DU PARI') + '</div>' +
-        '<div class="n">' + esc(spec.ticket || String(spec.code).slice(0, 8).toUpperCase()) + '</div>' +
-        barcodeSvg(spec.ticket || spec.code, 8) + '</div>';
+      h += '<div class="tk"><div class="n">' + esc(spec.ticket || String(spec.code).slice(0, 8).toUpperCase()) + '</div>' +
+        barcodeSvg(spec.ticket || spec.code, 6) + '</div>';
     }
 
     (spec.sections || []).forEach(function (s) {
