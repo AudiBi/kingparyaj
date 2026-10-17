@@ -87,14 +87,9 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"❌ Celery initialization failed: {e}")
     
-    # 4. Démarrer le scheduler de tirages (production)
-    if settings.ENVIRONMENT == "production":
-        try:
-            from app.services.draw_scheduler import start_scheduler
-            await start_scheduler()
-            logger.info("✅ Draw scheduler started")
-        except Exception as e:
-            logger.error(f"❌ Draw scheduler failed: {e}")
+    # 4. (Ancien scheduler de tirages retiré : le cycle automatique des jeux, démarré plus haut,
+    #    le remplace. L'ancien appelait une méthode inexistante dans une boucle sans pause et
+    #    gelait toute l'application en production.)
     
     # 5. Nettoyer les sessions expirées au démarrage
     try:
@@ -113,14 +108,6 @@ async def lifespan(app: FastAPI):
     # ========== SHUTDOWN ==========
     logger.info("=" * 60)
     logger.info("🛑 Shutting down application...")
-    
-    # 1. Arrêter le scheduler
-    try:
-        from app.services.draw_scheduler import stop_scheduler
-        await stop_scheduler()
-        logger.info("✅ Draw scheduler stopped")
-    except Exception as e:
-        logger.error(f"❌ Error stopping scheduler: {e}")
     
     # 1bis. Arrêter le cycle automatique des jeux
     try:
