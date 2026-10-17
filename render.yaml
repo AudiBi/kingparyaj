@@ -55,12 +55,12 @@ services:
         value: "2"
       - key: GAME_LOOP_ENABLED    # fait avancer Keno, Lucky6 et les courses (ouverture, fin, règlement)
         value: "true"
-      - key: BASE_URL             # adresse publique, ex. https://jeux.example.ht
-        sync: false
+      - key: BASE_URL             # adresse publique (domaine à relier dans Render : voir docs/DEPLOIEMENT_RENDER.md)
+        value: https://kingparyaj.com
       - key: FRONTEND_URL
-        sync: false
-      - key: BACKEND_CORS_ORIGINS # liste JSON, ex. ["https://jeux.example.ht"]
-        sync: false
+        value: https://kingparyaj.com
+      - key: BACKEND_CORS_ORIGINS # liste JSON
+        value: '["https://kingparyaj.com","https://www.kingparyaj.com"]'
       - key: MONCASH_ENABLED
         value: "false"
       - key: NATCASH_ENABLED

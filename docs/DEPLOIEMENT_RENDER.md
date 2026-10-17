@@ -8,13 +8,24 @@ Fichiers : `render.yaml` (Blueprint), `Docker/Dockerfile`, `.dockerignore`.
    Redis (`kingparyaj-redis`) et l'application web (`kingparyaj`). Le worker et le beat Celery sont **en commentaire**
    dans `render.yaml` (optionnels, voir §2).
 3. Renseigner les variables demandées (marquées `sync: false`) :
-   - `BASE_URL`, `FRONTEND_URL` : adresse publique en https ;
-   - `BACKEND_CORS_ORIGINS` : liste JSON, ex. `["https://jeux.example.ht"]` ;
+   - `BASE_URL`, `FRONTEND_URL`, `BACKEND_CORS_ORIGINS` sont déjà réglés sur `https://kingparyaj.com` dans `render.yaml` ;
 4. Premier déploiement : bouton **Deploy** du service web. `alembic upgrade head` s'exécute avant la mise en ligne
    (Pre-Deploy Command). Vérifier `https://<service>.onrender.com/health/live`.
 5. Créer le premier administrateur (onglet **Shell** du service web). Relire `scripts/seed_database.py`
    avant de l'utiliser : il peut créer des données de test.
-6. Domaine : *Settings → Custom Domains* ; HTTPS automatique, WebSocket (`/ws/…`) compris.
+6. Domaine `kingparyaj.com` (DNS chez Hostinger) :
+   1. Render → service web → *Settings → Custom Domains → Add* : ajouter `kingparyaj.com` puis `www.kingparyaj.com`.
+      Render affiche les valeurs DNS exactes à utiliser : **ce sont elles qui font foi**.
+   2. Hostinger → *Domaines → kingparyaj.com → DNS / Serveurs de noms → Enregistrements DNS*.
+      Supprimer les enregistrements qui entrent en conflit (A ou AAAA existants sur `@`, CNAME existant sur `www`,
+      redirection ou « parking » Hostinger), puis ajouter :
+      - `A` · nom `@` · valeur = l'adresse IP donnée par Render pour le domaine racine ;
+      - `CNAME` · nom `www` · valeur = `kingparyaj.onrender.com` (adresse donnée par Render pour le service).
+   3. Les serveurs de noms doivent rester ceux de Hostinger (`ns1/ns2.dns-parking.com`) pour que ces enregistrements comptent.
+   4. Dans Render, cliquer *Verify* ; la propagation dure de quelques minutes à quelques heures. Le certificat HTTPS est
+      automatique, et Render redirige `www` vers le domaine racine (ou l'inverse).
+   5. Vérifier : `https://kingparyaj.com/health/live`, puis la connexion agent (les cookies sont sécurisés et exigent https).
+   Si Hostinger héberge déjà un site sur ce domaine, ne pas le toucher avant d'avoir sauvegardé son contenu.
 7. Jouer `docs/RECETTE_LANCEMENT_MANUEL.md` avant d'ouvrir aux agents.
 
 ## 2. Réglages à connaître
