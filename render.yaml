@@ -70,66 +70,72 @@ services:
       - key: EMAIL_ENABLED
         value: "false"
 
-  # ---------------------------------------------------------------- Celery worker (tâches annexes)
-  # Facultatif : les jeux fonctionnent sans lui (cycle intégré à l'application). Il sert aux
-  # notifications, nettoyages, résumés et rapports. Supprimez ce bloc et le suivant pour économiser.
-  - type: worker
-    name: kingparyaj-worker
-    runtime: docker
-    region: virginia
-    plan: starter
-    dockerfilePath: ./Docker/Dockerfile
-    dockerContext: .
-    dockerCommand: celery -A app.workers.celery worker --loglevel=info --concurrency=2 --max-tasks-per-child=100
-    autoDeploy: false
-    envVars:
-      - key: ENVIRONMENT
-        value: production
-      - key: DATABASE_URL
-        fromDatabase:
-          name: kingparyaj-db
-          property: connectionString
-      - key: REDIS_URL
-        fromService:
-          type: keyvalue
-          name: kingparyaj-redis
-          property: connectionString
-      - key: SECRET_KEY
-        sync: false           # mêmes valeurs que le service web (copier depuis son onglet Environment)
-      - key: CSRF_SECRET_KEY
-        sync: false
-      - key: MONCASH_ENABLED
-        value: "false"
-      - key: NATCASH_ENABLED
-        value: "false"
-      - key: SMS_ENABLED
-        value: "false"
-      - key: EMAIL_ENABLED
-        value: "false"
-
-  # ---------------------------------------------------------------- Celery beat (planificateur : UN SEUL)
-  - type: worker
-    name: kingparyaj-beat
-    runtime: docker
-    region: virginia
-    plan: starter
-    dockerfilePath: ./Docker/Dockerfile
-    dockerContext: .
-    dockerCommand: celery -A app.workers.celery beat --loglevel=info
-    autoDeploy: false
-    envVars:
-      - key: ENVIRONMENT
-        value: production
-      - key: DATABASE_URL
-        fromDatabase:
-          name: kingparyaj-db
-          property: connectionString
-      - key: REDIS_URL
-        fromService:
-          type: keyvalue
-          name: kingparyaj-redis
-          property: connectionString
-      - key: SECRET_KEY
-        sync: false
-      - key: CSRF_SECRET_KEY
-        sync: false
+  # ================================================================
+  # OPTIONNEL (≈ 14 $/mois en plus) : tâches annexes Celery (notifications, nettoyages, résumés,
+  # rapports). Les jeux n'en ont PAS besoin : le cycle est intégré à l'application web.
+  # Pour l'activer : retirer le « # » de chaque ligne du bloc ci-dessous, puis redéployer.
+  # Un seul beat. SECRET_KEY / CSRF_SECRET_KEY : mêmes valeurs que le service web.
+  # ================================================================
+  # # ---------------------------------------------------------------- Celery worker (tâches annexes)
+  # # Facultatif : les jeux fonctionnent sans lui (cycle intégré à l'application). Il sert aux
+  # # notifications, nettoyages, résumés et rapports. Supprimez ce bloc et le suivant pour économiser.
+  # - type: worker
+  #   name: kingparyaj-worker
+  #   runtime: docker
+  #   region: virginia
+  #   plan: starter
+  #   dockerfilePath: ./Docker/Dockerfile
+  #   dockerContext: .
+  #   dockerCommand: celery -A app.workers.celery worker --loglevel=info --concurrency=2 --max-tasks-per-child=100
+  #   autoDeploy: false
+  #   envVars:
+  #     - key: ENVIRONMENT
+  #       value: production
+  #     - key: DATABASE_URL
+  #       fromDatabase:
+  #         name: kingparyaj-db
+  #         property: connectionString
+  #     - key: REDIS_URL
+  #       fromService:
+  #         type: keyvalue
+  #         name: kingparyaj-redis
+  #         property: connectionString
+  #     - key: SECRET_KEY
+  #       sync: false           # mêmes valeurs que le service web (copier depuis son onglet Environment)
+  #     - key: CSRF_SECRET_KEY
+  #       sync: false
+  #     - key: MONCASH_ENABLED
+  #       value: "false"
+  #     - key: NATCASH_ENABLED
+  #       value: "false"
+  #     - key: SMS_ENABLED
+  #       value: "false"
+  #     - key: EMAIL_ENABLED
+  #       value: "false"
+  #
+  # # ---------------------------------------------------------------- Celery beat (planificateur : UN SEUL)
+  # - type: worker
+  #   name: kingparyaj-beat
+  #   runtime: docker
+  #   region: virginia
+  #   plan: starter
+  #   dockerfilePath: ./Docker/Dockerfile
+  #   dockerContext: .
+  #   dockerCommand: celery -A app.workers.celery beat --loglevel=info
+  #   autoDeploy: false
+  #   envVars:
+  #     - key: ENVIRONMENT
+  #       value: production
+  #     - key: DATABASE_URL
+  #       fromDatabase:
+  #         name: kingparyaj-db
+  #         property: connectionString
+  #     - key: REDIS_URL
+  #       fromService:
+  #         type: keyvalue
+  #         name: kingparyaj-redis
+  #         property: connectionString
+  #     - key: SECRET_KEY
+  #       sync: false
+  #     - key: CSRF_SECRET_KEY
+  #       sync: false
