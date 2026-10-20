@@ -127,6 +127,29 @@ class FakeRedis:
         return [key for key in self._store if fnmatch.fnmatch(key, pattern)]
 
 
+def _sqlite_timezone(zone, value):
+    """Équivalent SQLite de `timezone(zone, valeur)` de PostgreSQL, tel qu'utilisé par les
+    requêtes (jour local d'Haïti) : timezone('UTC', x) marque x comme UTC (inchangé),
+    timezone('America/…', x) renvoie x converti à l'heure locale (sans fuseau)."""
+    from datetime import datetime, timezone as _tz
+    from zoneinfo import ZoneInfo
+
+    if value is None:
+        return None
+    if zone == "UTC":
+        return value
+    moment = datetime.fromisoformat(str(value)).replace(tzinfo=_tz.utc)
+    return moment.astimezone(ZoneInfo(zone)).replace(tzinfo=None).isoformat(sep=" ")
+
+
+def _register_sqlite_timezone(engine) -> None:
+    from sqlalchemy import event
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _on_connect(dbapi_connection, _record):
+        dbapi_connection.create_function("timezone", 2, _sqlite_timezone)
+
+
 @pytest_asyncio.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
     """Session async isolée, recréée pour chaque test.
@@ -150,6 +173,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
         )
+        _register_sqlite_timezone(engine)
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all, tables=TEST_TABLES)
 
@@ -158,6 +182,14 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
         yield session
 
     await engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_from_local_env(monkeypatch):
+    """Les tests ne dépendent pas du .env du poste : taux de commission par défaut = 0."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "AGENT_COMMISSION_RATE", 0)
 
 
 @pytest.fixture
