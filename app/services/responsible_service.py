@@ -14,6 +14,7 @@ from app.models.responsible import SelfExclusion, ExclusionType, ExclusionReason
 from app.models.user import User
 from app.models.wallet import Wallet
 from app.models.transaction import Transaction, TransactionType
+from app.models.enums import TransactionStatus
 from app.services.base import BaseService
 from app.services.audit_service import AuditService, AuditAction
 from app.services.notification_service import NotificationService
@@ -43,6 +44,12 @@ class ResponsibleService(BaseService[SelfExclusion, None, None]):
     ) -> SelfExclusion:
         """Crée une demande d'auto-exclusion"""
         
+        # Le schéma de la demande donne un texte (« temporary »…) : on le convertit en type d'exclusion
+        try:
+            exclusion_type = ExclusionType(getattr(request.exclusion_type, "value", request.exclusion_type))
+        except ValueError:
+            raise AppException(400, "Type d'exclusion invalide")
+
         # Vérifier si une exclusion active existe déjà
         active = await self.get_active_exclusion(user_id)
         if active:
@@ -52,11 +59,11 @@ class ResponsibleService(BaseService[SelfExclusion, None, None]):
         start_date = datetime.utcnow()
         end_date = None
         
-        if request.exclusion_type == ExclusionType.TEMPORARY:
+        if exclusion_type == ExclusionType.TEMPORARY:
             if not request.duration_days:
                 raise AppException(400, "Durée requise pour exclusion temporaire")
             end_date = start_date + timedelta(days=request.duration_days)
-        elif request.exclusion_type == ExclusionType.COOLING_OFF:
+        elif exclusion_type == ExclusionType.COOLING_OFF:
             # Pause de 24h maximum
             duration = min(request.duration_days or 1, 1)
             end_date = start_date + timedelta(days=duration)
@@ -64,7 +71,7 @@ class ResponsibleService(BaseService[SelfExclusion, None, None]):
         # Créer l'exclusion
         exclusion = SelfExclusion(
             user_id=user_id,
-            exclusion_type=request.exclusion_type,
+            exclusion_type=exclusion_type,
             start_date=start_date,
             end_date=end_date,
             reason=ExclusionReason.SELF_REQUEST,
@@ -83,7 +90,7 @@ class ResponsibleService(BaseService[SelfExclusion, None, None]):
             user.is_active = False
             user.is_locked = True
             user.locked_at = start_date
-            user.lock_reason = f"Auto-exclusion: {request.exclusion_type.value}"
+            user.lock_reason = f"Auto-exclusion: {exclusion_type.value}"
             await self.db.flush()
         
         # Audit log
@@ -94,7 +101,7 @@ class ResponsibleService(BaseService[SelfExclusion, None, None]):
             resource_id=exclusion.id,
             ip_address=ip_address,
             new_values={
-                "exclusion_type": request.exclusion_type.value,
+                "exclusion_type": exclusion_type.value,
                 "duration_days": request.duration_days,
                 "end_date": end_date.isoformat() if end_date else None
             }
@@ -109,7 +116,7 @@ class ResponsibleService(BaseService[SelfExclusion, None, None]):
             channel="IN_APP"
         )
         
-        self.logger.info(f"Self-exclusion created for user {user_id}: {request.exclusion_type.value}")
+        self.logger.info(f"Self-exclusion created for user {user_id}: {exclusion_type.value}")
         
         return exclusion
     
