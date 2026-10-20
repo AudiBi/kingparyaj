@@ -414,3 +414,7 @@ helm/secrets.yaml
 .pyre/
 .pytype/
 .ruff_cache/
+
+# Images de l'application (logo, icônes) : à versionner, sinon absentes en production
+!app/static/img/
+!app/static/img/**
