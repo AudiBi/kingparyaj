@@ -172,6 +172,9 @@ async def delete_agent(
     
     if not agent:
         raise HTTPException(status_code=404, detail="Agent non trouvé")
+    from app.core.security import ensure_can_manage
+
+    ensure_can_manage(admin, agent)
     
     agent.is_deleted = True
     agent.is_active = False
