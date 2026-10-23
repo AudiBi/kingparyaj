@@ -24,12 +24,20 @@ class AgentLucky6BetCreate(BaseModel):
     player_name: Optional[str] = Field(None, max_length=100)
 
 
+class AgentLucky6Launch(BaseModel):
+    """Lancement du tirage par un agent : la manche vue à l'écran, rien d'autre."""
+    model_config = ConfigDict(extra="forbid")
+
+    race_id: str = Field(..., min_length=1, max_length=40)
+
+
 class Lucky6ConfigUpdate(BaseModel):
     """Configuration complète (validée en détail par lucky6_engine.validate_config)."""
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool
     auto_enabled: bool
+    manual_launch: bool = True
     interval_minutes: int
     betting_close_seconds: int
     intro_ms: int

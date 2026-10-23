@@ -23,6 +23,7 @@ from urllib.parse import urlencode
 
 from app.core.database import get_db
 from app.core.redis_client import get_redis
+from app.core.security import ensure_can_manage, ensure_can_assign_role, is_super_admin
 from app.core.security import get_current_admin, hash_password, verify_password
 from app.core.logger import logger
 from app.core.exceptions import GameException, NotFoundException, ValidationException
@@ -779,6 +780,7 @@ async def admin_user_create(
     redis_client: redis.Redis = Depends(get_redis)
 ):
     """Création d'un utilisateur"""
+    ensure_can_assign_role(admin, user_data.role)
     
     # Vérifier si le téléphone existe déjà
     existing = await db.execute(
@@ -941,7 +943,7 @@ async def admin_user_edit_page(
     return templates.TemplateResponse(request, "admin/users/edit.html", {
         "active": "users",
         "user": user,
-        "roles": [r.value for r in UserRole],
+        "roles": [r.value for r in UserRole if r != UserRole.SUPER_ADMIN or is_super_admin(admin)],
         "kyc_statuses": [s.value for s in KYCStatus],
         "admin_name": admin.full_name or admin.email,
         "admin_role": admin.role,
@@ -965,6 +967,7 @@ async def admin_user_update(
     
     if not user:
         raise HTTPException(404, "Utilisateur non trouvé")
+    ensure_can_manage(admin, user)
     
     # Mise à jour des champs
     if user_data.first_name is not None:
@@ -976,6 +979,7 @@ async def admin_user_update(
     if user_data.national_id is not None:
         user.national_id = user_data.national_id
     if user_data.role is not None:
+        ensure_can_assign_role(admin, user_data.role)
         user.role = user_data.role
     if user_data.kyc_status is not None:
         user.kyc_status = user_data.kyc_status
@@ -1016,6 +1020,7 @@ async def admin_user_delete(
     
     if not user:
         raise HTTPException(404, "Utilisateur non trouvé")
+    ensure_can_manage(admin, user)
     
     user.soft_delete(admin.id)
     user.is_active = False
@@ -1053,6 +1058,7 @@ async def admin_user_block(
     
     if not user:
         raise HTTPException(404, "Utilisateur non trouvé")
+    ensure_can_manage(admin, user)
     
     user.is_locked = True
     user.lock_reason = reason
@@ -1091,6 +1097,7 @@ async def admin_user_unblock(
     
     if not user:
         raise HTTPException(404, "Utilisateur non trouvé")
+    ensure_can_manage(admin, user)
     
     user.is_locked = False
     user.lock_reason = None
@@ -1364,6 +1371,7 @@ async def admin_agent_update(
 
     if not user:
         raise HTTPException(404, "Agent non trouvé")
+    ensure_can_manage(admin, user)
 
     if agent_data.password:
         user.password_hash = hash_password(agent_data.password)
@@ -1425,6 +1433,7 @@ async def admin_agent_delete(
     
     if not user:
         raise HTTPException(404, "Agent non trouvé")
+    ensure_can_manage(admin, user)
     
     user.soft_delete(admin.id)
     user.is_active = False
@@ -1448,6 +1457,7 @@ async def admin_agent_toggle_status(
 
     if not user:
         raise HTTPException(404, "Agent non trouvé")
+    ensure_can_manage(admin, user)
 
     user.is_active = not user.is_active
     await db.commit()
@@ -1470,6 +1480,7 @@ async def admin_agent_reset_password(
 
     if not user:
         raise HTTPException(404, "Agent non trouvé")
+    ensure_can_manage(admin, user)
 
     new_password = secrets.token_urlsafe(9)
     user.password_hash = hash_password(new_password)
@@ -2130,6 +2141,11 @@ async def admin_keno_draws_page(
         .limit(1)
     )
     next_draw_time = next_draw_result.scalar_one_or_none()
+    waiting_for_agent = False
+    if next_draw_time is None:  # tirage ouvert sans heure : il attend qu'un agent le lance
+        waiting_for_agent = bool((await db.execute(
+            select(func.count(KenoDraw.id)).where(KenoDraw.status == KenoDrawStatus.PENDING, KenoDraw.mode == "scheduled")
+        )).scalar())
 
     return templates.TemplateResponse(request, "admin/games/keno/draws.html", {
         "active": "keno",
@@ -2139,7 +2155,7 @@ async def admin_keno_draws_page(
             "pending": stats_row.pending or 0,
             "completed": stats_row.completed or 0,
             "today": stats_row.today or 0,
-            "next_draw": next_draw_time.strftime("%d/%m %H:%M") if next_draw_time else None,
+            "next_draw": next_draw_time.strftime("%d/%m %H:%M") if next_draw_time else ("Lancé par un agent" if waiting_for_agent else None),
         },
         "pagination": {
             "page": page,
@@ -3104,6 +3120,7 @@ async def admin_user_kyc_verify(
     
     if not user:
         raise HTTPException(404, "Utilisateur non trouvé")
+    ensure_can_manage(admin, user)
     
     user.kyc_status = KYCStatus.VERIFIED
     user.kyc_verified_at = now_utc()
@@ -3137,6 +3154,7 @@ async def admin_user_kyc_reject(
     
     if not user:
         raise HTTPException(404, "Utilisateur non trouvé")
+    ensure_can_manage(admin, user)
     
     user.kyc_status = KYCStatus.REJECTED
     
@@ -3169,6 +3187,7 @@ async def admin_user_kyc_reset(
     
     if not user:
         raise HTTPException(404, "Utilisateur non trouvé")
+    ensure_can_manage(admin, user)
     
     user.kyc_status = KYCStatus.PENDING
     user.kyc_verified_at = None
@@ -3254,6 +3273,7 @@ async def admin_user_credit(
     """Crédite manuellement un utilisateur"""
     from decimal import Decimal
 
+    ensure_can_manage(admin, await db.get(User, user_id))
     wallet_service = WalletService(db, redis_client)
     transaction = await wallet_service.credit(
         user_id=user_id,
@@ -3292,6 +3312,7 @@ async def admin_user_debit(
     from decimal import Decimal
     from app.core.exceptions import InsufficientBalanceException
 
+    ensure_can_manage(admin, await db.get(User, user_id))
     wallet_service = WalletService(db, redis_client)
     try:
         transaction = await wallet_service.debit(

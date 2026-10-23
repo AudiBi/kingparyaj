@@ -3,7 +3,12 @@
 
 Fait avancer, toutes les 2 secondes, les jeux à manches partagées :
 Keno (tirages partagés), Lucky6 et Horse Races — création automatique des
-parties, fermeture des paris, tirage / départ, fin, règlement.
+parties, fin de l'animation, règlement.
+
+Le tirage / départ n'est PAS déclenché ici par défaut : un agent lance chaque
+partie à la main (réglage `manual_launch`, voir launch_race / launch_draw) pour
+vendre autant de fiches qu'il veut. Seul le mode « à l'heure » (option) ferme
+les paris et tire tout seul.
 
 Pourquoi dans l'application : sans worker Celery + Celery beat démarrés
 (cas fréquent sur un poste Windows), aucune partie n'était créée ni lancée.

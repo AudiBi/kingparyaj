@@ -17,6 +17,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # Configuration
 config = context.config
 
+# L'adresse de la base vient de l'application (variable DATABASE_URL / .env), pas de alembic.ini :
+# sinon les migrations visent toujours 127.0.0.1 (« % » doublé : syntaxe de configparser).
+from app.config import settings  # noqa: E402
+
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("%", "%%"))
+
 # Logging
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

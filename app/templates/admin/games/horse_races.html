@@ -52,7 +52,8 @@
                     <div class="form-group"><label>Ouverture (heure Haïti)</label><input class="form-control" name="open_hour" type="number" min="0" max="23"></div>
                     <div class="form-group"><label>Fermeture (heure Haïti)</label><input class="form-control" name="close_hour" type="number" min="1" max="24"></div>
                 </div>
-                <label class="flex-center" style="margin:6px 0 14px;"><input type="checkbox" name="auto_enabled"> Cycle automatique (une course toutes les N minutes)</label>
+                <label class="flex-center" style="margin:6px 0 6px;"><input type="checkbox" name="auto_enabled"> Cycle automatique (une nouvelle course s'ouvre dès que la précédente est lancée)</label>
+                <label class="flex-center" style="margin:6px 0 14px;"><input type="checkbox" name="manual_launch"> Lancement manuel par un agent (pas d'heure de départ ; décoché : une course toutes les N minutes)</label>
                 <button type="submit" class="btn btn-primary w-full"><i class="fas fa-save"></i> Enregistrer</button>
             </form>
         </div>
@@ -127,6 +128,7 @@
         ['margin', 'place_positions', 'min_bet', 'max_bet', 'interval_minutes', 'betting_close_seconds',
          'race_duration_ms', 'odds_min', 'odds_max', 'open_hour', 'close_hour'].forEach(k => { form[k].value = config[k]; });
         form.auto_enabled.checked = !!config.auto_enabled;
+        form.manual_launch.checked = !!config.manual_launch;
     }
 
     $('configForm').addEventListener('submit', async e => {
@@ -137,7 +139,7 @@
             const r = runners[Number(inp.dataset.i)];
             r[inp.dataset.k] = inp.dataset.k === 'player_name' ? inp.value.trim() : Number(inp.value);
         });
-        const payload = { runners, auto_enabled: form.auto_enabled.checked };
+        const payload = { runners, auto_enabled: form.auto_enabled.checked, manual_launch: form.manual_launch.checked };
         ['margin', 'odds_min', 'odds_max'].forEach(k => payload[k] = parseFloat(form[k].value));
         ['place_positions', 'min_bet', 'max_bet', 'interval_minutes', 'betting_close_seconds', 'race_duration_ms', 'open_hour', 'close_hour']
             .forEach(k => payload[k] = Number(form[k].value));

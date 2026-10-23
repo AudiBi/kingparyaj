@@ -43,6 +43,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "min_bet": 10,
     "max_bet": 10000,
     "auto_enabled": True,         # cycle automatique (comme le Keno)
+    "manual_launch": True,        # pas d'heure de départ : un agent lance la course (sinon : toutes les N minutes)
     "interval_minutes": 5,
     "betting_close_seconds": 15,  # paris fermés N secondes avant le départ
     "race_duration_ms": 25000,
@@ -104,6 +105,7 @@ def validate_config(config: Dict[str, Any]) -> Dict[str, Any]:
         raise ValidationException("PLACE : 1 à 3 positions payées")
     if not 0 < float(merged["min_bet"]) <= float(merged["max_bet"]):
         raise ValidationException("Mises min/max invalides")
+    merged["manual_launch"] = bool(merged["manual_launch"])
     if int(merged["interval_minutes"]) < 1:
         raise ValidationException("Intervalle minimum : 1 minute")
     if int(merged["betting_close_seconds"]) < 0:

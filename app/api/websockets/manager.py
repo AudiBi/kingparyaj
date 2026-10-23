@@ -63,13 +63,36 @@ async def publish(message: Dict[str, Any], draw_id: str = "all") -> None:
     await _get_connection_manager().broadcast(json.loads(envelope)["message"], draw_id)
 
 
+def new_relay_client():
+    """Connexion Redis réservée à l'écoute du canal (abonnement).
+
+    Le client commun a un délai de lecture de 5 s (valeur par défaut de redis-py 8) : une
+    connexion d'abonnement, qui attend des messages sans rien recevoir, y serait coupée toutes les
+    5 s (« Timeout reading from … »). Ici : pas de délai de lecture ; un « ping » toutes les 30 s
+    détecte une connexion morte, et le keepalive TCP empêche l'hébergeur de la fermer."""
+    import redis.asyncio as redis
+
+    from app.config import settings
+
+    return redis.from_url(
+        settings.REDIS_URL,
+        decode_responses=True,
+        password=settings.REDIS_PASSWORD,
+        socket_timeout=None,
+        socket_keepalive=True,
+        health_check_interval=30,
+    )
+
+
 async def run_relay() -> None:
     """Boucle d'écoute du canal Redis (à lancer dans le processus FastAPI)."""
     connection_manager = _get_connection_manager()
     while True:
         pubsub = None
+        listener = None
         try:
-            pubsub = redis_client.pubsub()
+            listener = new_relay_client()
+            pubsub = listener.pubsub()
             await pubsub.subscribe(WS_BROADCAST_CHANNEL)
             logger.info("✅ WebSocket relay Redis démarré")
             async for item in pubsub.listen():
@@ -89,6 +112,11 @@ async def run_relay() -> None:
             if pubsub is not None:
                 try:
                     await pubsub.aclose()
+                except Exception:
+                    pass
+            if listener is not None:
+                try:
+                    await listener.aclose()
                 except Exception:
                     pass
 

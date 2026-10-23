@@ -168,7 +168,10 @@
         const r = pickRound();
         board.setRound(r);
         const mine = r ? myTicketsFor(r.race_id).filter(t => t.bet_type === 'SIX') : [];
-        const picks = mine.length ? mine[mine.length - 1].selection : [];
+        // numéros en cours de saisie par l'agent : visibles tout de suite sur la grille (avant la validation du pari)
+        const pv = screen && screen.preview;
+        const typing = !!(pv && r && pv.race_id === r.race_id);
+        const picks = typing ? (pv.selection || []) : (mine.length ? mine[mine.length - 1].selection : []);
         const key = picks.join(',');
         if (key !== board._picksKey) { board._picksKey = key; board.setPicks(picks); }
 
@@ -219,16 +222,16 @@
         const r = shown, now = clock.now();
         const pr = L6.progress(r, now);
         const next = state && state.betting_race;
-        $('nextInfo').textContent = next ? 'Prochain : #' + next.race_number + ' à ' + time(next.scheduled_at) : '';
+        $('nextInfo').textContent = next ? (next.manual ? 'Prochain : #' + next.race_number + ' — lancé par un agent' : 'Prochain : #' + next.race_number + ' à ' + time(next.scheduled_at)) : '';
         // case de la table correspondant à la position atteinte
         const ev = L6.evaluate(board.picks, (r && r.balls) || [], pr.revealed, r && r.paytable);
         document.querySelectorAll('#pay div').forEach(d => d.classList.toggle('hot', ev.sixth && Number(d.dataset.pos) === ev.sixth));
 
         const f = $('footer');
         let text = '', win = false;
-        if (!r) text = next ? `Paris ouverts — manche #${next.race_number} à ${time(next.scheduled_at)}` : 'Lucky6 — prochaine manche bientôt';
+        if (!r) text = next ? (next.manual ? `Paris ouverts — manche #${next.race_number}` : `Paris ouverts — manche #${next.race_number} à ${time(next.scheduled_at)}`) : 'Lucky6 — prochaine manche bientôt';
         else if (pr.phase === 'cancelled') text = 'Manche annulée — les mises sont remboursées';
-        else if (pr.phase === 'waiting') text = (r.status === 'BETTING_OPEN' ? 'Paris ouverts' : 'Paris fermés') + ' — tirage dans ' + L6.formatCountdown(L6.parseUtc(r.scheduled_at) - now);
+        else if (pr.phase === 'waiting') text = (r.status === 'BETTING_OPEN' ? 'Paris ouverts' : 'Paris fermés') + (r.manual ? ' — en attente du lancement du tirage' : ' — tirage dans ' + L6.formatCountdown(L6.parseUtc(r.scheduled_at) - now));
         else if (pr.phase === 'intro') text = 'Le tirage commence…';
         else if (pr.phase === 'drawing') {
             const b = r.balls[pr.revealed - 1];
@@ -239,7 +242,7 @@
             if (won.length) { win = true; text = 'GAGNÉ ! ' + money(won.reduce((s, t) => s + t.winnings, 0)); }
             else if (ev.sixth) { win = true; text = `6 / 6 en position ${ev.sixth} — ${mult(ev.multiplier)}`; }
             else if (mine.length && mine.every(t => t.status !== 'PENDING')) text = 'Pas gagnant cette fois — bonne chance pour la prochaine manche';
-            else text = `Tirage terminé — 1re boule ${r.balls[0]} ${r.balls[0] % 2 ? 'IMPAIRE' : 'PAIRE'}` + (next ? ` · prochaine manche ${time(next.scheduled_at)}` : '');
+            else text = `Tirage terminé — 1re boule ${r.balls[0]} ${r.balls[0] % 2 ? 'IMPAIRE' : 'PAIRE'}` + (next ? (next.manual ? ' · prochaine manche ouverte' : ` · prochaine manche ${time(next.scheduled_at)}`) : '');
         }
         if (f.textContent !== text) f.textContent = text;
         f.classList.toggle('win', win);

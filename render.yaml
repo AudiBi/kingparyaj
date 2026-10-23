@@ -1,0 +1,141 @@
+# render.yaml : Blueprint Render pour King Paryaj
+# Render -> New -> Blueprint -> choisir ce dépôt. Voir docs/DEPLOIEMENT_RENDER.md.
+#
+# Tout est dans la même région (virginia) : la base et Redis ne sont joignables que par
+# le réseau privé de Render (adresses internes), jamais depuis Internet.
+
+databases:
+  - name: kingparyaj-db
+    region: virginia
+    plan: basic-256mb          # payant : la base gratuite expire. Passez à un plan supérieur si besoin.
+    postgresMajorVersion: "16"
+    databaseName: parier_keno
+    user: kingparyaj
+    ipAllowList: []            # accès interne seulement
+
+services:
+  # ---------------------------------------------------------------- Redis (verrous, sessions, WebSocket, Celery)
+  - type: keyvalue
+    name: kingparyaj-redis
+    region: virginia
+    plan: starter
+    maxmemoryPolicy: noeviction   # ne jamais effacer de clés (verrous des tirages, sessions)
+    ipAllowList: []               # accès interne seulement
+
+  # ---------------------------------------------------------------- Application web (FastAPI + cycle des jeux)
+  - type: web
+    name: kingparyaj
+    runtime: docker
+    region: virginia
+    plan: starter              # toujours actif : un plan gratuit s'endort et arrêterait le cycle des jeux
+    dockerfilePath: ./Docker/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health/live
+    preDeployCommand: alembic upgrade head   # migrations avant chaque mise en ligne
+    autoDeploy: false          # déployer à la main (bouton « Deploy ») tant que la recette n'est pas faite
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG
+        value: "false"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: kingparyaj-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: kingparyaj-redis
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: CSRF_SECRET_KEY
+        generateValue: true
+      - key: WEB_CONCURRENCY      # processus uvicorn (le Dockerfile en met 4 par défaut)
+        value: "2"
+      - key: GAME_LOOP_ENABLED    # fait avancer Keno, Lucky6 et les courses (ouverture, fin, règlement)
+        value: "true"
+      - key: BASE_URL             # adresse publique (domaine à relier dans Render : voir docs/DEPLOIEMENT_RENDER.md)
+        value: https://kingparyaj.com
+      - key: FRONTEND_URL
+        value: https://kingparyaj.com
+      - key: BACKEND_CORS_ORIGINS # liste JSON
+        value: '["https://kingparyaj.com","https://www.kingparyaj.com"]'
+      - key: MONCASH_ENABLED
+        value: "false"
+      - key: NATCASH_ENABLED
+        value: "false"
+      - key: SMS_ENABLED
+        value: "false"
+      - key: EMAIL_ENABLED
+        value: "false"
+
+  # ================================================================
+  # OPTIONNEL (≈ 14 $/mois en plus) : tâches annexes Celery (notifications, nettoyages, résumés,
+  # rapports). Les jeux n'en ont PAS besoin : le cycle est intégré à l'application web.
+  # Pour l'activer : retirer le « # » de chaque ligne du bloc ci-dessous, puis redéployer.
+  # Un seul beat. SECRET_KEY / CSRF_SECRET_KEY : mêmes valeurs que le service web.
+  # ================================================================
+  # # ---------------------------------------------------------------- Celery worker (tâches annexes)
+  # # Facultatif : les jeux fonctionnent sans lui (cycle intégré à l'application). Il sert aux
+  # # notifications, nettoyages, résumés et rapports. Supprimez ce bloc et le suivant pour économiser.
+  # - type: worker
+  #   name: kingparyaj-worker
+  #   runtime: docker
+  #   region: virginia
+  #   plan: starter
+  #   dockerfilePath: ./Docker/Dockerfile
+  #   dockerContext: .
+  #   dockerCommand: celery -A app.workers.celery worker --loglevel=info --concurrency=2 --max-tasks-per-child=100
+  #   autoDeploy: false
+  #   envVars:
+  #     - key: ENVIRONMENT
+  #       value: production
+  #     - key: DATABASE_URL
+  #       fromDatabase:
+  #         name: kingparyaj-db
+  #         property: connectionString
+  #     - key: REDIS_URL
+  #       fromService:
+  #         type: keyvalue
+  #         name: kingparyaj-redis
+  #         property: connectionString
+  #     - key: SECRET_KEY
+  #       sync: false           # mêmes valeurs que le service web (copier depuis son onglet Environment)
+  #     - key: CSRF_SECRET_KEY
+  #       sync: false
+  #     - key: MONCASH_ENABLED
+  #       value: "false"
+  #     - key: NATCASH_ENABLED
+  #       value: "false"
+  #     - key: SMS_ENABLED
+  #       value: "false"
+  #     - key: EMAIL_ENABLED
+  #       value: "false"
+  #
+  # # ---------------------------------------------------------------- Celery beat (planificateur : UN SEUL)
+  # - type: worker
+  #   name: kingparyaj-beat
+  #   runtime: docker
+  #   region: virginia
+  #   plan: starter
+  #   dockerfilePath: ./Docker/Dockerfile
+  #   dockerContext: .
+  #   dockerCommand: celery -A app.workers.celery beat --loglevel=info
+  #   autoDeploy: false
+  #   envVars:
+  #     - key: ENVIRONMENT
+  #       value: production
+  #     - key: DATABASE_URL
+  #       fromDatabase:
+  #         name: kingparyaj-db
+  #         property: connectionString
+  #     - key: REDIS_URL
+  #       fromService:
+  #         type: keyvalue
+  #         name: kingparyaj-redis
+  #         property: connectionString
+  #     - key: SECRET_KEY
+  #       sync: false
+  #     - key: CSRF_SECRET_KEY
+  #       sync: false

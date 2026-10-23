@@ -20,16 +20,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Installer Poetry
-RUN pip install "poetry==${POETRY_VERSION}"
-
-# Copier les fichiers de dépendances
+# Dépendances : requirements.txt (versions figées). Le bloc [tool.poetry.dependencies] de
+# pyproject.toml ne liste aucune bibliothèque : `poetry install` produirait une image vide.
 WORKDIR /app
-COPY pyproject.toml poetry.lock* ./
-
-# Installer les dépendances
-RUN poetry config virtualenvs.create false \
-    && poetry install --no-interaction --no-ansi --no-root --only main
+COPY requirements.txt ./
+RUN pip install --prefix=/install -r requirements.txt
 
 # ==================== ÉTAPE 2 : Production ====================
 FROM python:3.12.3-slim AS production
@@ -53,8 +48,7 @@ RUN addgroup --system --gid 1000 appuser \
     && adduser --system --uid 1000 --gid 1000 appuser
 
 # Copier les dépendances depuis le builder
-COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
+COPY --from=builder /install /usr/local
 
 # Définir le dossier de travail
 WORKDIR /app
@@ -74,7 +68,8 @@ EXPOSE 8000
 
 # Healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD curl -f http://localhost:${PORT:-8000}/health/live || exit 1
 
 # Commande de démarrage
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+# PORT est fourni par l'hébergeur (Render) ; WEB_CONCURRENCY règle le nombre de processus
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WEB_CONCURRENCY:-4} --proxy-headers --forwarded-allow-ips='*'"]

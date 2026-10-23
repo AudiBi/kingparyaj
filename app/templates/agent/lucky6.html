@@ -57,6 +57,8 @@
     .receipt { font-family: 'Courier New', monospace; font-size: 13px; line-height: 1.5; color: #000; }
     .receipt .code { font-size: 11px; word-break: break-all; }
     .receipt .l6-ball { box-shadow: none; text-shadow: none; background: #fff !important; color: #000 !important; border: 1.5px solid #000; width: 26px; height: 26px; font-size: 12px; }
+    .l6-launch { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; }
+    .l6-launch small { display: block; color: #92400e; font-size: 12px; }
     @media print {
         body * { visibility: hidden !important; }
         #receiptPrint, #receiptPrint * { visibility: visible !important; }
@@ -121,6 +123,11 @@
                     <div id="betRound" class="text-muted">Aucune manche ouverte</div>
                     <div id="betCd" class="l6-cd" style="font-size:18px;"></div>
                 </div>
+            </div>
+
+            <div class="l6-launch" id="launchBox" style="display:none;">
+                <div><b id="launchInfo"></b><small id="launchHint">Le tirage ne part que lorsqu'un agent qui y a vendu le lance : vendez autant de fiches que vous voulez avant.</small></div>
+                <button type="button" id="launchBtn" class="btn btn-danger"><i class="fas fa-play"></i> LANCER LE TIRAGE</button>
             </div>
 
             <div class="l6-tabs" id="tabs">
@@ -237,7 +244,7 @@
         }
         $('sumOdds').textContent = odds ? (tab === 'SIX' ? mult(odds) + ' (6e en position 6)' : odds.toFixed(2)) : '—';
         $('sumMax').textContent = odds && stake ? money(Math.min(Math.floor(stake * odds * 100) / 100, r.max_payout)) : '—';
-        const ready = r && r.status === 'BETTING_OPEN' && L6.parseUtc(r.betting_closes_at) > clock.now()
+        const ready = r && r.status === 'BETTING_OPEN' && (r.manual || L6.parseUtc(r.betting_closes_at) > clock.now())
             && stake && (tab === 'SIX' ? picks.length === L6.PICKS : !!parity && r.parity_enabled)
             && (playerType() === 'cash' || $('identifier').value.trim().length > 0);
         $('betBtn').disabled = !ready;
@@ -335,6 +342,7 @@
             const data = await res.json().catch(() => null);
             if (!res.ok || !data || !data.success) throw new Error(errorText(data, 'Pari refusé'));
             showToast('Pari enregistré', 'success');
+            loadState();  // compteur de fiches de la manche
             showReceipt(data.bet, payload);
             // Pari suivant : les boules choisies sont réinitialisées
             picks = [];
@@ -367,9 +375,8 @@
         } else {
             sections.push({ type: 'total', label: 'TOTAL PAYÉ', value: KPReceipt.money(bet.stake) });
         }
-        if (bet.bet_type === 'SIX') sections.push({ type: 'text', text: 'Gain selon la position du 6e numéro sorti (35 boules tirées).' });
         kpShowReceipt({
-            game: 'LUCKY 6', round: `Manche n° ${bet.race_number}`, roundTime: 'Tirage à ' + localTime(bet.scheduled_at),
+            game: 'CHANCE 6', round: `Manche n° ${bet.race_number}`, roundTime: bet.scheduled_at ? 'Tirage à ' + localTime(bet.scheduled_at) : 'Tirage lancé par un agent',
             bureau: KP_AGENT.bureau, address: KP_AGENT.address, phone: KP_AGENT.phone, agent: KP_AGENT.name,
             ticket: bet.ticket_number || (payload && payload.player_type === 'ticket' ? payload.identifier : null),
             code: bet.bet_id, placedAt: bet.placed_at, sections,
@@ -438,17 +445,58 @@
         } catch (e) { /* réessai au prochain cycle */ }
     }
 
+    const plural = (n, word) => n + ' ' + word + (n > 1 ? 's' : '');
+
+    // Bouton « Lancer le tirage » : bloqué pendant l'animation de la manche précédente
+    let launching = false;
+    function updateLaunch() {
+        const show = !!(betting && cfg && cfg.enabled);
+        $('launchBox').style.display = show ? '' : 'none';
+        if (!show) return;
+        const busy = live && live.status === 'RUNNING';
+        const n = betting.total_bets || 0;
+        $('launchInfo').textContent = 'Manche #' + betting.race_number + ' — ' + plural(n, 'fiche') + ' vendue' + (n > 1 ? 's' : '');
+        const mine = (betting.my_bets || 0) > 0;
+        if (!launching) $('launchBtn').disabled = !!busy || !mine;
+        $('launchBtn').title = !mine ? 'Vendez au moins une fiche sur cette manche pour pouvoir la lancer' : (busy ? 'Attendez la fin du tirage en cours' : '');
+        $('launchHint').textContent = mine ? 'Vous avez vendu ' + plural(betting.my_bets, 'fiche') + ' sur cette manche.' : 'Seul un agent qui a vendu une fiche sur cette manche peut la lancer.';
+    }
+    async function launchRound() {
+        if (!betting || launching) return;
+        const n = betting.total_bets || 0;
+        if (!confirm('Lancer le tirage de la manche #' + betting.race_number + ' maintenant ?\n' + plural(n, 'fiche') + ' (' + money(betting.total_stake || 0) + ').\nLes paris seront fermés : on ne pourra plus en ajouter à cette manche.')) return;
+        launching = true; $('launchBtn').disabled = true;
+        try {
+            const res = await fetch('/agent/api/lucky6/launch', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': await csrf() }, body: JSON.stringify({ race_id: betting.race_id }),
+            });
+            const data = await res.json().catch(() => null);
+            if (!res.ok || !data || !data.success) throw new Error(errorText(data, 'Lancement refusé'));
+            showToast(data.message || 'Tirage lancé', 'success');
+        } catch (err) {
+            showToast(err.message || 'Erreur', 'error');
+        } finally { launching = false; loadState(); }
+    }
+
     function tick() {
         board.render();
         const now = clock.now();
         $('liveNumber').textContent = live ? '#' + live.race_number : '—';
         $('liveStatus').className = 'l6-status ' + (live ? live.status : '');
         $('liveStatus').textContent = live ? L6.statusLabel(live.status) : 'Aucune manche';
-        if (live && ['SCHEDULED', 'BETTING_OPEN', 'BETTING_CLOSED'].includes(live.status)) {
+        if (live && live.manual && ['SCHEDULED', 'BETTING_OPEN', 'BETTING_CLOSED'].includes(live.status)) {
+            const same = betting && betting.race_id === live.race_id;
+            $('liveCdLabel').textContent = 'Tirage lancé par un agent';
+            $('liveCd').textContent = same ? plural(betting.total_bets || 0, 'fiche') : '';
+        } else if (live && ['SCHEDULED', 'BETTING_OPEN', 'BETTING_CLOSED'].includes(live.status)) {
             $('liveCdLabel').textContent = 'Tirage dans';
             $('liveCd').textContent = L6.formatCountdown(L6.parseUtc(live.scheduled_at) - now);
         } else { $('liveCdLabel').textContent = ''; $('liveCd').textContent = ''; }
-        if (betting) {
+        updateLaunch();
+        if (betting && betting.manual) {
+            $('betRound').textContent = 'Manche #' + betting.race_number + ' — ouverte jusqu\'au lancement';
+            $('betCd').textContent = plural(betting.total_bets || 0, 'fiche') + ' · ' + money(betting.total_stake || 0);
+        } else if (betting) {
             const left = L6.parseUtc(betting.betting_closes_at) - now;
             $('betRound').textContent = 'Manche #' + betting.race_number + ' — tirage ' + localTime(betting.scheduled_at);
             $('betCd').textContent = 'Fermeture ' + L6.formatCountdown(left);
@@ -485,6 +533,7 @@
     $('identifier').addEventListener('input', updateForm);
     document.querySelectorAll('input[name="player_type"]').forEach(r => r.addEventListener('change', () => { syncPlayerType(); updateForm(); }));
     $('betForm').addEventListener('submit', submitBet);
+    $('launchBtn').addEventListener('click', launchRound);
     $('myBets').addEventListener('click', async e => {
         const b = e.target.closest('[data-reprint]');
         if (!b) return;

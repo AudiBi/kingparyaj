@@ -4,6 +4,17 @@ from pydantic import Field, field_validator
 from typing import List, Optional
 
 
+def async_database_url(url: str) -> str:
+    """Adresse de la base pour SQLAlchemy asynchrone. Les hébergeurs (Render, Heroku…)
+    fournissent `postgres://…` ou `postgresql://…` : le pilote asyncpg exige
+    `postgresql+asyncpg://…`. Les autres adresses (sqlite+aiosqlite…) sont inchangées."""
+    url = (url or "").strip()
+    for prefix in ("postgres://", "postgresql://"):
+        if url.startswith(prefix):
+            return "postgresql+asyncpg://" + url[len(prefix):]
+    return url
+
+
 class Settings(BaseSettings):
     """Configuration de l'application"""
     
@@ -46,6 +57,11 @@ class Settings(BaseSettings):
         "http://localhost:8501",
     ])
     
+    @field_validator("DATABASE_URL", mode="after")
+    @classmethod
+    def normalize_database_url(cls, v):
+        return async_database_url(v)
+
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
     @classmethod
     def parse_cors_origins(cls, v):
