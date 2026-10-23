@@ -23,6 +23,8 @@ from app.core.redis_client import redis_client
 from app.core.logger import logger
 from app.core.exceptions import AppException
 from app.core.csrf import AdminCsrfMiddleware
+from app.core.session_expired import session_expired_handler
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 # Ajouter le chemin du projet pour les imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -217,6 +219,10 @@ async def app_exception_handler(request: Request, exc: AppException):
             "path": request.url.path
         }
     )
+
+
+# Session expirée dans /admin et /agent : redirection vers la connexion (voir app/core/session_expired.py)
+app.add_exception_handler(StarletteHTTPException, session_expired_handler)
 
 
 @app.exception_handler(CsrfProtectError)

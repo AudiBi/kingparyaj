@@ -502,6 +502,24 @@
     </style>
     
     {% block extra_css %}{% endblock %}
+    <script>
+    /* Session expirée : une réponse 401 du serveur ramène à la page de connexion (au lieu d'afficher du JSON). */
+    (function () {
+        var original = window.fetch;
+        window.fetch = function () {
+            return original.apply(this, arguments).then(function (response) {
+                if (response.status === 401) {
+                    response.clone().json().then(function (data) {
+                        if (data && data.session_expired && data.login_url) {
+                            location.href = data.login_url + '?error=' + encodeURIComponent('Votre session a expiré, veuillez vous reconnecter.');
+                        }
+                    }).catch(function () { /* pas du JSON : rien à faire */ });
+                }
+                return response;
+            });
+        };
+    })();
+    </script>
 </head>
 <body>
 
