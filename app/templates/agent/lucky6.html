@@ -179,7 +179,7 @@
         <div class="flex" style="gap:8px;margin-top:12px;">
             <button class="btn btn-primary" onclick="KPReceipt.print(window.__kpReceipt)"><i class="fas fa-print"></i> Imprimer</button>
             <select class="kp-paper" aria-label="Largeur du papier" onchange="KPReceipt.setPaper(this.value); window.__kpReceipt && KPReceipt.preview(document.getElementById('receiptPrint'), window.__kpReceipt)" style="padding:6px 8px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;">
-                <option value="80">Papier 80 mm</option><option value="58">Papier 58 mm</option>
+                <option value="80">Papier 80 mm</option><option value="72">Papier 72 mm (XP-80C)</option><option value="58">Papier 58 mm</option>
             </select>
             <button class="btn btn-secondary" onclick="closeModal('receiptModal')">Fermer</button>
         </div>

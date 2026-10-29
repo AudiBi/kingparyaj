@@ -33,10 +33,10 @@
 
   /* ---------- Papier ---------- */
   function paper() {
-    try { return localStorage.getItem(PAPER_KEY) === '58' ? 58 : 80; } catch (e) { return 80; }
+    try { var v = localStorage.getItem(PAPER_KEY); return v === '58' ? 58 : (v === '72' ? 72 : 80); } catch (e) { return 80; }
   }
   function setPaper(v) {
-    try { localStorage.setItem(PAPER_KEY, String(v === 58 || v === '58' ? 58 : 80)); } catch (e) { /* sans stockage : 80 mm */ }
+    try { localStorage.setItem(PAPER_KEY, String(v === 58 || v === '58' ? 58 : (v === 72 || v === '72' ? 72 : 80))); } catch (e) { /* sans stockage : 80 mm */ }
   }
   /* Sélecteur à placer à côté du bouton Imprimer */
   function paperSelect(id) {
@@ -44,6 +44,7 @@
     return '<select id="' + (id || 'kpPaper') + '" class="kp-paper" aria-label="Largeur du papier" ' +
       'onchange="KPReceipt.setPaper(this.value)" style="padding:6px 8px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;">' +
       '<option value="80"' + (p === 80 ? ' selected' : '') + '>Papier 80 mm</option>' +
+      '<option value="72"' + (p === 72 ? ' selected' : '') + '>Papier 72 mm (XP-80C)</option>' +
       '<option value="58"' + (p === 58 ? ' selected' : '') + '>Papier 58 mm</option></select>';
   }
 
@@ -72,15 +73,19 @@
       '<rect width="100%" height="100%" fill="#fff"/><g fill="#000">' + rects + '</g></svg>';
   }
 
+  /* Largeur réelle de la page : le pilote Xprinter XP-80C propose « 72.1 x … » (largeur imprimable d'un rouleau 80 mm) */
+  function pageWidth(mm) { return mm === 72 ? 72.1 : mm; }
+
   /* ---------- Feuille de style (imprimante thermique) ---------- */
   function css(mm) {
+    var page = pageWidth(mm);
     var printable = mm === 58 ? 48 : 72;
     var base = mm === 58 ? 11 : 12.5;
     return '' +
-      '@page{size:' + mm + 'mm 297mm;margin:0}' +
+      '@page{size:' + page + 'mm 297mm;margin:0}' +
       '*{box-sizing:border-box;margin:0;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
       'html,body{background:#fff;color:#000}' +
-      'body{width:' + mm + 'mm;padding:0 ' + ((mm - printable) / 2) + 'mm;font:600 ' + base + 'px/1.2 "Arial Narrow",Arial,Helvetica,sans-serif}' +
+      'body{width:' + page + 'mm;padding:0 ' + ((page - printable) / 2).toFixed(2) + 'mm;font:600 ' + base + 'px/1.2 "Arial Narrow",Arial,Helvetica,sans-serif}' +
       '.rc{width:' + printable + 'mm}' +
       '.logo{display:block;width:' + (mm === 58 ? 12 : 16) + 'mm;height:auto;margin:0 auto .3mm;filter:grayscale(1) contrast(1.6)}' +
       '.c{text-align:center}.shop{font-size:' + (base + 2) + 'px;font-weight:900;text-transform:uppercase;letter-spacing:.3px}' +
@@ -164,7 +169,7 @@
     container.innerHTML = '';
     var frame = document.createElement('iframe');
     frame.title = 'Aperçu du reçu';
-    frame.style.cssText = 'width:' + mm + 'mm;max-width:100%;border:1px solid #e2e8f0;background:#fff;display:block;margin:0 auto;height:120mm';
+    frame.style.cssText = 'width:' + pageWidth(mm) + 'mm;max-width:100%;border:1px solid #e2e8f0;background:#fff;display:block;margin:0 auto;height:120mm';
     container.appendChild(frame);
     frame.srcdoc = html(spec, mm);
     frame.onload = function () {
@@ -178,9 +183,10 @@
     try {
       var mm = paper();
       var heightMm = Math.ceil(doc.documentElement.scrollHeight * 25.4 / 96) + 1;
-      if (heightMm <= mm) heightMm = mm + 1; // jamais plus large que haut : sinon l'impression passe en paysage
+      var width = pageWidth(mm);
+      if (heightMm <= width) heightMm = Math.ceil(width) + 1; // jamais plus large que haut : sinon l'impression passe en paysage
       var st = doc.createElement('style');
-      st.textContent = '@page{size:' + mm + 'mm ' + heightMm + 'mm;margin:0}';
+      st.textContent = '@page{size:' + width + 'mm ' + heightMm + 'mm;margin:0}';
       doc.head.appendChild(st);
     } catch (e) { /* taille par défaut */ }
   }
