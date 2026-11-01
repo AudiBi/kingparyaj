@@ -142,6 +142,62 @@ class TicketService(BaseService[Ticket, TicketCreate, None]):
         )).scalar() or 0
         return int(keno) + int(games)
 
+    async def release_pending_bets(self, ticket: Ticket, by: str = None) -> dict:
+        """Annulation d'un ticket : ses paris en attente d'un tirage NON LANCÉ sont annulés et leur mise
+        rendue sur le solde du ticket (statut REFUNDED : ni commission, ni revenu, comme l'annulation d'une
+        partie entière). Le ticket doit déjà être verrouillé par l'appelant.
+
+        Tout ou rien : si un pari attend un tirage déjà lancé (animation en cours, résultat fixé), rien n'est
+        modifié et `blocked` > 0 : l'annulation doit attendre le résultat.
+        Chaque tirage / manche est verrouillé pendant la vérification : un agent qui le lance au même
+        instant attend la fin de l'annulation (puis ce pari n'existe plus), jamais l'inverse."""
+        from decimal import Decimal
+
+        from app.core.timezone import now_utc
+        from app.models.audit import AuditLog
+        from app.models.enums import AuditAction, KenoBetStatus, KenoDrawStatus
+        from app.models.game import GameBet, GameBetStatus, GameRound, GameRoundStatus
+        from app.models.keno import KenoBet, KenoDraw
+
+        keno_bets = (await self.db.execute(
+            select(KenoBet).where(KenoBet.ticket_id == ticket.id, KenoBet.status == KenoBetStatus.PENDING)
+        )).scalars().all()
+        game_bets = (await self.db.execute(
+            select(GameBet).where(GameBet.ticket_id == ticket.id, GameBet.status == GameBetStatus.PENDING.value)
+        )).scalars().all()
+
+        plan, blocked = [], 0
+        for bet in keno_bets:
+            draw = (await self.db.execute(select(KenoDraw).where(KenoDraw.id == bet.draw_id).with_for_update())).scalar_one_or_none()
+            if draw is not None and draw.status == KenoDrawStatus.PENDING and not draw.numbers:
+                plan.append((bet, KenoBetStatus.REFUNDED, "keno_bet"))
+            else:
+                blocked += 1
+        open_states = (GameRoundStatus.SCHEDULED.value, GameRoundStatus.BETTING_OPEN.value, GameRoundStatus.BETTING_CLOSED.value)
+        for bet in game_bets:
+            rnd = (await self.db.execute(select(GameRound).where(GameRound.id == bet.round_id).with_for_update())).scalar_one_or_none()
+            if rnd is not None and rnd.status in open_states and not rnd.result:
+                plan.append((bet, GameBetStatus.REFUNDED.value, "game_bet"))
+            else:
+                blocked += 1
+        if blocked:
+            return {"released": 0, "blocked": blocked, "amount": Decimal("0")}
+
+        now, total = now_utc(), Decimal("0")
+        for bet, refunded_status, kind in plan:
+            stake = Decimal(str(bet.stake))
+            bet.status = refunded_status
+            bet.settled_at = now
+            ticket.balance = Decimal(str(ticket.balance or 0)) + stake
+            total += stake
+            self.db.add(AuditLog(
+                user_id=by, action=AuditAction.USER_UPDATED, resource_type=kind, resource_id=bet.id,
+                ip_address="0.0.0.0", new_values={"status": "REFUNDED", "stake": float(stake)},
+                extra_data={"event": "bet_cancelled_with_ticket", "ticket": ticket.ticket_number},
+            ))
+        await self.db.flush()
+        return {"released": len(plan), "blocked": 0, "amount": total}
+
     async def get_for_update(self, ticket_number: str) -> Ticket:
         """Ticket verrouillé (SELECT … FOR UPDATE) : deux paiements simultanés
         du même ticket se suivent, le second voit le ticket déjà payé."""

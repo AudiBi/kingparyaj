@@ -4694,10 +4694,10 @@ async def admin_tickets_bulk_cancel(
     total_amount = Decimal("0")
     skipped = 0
     for ticket in tickets:
-        if await TicketService(db, None).pending_bets_count(ticket.id):
-            skipped += 1  # pari en attente de tirage : pas d'annulation
+        if (await TicketService(db, None).release_pending_bets(ticket, admin.id))["blocked"]:
+            skipped += 1  # pari dont le tirage est déjà lancé : annulation après le résultat
             continue
-        amount = ticket.record_cancellation(admin.id)  # sortie d'espèces datée
+        amount = ticket.record_cancellation(admin.id)  # sortie d'espèces datée (mises des paris annulés comprises)
         total_amount += amount
         if ticket.bureau_id and amount > 0:
             bureau = await db.get(Bureau, ticket.bureau_id)
@@ -4708,7 +4708,7 @@ async def admin_tickets_bulk_cancel(
     
     message = f"{len(tickets) - skipped} ticket(s) annulé(s) pour un total de {total_amount} HTG"
     if skipped:
-        message += f" ; {skipped} ignoré(s) (pari en attente de tirage)"
+        message += f" ; {skipped} ignoré(s) (tirage déjà lancé)"
     return {"success": True, "message": message, "skipped": skipped, "total": float(total_amount)}
 
 
@@ -4773,22 +4773,14 @@ async def admin_ticket_cancel(
     if ticket.status != TicketStatus.ACTIVE:
         raise HTTPException(400, "Seuls les tickets actifs peuvent être annulés")
     
-    # Vérifier qu'il n'y a pas de paris en attente
-    bets_result = await db.execute(
-        select(KenoBet).where(
-            and_(
-                KenoBet.ticket_id == ticket_id,
-                KenoBet.status == "PENDING"
-            )
+    # Paris en attente d'un tirage non lancé : annulés avec le ticket (mise rendue) ; tirage déjà lancé : refus
+    released = await TicketService(db, None).release_pending_bets(ticket, admin.id)
+    if released["blocked"]:
+        raise HTTPException(
+            400,
+            "Impossible d'annuler : un pari de ce ticket attend son tirage, déjà lancé. "
+            "Annulation possible une fois le résultat connu.",
         )
-    )
-    pending_bets = bets_result.scalars().all()
-    
-    if pending_bets:
-        raise HTTPException(400, f"Impossible d'annuler: {len(pending_bets)} paris en attente")
-    
-    if await TicketService(db, None).pending_bets_count(ticket.id):
-        raise HTTPException(400, "Impossible d'annuler : un pari de ce ticket attend son tirage")
 
     # Rembourser le solde (sortie d'espèces datée)
     amount = ticket.record_cancellation(admin.id)
@@ -4803,7 +4795,8 @@ async def admin_ticket_cancel(
     
     await db.commit()
     
-    return {"success": True, "message": f"Ticket annulé. Remboursement de {amount} HTG"}
+    note = f" ({released['released']} pari(s) annulé(s))" if released["released"] else ""
+    return {"success": True, "message": f"Ticket annulé{note}. Remboursement de {amount} HTG"}
 
 
 @router.get("/api/tickets/export")
