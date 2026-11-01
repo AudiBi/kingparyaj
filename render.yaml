@@ -55,6 +55,10 @@ services:
         value: "2"
       - key: GAME_LOOP_ENABLED    # fait avancer Keno, Lucky6 et les courses (ouverture, fin, règlement)
         value: "true"
+      - key: DATABASE_POOL_SIZE   # connexions PostgreSQL par processus : (5 + 5) x processus, adapté à une petite base
+        value: "5"
+      - key: DATABASE_MAX_OVERFLOW
+        value: "5"
       - key: BASE_URL             # adresse publique (domaine à relier dans Render : voir docs/DEPLOIEMENT_RENDER.md)
         value: https://kingparyaj.com
       - key: FRONTEND_URL

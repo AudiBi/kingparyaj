@@ -49,3 +49,17 @@ Fichiers : `render.yaml` (Blueprint), `Docker/Dockerfile`, `.dockerignore`.
 - `alembic` utilise `DATABASE_URL` (et non l'adresse locale de `alembic.ini`).
 - L'ancien scheduler de tirages, qui gelait l'application en production, n'est plus démarré.
 - Le Dockerfile installe `requirements.txt` (le bloc Poetry ne listait aucune dépendance) et suit `$PORT`.
+
+## 4. Base PostgreSQL « in recovery mode »
+Message : `the database system is in recovery mode` (`CannotConnectNowError`). PostgreSQL vient de redémarrer après un
+arrêt anormal ; pendant la récupération (quelques secondes à quelques minutes) il refuse les connexions. Les boucles des
+jeux le signalent puis réessayent, avec une pause croissante (2 → 30 s) pour ne pas charger la base.
+
+Causes fréquentes sur Render, dans l'ordre :
+1. **Mémoire** : un plan de base à 256 Mo ne supporte pas beaucoup de connexions. L'application garde donc des pools
+   petits (`DATABASE_POOL_SIZE=5`, `DATABASE_MAX_OVERFLOW=5` par processus, soit au plus 10 x `WEB_CONCURRENCY`
+   connexions) et le tirage Keno partage le même pool. Onglet **Metrics** de la base : mémoire et connexions.
+2. **Disque plein** : vérifier l'espace utilisé dans le tableau de bord de la base.
+3. **Maintenance de Render** : voir l'onglet **Events** de la base (heure du redémarrage).
+
+Si la mémoire atteint la limite ou si ça se reproduit : passer la base au plan supérieur (1 Go).

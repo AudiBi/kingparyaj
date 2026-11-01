@@ -31,13 +31,25 @@ INTERVAL_SECONDS = 2
 _task: Optional[asyncio.Task] = None
 
 
-async def run_once() -> None:
-    """Un cycle pour chaque jeu ; l'erreur d'un jeu n'arrête pas les autres."""
+MAX_BACKOFF_SECONDS = 30
+
+
+def next_delay(consecutive_errors: int) -> float:
+    """Pause avant le prochain cycle : 2 s normalement ; si la base (ou Redis) est en panne, 4, 8, 16 puis
+    30 s (au lieu de la solliciter toutes les 2 s pendant sa récupération) ; retour à 2 s dès que ça repasse."""
+    if consecutive_errors <= 0:
+        return INTERVAL_SECONDS
+    return min(INTERVAL_SECONDS * (2 ** consecutive_errors), MAX_BACKOFF_SECONDS)
+
+
+async def run_once() -> int:
+    """Un cycle pour chaque jeu ; l'erreur d'un jeu n'arrête pas les autres. Renvoie le nombre d'erreurs."""
     from app.services.horse_race_service import HorseRaceService
     from app.services.lucky6_service import Lucky6Service
     from app.workers.horse_race_worker import tick_round_game
     from app.workers.keno_worker import _tick_async as keno_tick
 
+    errors = 0
     for label, call in (
         ("Keno", lambda: keno_tick()),
         ("Lucky6", lambda: tick_round_game(Lucky6Service, "lock:lucky6:tick", "🎱 Lucky6")),
@@ -46,14 +58,18 @@ async def run_once() -> None:
         try:
             await call()
         except Exception as e:
+            errors += 1
             logger.error(f"Cycle {label} en erreur : {e}")
+    return errors
 
 
 async def _loop() -> None:
     logger.info(f"✅ Cycle automatique des jeux démarré (toutes les {INTERVAL_SECONDS} s)")
+    failures = 0
     while True:
-        await run_once()
-        await asyncio.sleep(INTERVAL_SECONDS)
+        errors = await run_once()
+        failures = failures + 1 if errors else 0
+        await asyncio.sleep(next_delay(failures))
 
 
 def start() -> asyncio.Task:
