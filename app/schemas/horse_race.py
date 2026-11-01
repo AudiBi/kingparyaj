@@ -65,6 +65,8 @@ class HorseRaceConfigUpdate(BaseModel):
     place_positions: int = 1
     min_bet: float = 10
     max_bet: float = 10000
+    max_payout: float = 50000
+    exotic_max_bet: float = 1000
     auto_enabled: bool = True
     manual_launch: bool = True
     interval_minutes: int = 5

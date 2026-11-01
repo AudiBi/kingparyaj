@@ -190,7 +190,7 @@
     const renderer = new HR.Renderer(document.getElementById('raceCanvas'), { clock, maxHeight: 460 });
     let display = null;          // course affichée (en piste)
     let race = null;             // course qui prend les paris
-    let betType = 'WIN', selection = [], quoteSeq = 0, currentOdds = null;
+    let betType = 'WIN', selection = [], quoteSeq = 0, currentOdds = null, currentCap = null, currentMaxStake = null;
     let betTotals = null;        // fiches vendues sur la course ouverte : { race_id, bets, stake, mine }
 
     const $ = id => document.getElementById(id);
@@ -316,6 +316,8 @@
             if (seq !== quoteSeq) return;
             if (!res.ok) { $('quoteOdds').textContent = errorMessage(data, 'Cote indisponible'); $('submitBet').disabled = true; return; }
             currentOdds = data.odds;
+            currentCap = data.max_payout;        // gain maximum par pari (null : anciennes courses sans plafond)
+            currentMaxStake = data.max_stake;    // mise maximum de ce type de pari
             $('quoteOdds').textContent = data.odds.toFixed(2);
             updatePayout();
         } catch (e) { /* réseau : la cote sera recalculée à la validation */ }
@@ -323,7 +325,12 @@
 
     function updatePayout() {
         const stake = Number($('stake').value || 0);
-        $('quotePayout').textContent = currentOdds ? money(Math.floor(stake * currentOdds * 100) / 100) : '—';
+        let payout = currentOdds ? Math.floor(stake * currentOdds * 100) / 100 : null;
+        const capped = payout !== null && currentCap != null && payout > currentCap;
+        if (capped) payout = currentCap;
+        $('quotePayout').textContent = payout === null ? '—' : money(payout) + (capped ? ' (plafond)' : '');
+        $('stake').max = currentMaxStake || '';
+        $('quotePayout').title = currentMaxStake ? 'Mise maximum ' + betType + ' : ' + money(currentMaxStake) : '';
     }
 
     // ---------- Pari ----------

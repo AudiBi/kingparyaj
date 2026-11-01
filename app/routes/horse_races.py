@@ -75,7 +75,11 @@ async def agent_quote(
     service = HorseRaceService(db, redis_client)
     race = await service.get_race(race_id)
     chosen, odds = service.quote(race, bet_type, numbers)
-    return {"selection": chosen, "odds": float(odds)}
+    return {
+        "selection": chosen, "odds": float(odds),
+        "max_payout": race.config.get("max_payout"),
+        "max_stake": float(service.max_stake(race, (bet_type or "").upper())),
+    }
 
 
 @agent_router.get("/api/horse-races/races/{race_id}/my-bets")

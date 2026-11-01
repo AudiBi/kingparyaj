@@ -119,6 +119,10 @@ class RoundGameService:
         """Normalise la sélection et renvoie (sélection, cote figée)."""
         raise NotImplementedError  # pragma: no cover
 
+    def max_stake(self, race: GameRound, bet_type: str) -> Decimal:
+        """Mise maximum pour ce type de pari (un jeu peut la réduire pour ses paris à gros gains)."""
+        return Decimal(str(race.config.get("max_bet", 10000)))
+
     def potential_payout(self, race: GameRound, bet_type: str, stake: Decimal, odds: Decimal) -> Decimal:
         return (stake * odds).quantize(Decimal("0.01"), ROUND_DOWN)
 
@@ -732,12 +736,12 @@ class RoundGameService:
         if race.status != GameRoundStatus.BETTING_OPEN.value or (race.betting_closes_at and now >= race.betting_closes_at):
             raise GameException(self.MSG["closed"])
 
+        bet_type = (bet_type or "").upper()
         min_bet = Decimal(str(race.config.get("min_bet", 10)))
-        max_bet = Decimal(str(race.config.get("max_bet", 10000)))
+        max_bet = self.max_stake(race, bet_type)
         if stake < min_bet or stake > max_bet:
             raise GameException(f"Mise invalide. Min : {min_bet} HTG, Max : {max_bet} HTG")
 
-        bet_type = (bet_type or "").upper()
         chosen, odds = self.quote(race, bet_type, selection)
         bet_id = str(uuid.uuid4())
         bet = GameBet(
