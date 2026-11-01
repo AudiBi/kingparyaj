@@ -44,8 +44,8 @@ class AdminUserBase(BaseModel):
     def validate_phone(cls, v: str) -> str:
         """Valide le format du téléphone haïtien"""
         v = v.replace(' ', '').replace('-', '')
-        if not re.match(r'^[34]\d{7}$', v):
-            raise ValueError('Téléphone invalide. Format: 3X-XX-XXXX ou 4X-XX-XXXX')
+        if not re.match(r'^[345]\d{7}$', v):
+            raise ValueError('Téléphone invalide. Format: 3X-XX-XXXX, 4X-XX-XXXX ou 5X-XX-XXXX')
         return v
 
 
@@ -131,8 +131,8 @@ class AdminAgentCreate(BaseModel):
     @classmethod
     def validate_phone(cls, v: str) -> str:
         v = v.replace(' ', '').replace('-', '')
-        if not re.match(r'^[34]\d{7}$', v):
-            raise ValueError('Téléphone invalide. Format: 3X-XX-XXXX ou 4X-XX-XXXX')
+        if not re.match(r'^[345]\d{7}$', v):
+            raise ValueError('Téléphone invalide. Format: 3X-XX-XXXX, 4X-XX-XXXX ou 5X-XX-XXXX')
         return v
 
 

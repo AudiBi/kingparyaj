@@ -50,11 +50,16 @@ class PromotionService(BaseService[Promotion, PromotionCreate, PromotionUpdate])
             if existing.scalar_one_or_none():
                 raise AppException(400, f"Code {data.code} déjà utilisé")
         
+        try:  # accepte « cashback » comme « CASHBACK »
+            promotion_type = PromotionType(str(getattr(data.type, "value", data.type)).lower())
+        except ValueError:
+            raise AppException(400, f"Type de promotion invalide : {data.type}")
+
         promotion = Promotion(
             name=data.name,
             code=data.code,
             description=data.description,
-            type=data.type,
+            type=promotion_type,
             config=data.config,
             start_date=data.start_date,
             end_date=data.end_date,
@@ -143,10 +148,11 @@ class PromotionService(BaseService[Promotion, PromotionCreate, PromotionUpdate])
         
         # Mettre en cache
         if promotions:
+            import json
             await self.redis.setex(
                 "promotions:active",
                 300,
-                [p.id for p in promotions]
+                json.dumps([p.id for p in promotions])  # Redis ne prend pas de liste Python
             )
         
         return promotions
@@ -189,7 +195,7 @@ class PromotionService(BaseService[Promotion, PromotionCreate, PromotionUpdate])
             user_id=user_id,
             promotion_id=promotion.id,
             bonus_amount=bonus_amount,
-            wagering_required=promotion.wagering_requirement * bonus_amount,
+            wagering_required=int(promotion.wagering_requirement * bonus_amount),  # colonne entière
             expires_at=datetime.utcnow() + timedelta(days=30)
         )
         

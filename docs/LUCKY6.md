@@ -52,7 +52,13 @@ tick automatique, validation + diffusion. `HorseRaceService` n'en garde que les 
 `BETTING_OPEN` → (N s avant l'heure) `BETTING_CLOSED` → `RUNNING` (35 boules calculées depuis le seed) →
 `FINISHED` (fin de l'animation) → `SETTLED` (paris réglés). `CANCELLED` possible avant la fin : mises remboursées.
 
-- Les manches sont calées sur l'horloge (toutes les 5 min : 10:00, 10:05…), avec au moins 1 min de paris.
+- **Lancement manuel (par défaut)** : une manche n'a pas d'heure ; elle reste ouverte jusqu'à ce qu'un agent clique
+  sur **LANCER LE TIRAGE** (`POST /agent/api/lucky6/launch` + CSRF, seul champ : `race_id`) : les paris se ferment,
+  les 35 boules (fixées par le seed engagé à l'ouverture) sortent, puis le cycle règle la manche et ouvre la
+  suivante. Seul un agent qui a vendu au moins une fiche sur la manche peut la lancer. Lancer plus tôt ou plus tard ne change pas le résultat. Impossible de lancer pendant le tirage
+  précédent. Le panel agent montre les fiches vendues (non public). Réglage admin `manual_launch` : décoché,
+  retour aux manches à l'heure décrites ci-dessous ; le mode est figé dans chaque manche.
+- (Mode « à l'heure ») Les manches sont calées sur l'horloge (toutes les 5 min : 10:00, 10:05…), avec au moins 1 min de paris.
 - La manche suivante est créée dès la fermeture des paris de la précédente : on parie sur la suivante pendant le tirage.
 - Durée du tirage = présentation + 35 × intervalle entre boules + affichage du résultat (80 s par défaut).
 - Prise de pari sous verrou **partagé** (paris simultanés illimités) ; transitions sous verrou exclusif.

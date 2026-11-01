@@ -209,7 +209,7 @@
     var phaseText = '';
     if (!r) phaseText = 'En attente de la prochaine manche';
     else if (pr.phase === 'cancelled') phaseText = 'Manche annulée — mises remboursées';
-    else if (pr.phase === 'waiting') phaseText = 'Tirage dans ' + formatCountdown(parseUtc(r.scheduled_at) - now);
+    else if (pr.phase === 'waiting') phaseText = r.manual ? 'Paris ouverts — en attente du lancement du tirage' : 'Tirage dans ' + formatCountdown(parseUtc(r.scheduled_at) - now);
     else if (pr.phase === 'intro') phaseText = 'Le tirage commence…';
     else if (pr.phase === 'drawing') phaseText = 'Tirage en cours';
     else phaseText = 'Tirage terminé';

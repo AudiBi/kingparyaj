@@ -502,6 +502,24 @@
     </style>
     
     {% block extra_css %}{% endblock %}
+    <script>
+    /* Session expirée : une réponse 401 du serveur ramène à la page de connexion (au lieu d'afficher du JSON). */
+    (function () {
+        var original = window.fetch;
+        window.fetch = function () {
+            return original.apply(this, arguments).then(function (response) {
+                if (response.status === 401) {
+                    response.clone().json().then(function (data) {
+                        if (data && data.session_expired && data.login_url) {
+                            location.href = data.login_url + '?error=' + encodeURIComponent('Votre session a expiré, veuillez vous reconnecter.');
+                        }
+                    }).catch(function () { /* pas du JSON : rien à faire */ });
+                }
+                return response;
+            });
+        };
+    })();
+    </script>
 </head>
 <body>
 
@@ -604,6 +622,7 @@
 
 <!-- ==================== SCRIPTS ==================== -->
 <script src="/static/js/thermal_receipt.js"></script>
+<script src="/static/js/escpos_print.js"></script>
 <script>
     // ==================== SIDEBAR ====================
     function toggleSidebar() {
@@ -721,6 +740,19 @@
         document.querySelectorAll('.kp-paper').forEach(s => { s.value = String(KPReceipt.paper()); });
         KPReceipt.preview(document.getElementById(containerId || 'receiptPrint'), spec);
         if (modalId !== false) openModal(modalId || 'receiptModal');
+    };
+    // Annulation d'un ticket au guichet, AVANT le lancement du tirage : paris annulés, espèces rendues au joueur
+    window.kpCancelTicket = async function (ticketNumber, after) {
+        if (!confirm('Annuler le ticket ' + ticketNumber + ' ?\n\nSes paris seront annulés et l\'argent sera rendu au joueur en espèces (retiré de votre caisse).\nPossible seulement avant le lancement du tirage.')) return;
+        try {
+            const csrf = (await (await fetch('/agent/api/keno/csrf-token')).json()).csrf_token;
+            const res = await fetch('/agent/api/tickets/' + encodeURIComponent(ticketNumber) + '/cancel', { method: 'POST', headers: { 'X-CSRFToken': csrf } });
+            const data = await res.json().catch(() => null);
+            if (!res.ok || !data || !data.success) throw new Error((data && (data.error || data.detail)) || 'Annulation refusée');
+            showToast(data.message, 'success');
+            if (typeof refreshCashBalance === 'function') refreshCashBalance();
+            if (after) after();
+        } catch (e) { showToast(e.message || 'Erreur', 'error'); }
     };
     function kpLogoHtml(width) {
         return `<img src="${KP_LOGO_PRINT}" alt="King Paryaj" style="width:${width || 110}px;height:auto;display:block;margin:0 auto 6px;">`;

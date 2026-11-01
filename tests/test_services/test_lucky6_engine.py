@@ -134,7 +134,7 @@ def test_default_config_is_valid():
     ({"min_bet": 500, "max_bet": 100}, "Mises"),
     ({"max_payout": 5}, "gain maximum"),
     ({"stake_options": [5]}, "hors des limites"),
-    ({"interval_minutes": 2, "ball_interval_ms": 5000}, "plus longtemps"),
+    ({"interval_minutes": 2, "ball_interval_ms": 5000, "manual_launch": False}, "plus longtemps"),
     ({"open_hour": 20, "close_hour": 8}, "ouverture"),
     ({"max_rtp": 1.2}, "maximum"),
 ])

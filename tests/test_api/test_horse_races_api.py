@@ -343,3 +343,100 @@ async def test_counter_screen_shows_ticket_entry_then_result(make_client, db_ses
         st = (await pub.get(f"/horse-races/api/guichet/{code}")).json()["state"]
         assert st["tickets"][0]["status"] in ("WON", "LOST")
         assert (await pub.get("/horse-races/guichet?c=xyz")).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_agent_launches_the_open_race(make_client, db_session, fake_redis, make_agent, make_user):
+    agent = await make_agent()
+    player = await make_user(balance=Decimal("300"))
+    race = await _open_race(db_session, fake_redis)
+    assert race.betting_closes_at is None  # course sans heure : un agent la lance
+    client = await make_client()
+    await _agent_login(client, agent)
+
+    async def token():
+        return {"X-CSRFToken": (await client.get("/agent/api/horse-races/csrf-token")).json()["csrf_token"]}
+
+    for _ in range(3):  # autant de fiches que voulu avant le départ
+        sold = await client.post("/agent/api/horse-races/bet", headers=await token(), json={
+            "race_id": race.id, "bet_type": "WIN", "selection": [10], "stake": "100",
+            "player_type": "account", "identifier": player.phone,
+        })
+        assert sold.status_code == 200, sold.text
+    state = (await client.get("/agent/api/horse-races/current")).json()
+    assert state["betting_race"]["manual"] is True and state["betting_race"]["betting_closes_at"] is None
+
+    assert (await client.post("/agent/api/horse-races/launch", json={"race_id": race.id}, follow_redirects=False)).status_code == 303  # CSRF
+    assert (await client.post("/agent/api/horse-races/launch", headers=await token(),
+                              json={"race_id": race.id, "result": [10]})).status_code == 422  # le client n'impose rien
+    stranger = await make_agent()  # un agent qui n'a rien vendu sur cette course ne peut pas la lancer
+    stranger_client = await make_client()
+    await _agent_login(stranger_client, stranger)
+    refused = await stranger_client.post("/agent/api/horse-races/launch", headers=await _csrf_headers(stranger_client), json={"race_id": race.id})
+    assert refused.status_code == 400 and "a vendu" in refused.json()["detail"]
+    assert (await client.get("/agent/api/horse-races/current")).json()["betting_race"]["my_bets"] == 3
+
+    launched = await client.post("/agent/api/horse-races/launch", headers=await token(), json={"race_id": race.id})
+    assert launched.status_code == 200, launched.text
+    assert launched.json()["race"]["status"] == "RUNNING"
+
+    again = await client.post("/agent/api/horse-races/launch", headers=await token(), json={"race_id": race.id})
+    assert again.status_code == 400
+    late = await client.post("/agent/api/horse-races/bet", headers=await token(), json={
+        "race_id": race.id, "bet_type": "WIN", "selection": [10], "stake": "100",
+        "player_type": "account", "identifier": player.phone,
+    })
+    assert late.status_code == 400
+    assert await WalletService(db_session, fake_redis).get_balance(player.id) == Decimal("0")
+
+
+@pytest.mark.asyncio
+async def test_player_cannot_launch_a_race(make_client, db_session, fake_redis, make_user):
+    user = await make_user(balance=Decimal("0"))
+    race = await _open_race(db_session, fake_redis)
+    client = await make_client(current_user=user)
+    response = await client.post("/agent/api/horse-races/launch", json={"race_id": race.id}, follow_redirects=False)
+    assert response.status_code in (303, 401, 403)
+    await db_session.refresh(race)
+    assert race.status == "BETTING_OPEN"
+
+
+@pytest.mark.asyncio
+async def test_winning_ticket_stays_listed_after_the_race_and_can_be_paid(
+    make_client, db_session, fake_redis, make_agent, make_ticket
+):
+    agent, other = await make_agent(), await make_agent()
+    ticket = await make_ticket(agent, balance=Decimal("100"))
+    other_ticket = await make_ticket(other, balance=Decimal("100"))
+    service = HorseRaceService(db_session, fake_redis)
+    race = await service.create_race()
+    first = race.participants[0]["player_number"]
+    await service.place_bet(race.id, "WIN", [first], "40", ticket_number=ticket["ticket_number"], agent_id=agent.id)
+    await service.place_bet(race.id, "WIN", [first], "10", ticket_number=other_ticket["ticket_number"], agent_id=other.id)
+
+    # la course est lancée, terminée et réglée : le cheval choisi gagne
+    race.result = [first] + [p["player_number"] for p in race.participants if p["player_number"] != first]
+    race.status = "FINISHED"
+    await db_session.flush()
+    await service.settle_race(race.id)
+    await service.create_race()  # la course suivante est déjà ouverte : l'ancienne ne doit pas disparaître de la liste
+    await db_session.commit()
+
+    client = await make_client()
+    await _agent_login(client, agent)
+    data = (await client.get("/agent/api/horse-races/my-bets")).json()["bets"]
+    assert len(data) == 1  # seulement les paris de CET agent
+    bet = data[0]
+    assert bet["status"] == "WON" and bet["winnings"] > 0 and bet["race_number"] == race.round_number
+    assert bet["ticket_number"] == ticket["ticket_number"] and bet["selection_names"][0]
+    assert "result" not in bet and "race_script" not in bet  # le classement n'est pas diffusé par cette liste
+
+    summary = (await client.get(f"/agent/api/payouts/{ticket['ticket_number']}")).json()
+    assert summary["amount_to_pay"] > 0 and any(b.get("game") == "Horse Races" for b in summary.get("bets", []))
+
+
+@pytest.mark.asyncio
+async def test_recent_bets_require_an_agent(make_client, db_session, fake_redis):
+    client = await make_client()
+    response = await client.get("/agent/api/horse-races/my-bets", follow_redirects=False)
+    assert response.status_code in (303, 401, 403)

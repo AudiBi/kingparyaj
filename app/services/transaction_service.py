@@ -390,7 +390,10 @@ class TransactionService(BaseService[Transaction, None, None]):
     ) -> str:
         """Exporte les transactions d'un utilisateur (CSV ou JSON)"""
         
-        transactions = await self.get_transactions_by_period(start_date, end_date)
+        # uniquement les transactions de CET utilisateur (la période seule renvoie celles de tous les joueurs)
+        transactions = [
+            tx for tx in await self.get_transactions_by_period(start_date, end_date) if tx.user_id == user_id
+        ]
         
         if not transactions:
             return ""

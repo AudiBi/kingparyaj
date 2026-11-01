@@ -13,7 +13,7 @@ async def seed_admin():
     async with AsyncSession(engine) as db:
         result = await db.execute(
             select(User).where(
-                User.email == "admin@example.com"
+                User.email == "audiaime11@gmail.com"
             )
         )
 
@@ -24,10 +24,10 @@ async def seed_admin():
             return
 
         admin = User(
-            email="admin@example.com",
+            email="audiaime11@gmail.com",
             phone="+50912345678",
-            first_name="System",
-            last_name="Administrator",
+            first_name="Audisson",
+            last_name="Bien-aimé",
             password_hash=hash_password("Admin123!"),
             role=UserRole.SUPER_ADMIN,
             kyc_status=KYCStatus.VERIFIED,

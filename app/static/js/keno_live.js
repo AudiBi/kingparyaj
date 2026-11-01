@@ -44,6 +44,7 @@
     if (draw.status === 'cancelled') return { phase: 'cancelled', revealed: 0 };
     var order = draw.draw_order || [];
     if (draw.status !== 'completed' || !order.length) {
+      if (draw.manual || !draw.betting_closes_at) return { phase: 'open', revealed: 0 };
       var closes = parseUtc(draw.betting_closes_at);
       return { phase: now < closes ? 'open' : 'closed', revealed: 0 };
     }
@@ -149,7 +150,7 @@
     var order = (d && d.draw_order) || [];
     var text = '';
     if (!d) text = 'En attente du prochain tirage';
-    else if (pr.phase === 'open') text = 'Tirage dans ' + countdown(parseUtc(d.draw_time) - now);
+    else if (pr.phase === 'open') text = d.manual ? 'Paris ouverts — en attente du lancement du tirage' : 'Tirage dans ' + countdown(parseUtc(d.draw_time) - now);
     else if (pr.phase === 'closed') text = 'Paris fermés — tirage imminent';
     else if (pr.phase === 'intro') text = 'Le tirage commence…';
     else if (pr.phase === 'drawing') text = 'Tirage en cours';

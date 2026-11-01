@@ -42,7 +42,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "place_positions": 1,         # PLACE gagne si un des chevaux choisis finit dans le top N
     "min_bet": 10,
     "max_bet": 10000,
+    # Plafonds contre les très gros gains (EXACTA / TRIFECTA : cotes de plusieurs centaines) qui font
+    # basculer une journée en négatif : gain maximum par pari, et mise maximum des paris exotiques.
+    "max_payout": 50000,
+    "exotic_max_bet": 1000,
     "auto_enabled": True,         # cycle automatique (comme le Keno)
+    "manual_launch": True,        # pas d'heure de départ : un agent lance la course (sinon : toutes les N minutes)
     "interval_minutes": 5,
     "betting_close_seconds": 15,  # paris fermés N secondes avant le départ
     "race_duration_ms": 25000,
@@ -104,6 +109,16 @@ def validate_config(config: Dict[str, Any]) -> Dict[str, Any]:
         raise ValidationException("PLACE : 1 à 3 positions payées")
     if not 0 < float(merged["min_bet"]) <= float(merged["max_bet"]):
         raise ValidationException("Mises min/max invalides")
+    try:
+        max_payout, exotic_max = float(merged["max_payout"]), float(merged["exotic_max_bet"])
+    except (TypeError, ValueError):
+        raise ValidationException("Gain maximum / mise maximum exotique invalides")
+    if max_payout < float(merged["max_bet"]):
+        raise ValidationException("Le gain maximum doit être au moins égal à la mise maximum")
+    if not float(merged["min_bet"]) <= exotic_max <= float(merged["max_bet"]):
+        raise ValidationException("Mise maximum EXACTA / TRIFECTA : entre la mise minimum et la mise maximum")
+    merged["max_payout"], merged["exotic_max_bet"] = max_payout, exotic_max
+    merged["manual_launch"] = bool(merged["manual_launch"])
     if int(merged["interval_minutes"]) < 1:
         raise ValidationException("Intervalle minimum : 1 minute")
     if int(merged["betting_close_seconds"]) < 0:
@@ -166,8 +181,8 @@ class HorseRaceService(RoundGameService):
             })
         race_config = {
             k: config[k]
-            for k in ("margin", "place_positions", "min_bet", "max_bet", "race_duration_ms", "betting_close_seconds",
-                      "odds_min", "odds_max")
+            for k in ("margin", "place_positions", "min_bet", "max_bet", "max_payout", "exotic_max_bet",
+                      "race_duration_ms", "betting_close_seconds", "odds_min", "odds_max")
         }
         return participants, race_config
 
@@ -204,11 +219,27 @@ class HorseRaceService(RoundGameService):
             raise GameException("Cette sélection couvre trop de chances : cote inférieure à 1.01, pari refusé")
         return chosen, odds
 
+    # Les manches créées avant ces plafonds n'en ont pas (clés absentes) : leurs paris gardent leurs règles.
+    def max_stake(self, race: GameRound, bet_type: str) -> Decimal:
+        if bet_type in ("EXACTA", "TRIFECTA") and race.config.get("exotic_max_bet") is not None:
+            return Decimal(str(race.config["exotic_max_bet"]))
+        return super().max_stake(race, bet_type)
+
+    @staticmethod
+    def _capped(race: GameRound, amount: Decimal) -> Decimal:
+        cap = race.config.get("max_payout")
+        if cap is not None and amount > Decimal(str(cap)):
+            return Decimal(str(cap)).quantize(Decimal("0.01"), ROUND_DOWN)
+        return amount
+
+    def potential_payout(self, race: GameRound, bet_type: str, stake: Decimal, odds: Decimal) -> Decimal:
+        return self._capped(race, super().potential_payout(race, bet_type, stake, odds))
+
     def bet_winnings(self, bet: GameBet, race: GameRound) -> Decimal:
         place_n = int(race.config.get("place_positions", 1))
         if not engine.is_winning(bet.bet_type, bet.selection, race.result, place_n):
             return Decimal("0")
-        return (Decimal(bet.stake) * Decimal(bet.odds)).quantize(Decimal("0.01"), ROUND_DOWN)
+        return self._capped(race, (Decimal(bet.stake) * Decimal(bet.odds)).quantize(Decimal("0.01"), ROUND_DOWN))
 
     def serialize_details(self, race: GameRound, data: Dict[str, Any], result_visible: bool) -> None:
         data.update({
@@ -224,6 +255,8 @@ class HorseRaceService(RoundGameService):
             ],
             "bet_types": ["WIN", "PLACE", "EXACTA", "TRIFECTA"],
             "place_positions": race.config.get("place_positions", 1),
+            "max_payout": race.config.get("max_payout"),
+            "exotic_max_bet": race.config.get("exotic_max_bet"),
             "race_duration_ms": race.config.get("race_duration_ms"),
             "results": None,
             "race_script": None,

@@ -134,8 +134,11 @@
         const d = shown();
         board.setDraw(d);
         const mine = d ? mineFor(d.draw_id) : [];
-        board.setPicks(mine.length ? mine[mine.length - 1].picks : []);
-        $('drawNo').textContent = d ? 'Tirage #' + d.draw_number + ' — ' + time(d.draw_time) : 'Keno';
+        // numéros en cours de saisie par l'agent : visibles tout de suite sur la grille (avant la validation du ticket)
+        const pv = screen && screen.preview;
+        const typing = !!(pv && d && pv.draw_id === d.draw_id);
+        board.setPicks(typing ? (pv.picks || []) : (mine.length ? mine[mine.length - 1].picks : []));
+        $('drawNo').textContent = d ? 'Tirage #' + d.draw_number + (d.manual && d.status === 'pending' ? '' : ' — ' + time(d.draw_time)) : 'Keno';
         $('hash').textContent = d ? (d.server_seed ? 'Seed : ' + d.server_seed : 'Empreinte : ' + d.server_seed_hash) : '';
         renderSide();
     }
@@ -179,12 +182,12 @@
         $('pill').className = 'pill ' + pr.phase; $('pill').textContent = labels[pr.phase] || '';
         const next = state && state.betting_draw;
         $('nextNo').textContent = next ? '#' + next.draw_number : '';
-        $('nextTime').textContent = next ? ' — tirage à ' + time(next.draw_time) : ' — aucun pour le moment';
-        $('nextCd').textContent = next ? K.countdown(K.parseUtc(next.draw_time) - now) : '--:--';
+        $('nextTime').textContent = next ? (next.manual ? ' — lancé par un agent' : ' — tirage à ' + time(next.draw_time)) : ' — aucun pour le moment';
+        $('nextCd').textContent = next ? (next.manual ? 'En attente' : K.countdown(K.parseUtc(next.draw_time) - now)) : '--:--';
 
         let text = '', win = false;
         if (!d) text = 'Keno — prochain tirage bientôt';
-        else if (pr.phase === 'open') text = 'Paris ouverts — tirage #' + d.draw_number + ' dans ' + K.countdown(K.parseUtc(d.draw_time) - now);
+        else if (pr.phase === 'open') text = d.manual ? 'Paris ouverts — tirage #' + d.draw_number + ' : en attente du lancement' : 'Paris ouverts — tirage #' + d.draw_number + ' dans ' + K.countdown(K.parseUtc(d.draw_time) - now);
         else if (pr.phase === 'closed') text = 'Paris fermés — le tirage va commencer';
         else if (pr.phase === 'intro') text = 'Le tirage commence…';
         else if (pr.phase === 'drawing') {
@@ -196,7 +199,7 @@
             const won = mine.filter(t => t.status === 'won');
             if (won.length) { win = true; text = 'GAGNÉ ! ' + money(won.reduce((s, t) => s + t.payout, 0)); }
             else if (mine.length && mine.every(t => t.status !== 'pending')) text = 'Pas gagnant cette fois — bonne chance au prochain tirage';
-            else text = 'Tirage #' + d.draw_number + ' terminé' + (next ? ' — prochain à ' + time(next.draw_time) : '');
+            else text = 'Tirage #' + d.draw_number + ' terminé' + (next ? (next.manual ? ' — prochain tirage ouvert' : ' — prochain à ' + time(next.draw_time)) : '');
         }
         const f = $('footer');
         if (f.textContent !== text) f.textContent = text;

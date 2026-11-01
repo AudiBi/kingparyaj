@@ -33,10 +33,10 @@
 
   /* ---------- Papier ---------- */
   function paper() {
-    try { return localStorage.getItem(PAPER_KEY) === '58' ? 58 : 80; } catch (e) { return 80; }
+    try { var v = localStorage.getItem(PAPER_KEY); return v === '58' ? 58 : (v === '72' ? 72 : 80); } catch (e) { return 80; }
   }
   function setPaper(v) {
-    try { localStorage.setItem(PAPER_KEY, String(v === 58 || v === '58' ? 58 : 80)); } catch (e) { /* sans stockage : 80 mm */ }
+    try { localStorage.setItem(PAPER_KEY, String(v === 58 || v === '58' ? 58 : (v === 72 || v === '72' ? 72 : 80))); } catch (e) { /* sans stockage : 80 mm */ }
   }
   /* Sélecteur à placer à côté du bouton Imprimer */
   function paperSelect(id) {
@@ -44,6 +44,7 @@
     return '<select id="' + (id || 'kpPaper') + '" class="kp-paper" aria-label="Largeur du papier" ' +
       'onchange="KPReceipt.setPaper(this.value)" style="padding:6px 8px;border:1px solid #cbd5e1;border-radius:8px;font-size:13px;">' +
       '<option value="80"' + (p === 80 ? ' selected' : '') + '>Papier 80 mm</option>' +
+      '<option value="72"' + (p === 72 ? ' selected' : '') + '>Papier 72 mm (XP-80C)</option>' +
       '<option value="58"' + (p === 58 ? ' selected' : '') + '>Papier 58 mm</option></select>';
   }
 
@@ -72,39 +73,43 @@
       '<rect width="100%" height="100%" fill="#fff"/><g fill="#000">' + rects + '</g></svg>';
   }
 
+  /* Largeur réelle de la page : le pilote Xprinter XP-80C propose « 72.1 x … » (largeur imprimable d'un rouleau 80 mm) */
+  function pageWidth(mm) { return mm === 72 ? 72.1 : mm; }
+
   /* ---------- Feuille de style (imprimante thermique) ---------- */
   function css(mm) {
+    var page = pageWidth(mm);
     var printable = mm === 58 ? 48 : 72;
     var base = mm === 58 ? 11 : 12.5;
     return '' +
-      '@page{size:' + mm + 'mm 297mm;margin:0}' +
+      '@page{size:' + page + 'mm 297mm;margin:0}' +
       '*{box-sizing:border-box;margin:0;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
       'html,body{background:#fff;color:#000}' +
-      'body{width:' + mm + 'mm;padding:3mm ' + ((mm - printable) / 2) + 'mm 6mm;font:600 ' + base + 'px/1.35 "Arial Narrow",Arial,Helvetica,sans-serif}' +
+      'body{width:' + page + 'mm;padding:0 ' + ((page - printable) / 2).toFixed(2) + 'mm;font:600 ' + base + 'px/1.2 "Arial Narrow",Arial,Helvetica,sans-serif}' +
       '.rc{width:' + printable + 'mm}' +
-      '.logo{display:block;width:' + (mm === 58 ? 30 : 40) + 'mm;height:auto;margin:0 auto 1.5mm;filter:grayscale(1) contrast(1.6)}' +
+      '.logo{display:block;width:' + (mm === 58 ? 12 : 16) + 'mm;height:auto;margin:0 auto .3mm;filter:grayscale(1) contrast(1.6)}' +
       '.c{text-align:center}.shop{font-size:' + (base + 2) + 'px;font-weight:900;text-transform:uppercase;letter-spacing:.3px}' +
       '.small{font-size:' + (base - 1.5) + 'px;font-weight:600}' +
-      '.band{background:#000;color:#fff;text-align:center;font-weight:900;font-size:' + (base + 9) + 'px;letter-spacing:2px;padding:1.2mm 0;margin:2mm 0 1.5mm}' +
+      '.band{background:#000;color:#fff;text-align:center;font-weight:900;font-size:' + (base + 3) + 'px;letter-spacing:2px;padding:.3mm 0;margin:.5mm 0}' +
       '.sub{text-align:center;font-weight:800;font-size:' + (base + 1) + 'px}' +
-      '.sep{border:0;border-top:1.5px dashed #000;margin:2mm 0}' +
-      '.sep2{border:0;border-top:2.5px solid #000;margin:2mm 0}' +
+      '.sep{border:0;border-top:1.5px dashed #000;margin:1mm 0}' +
+      '.sep2{border:0;border-top:2.5px solid #000;margin:1mm 0}' +
       '.row{display:flex;align-items:baseline;gap:1mm}.row .l{white-space:nowrap}.row .d{flex:1;border-bottom:1.5px dotted #000;transform:translateY(-1mm)}' +
       '.row .v{white-space:nowrap;font-weight:800;text-align:right}' +
-      '.tk{border:2.5px solid #000;text-align:center;padding:1.3mm 0 1mm;margin:1.5mm 0}' +
+      '.tk{border:2.5px solid #000;text-align:center;padding:.3mm 0;margin:.5mm 0}' +
       '.tk .t{font-size:' + (base - 1) + 'px;font-weight:800;letter-spacing:1px}' +
       '.tk .n{font:900 ' + (mm === 58 ? 17 : 21) + 'px/1.15 "Courier New",monospace;letter-spacing:1px}' +
       '.bc{display:block;width:100%;margin:1mm 0 .5mm}' +
-      '.lbl{font-weight:800;margin:1.5mm 0 1mm}' +
+      '.lbl{font-weight:800;margin:1mm 0 .5mm}' +
       '.nums{display:flex;flex-wrap:wrap;gap:1.2mm}' +
-      '.num{min-width:' + (mm === 58 ? 7 : 8.2) + 'mm;height:' + (mm === 58 ? 7 : 8.2) + 'mm;border:2px solid #000;border-radius:50%;display:flex;align-items:center;justify-content:center;' +
-        'font:900 ' + (base + 1) + 'px "Courier New",monospace}' +
+      '.num{min-width:' + (mm === 58 ? 5.6 : 6.4) + 'mm;height:' + (mm === 58 ? 5.6 : 6.4) + 'mm;border:2px solid #000;border-radius:50%;display:flex;align-items:center;justify-content:center;' +
+        'font:900 ' + (base - 0.5) + 'px "Courier New",monospace}' +
       '.num.on{background:#000;color:#fff}' +
-      '.total{display:flex;justify-content:space-between;align-items:baseline;font-weight:900;font-size:' + (base + 5) + 'px;margin:1mm 0}' +
-      '.stamp{border:3px double #000;text-align:center;font-weight:900;font-size:' + (base + 6) + 'px;letter-spacing:2px;padding:1mm 0;margin:2mm 0}' +
+      '.total{display:flex;justify-content:space-between;align-items:baseline;font-weight:900;font-size:' + (base + 4) + 'px;margin:.5mm 0 0}' +
+      '.stamp{border:3px double #000;text-align:center;font-weight:900;font-size:' + (base + 4) + 'px;letter-spacing:2px;padding:.5mm 0;margin:1mm 0}' +
       '.stamp.won{background:#000;color:#fff;border-style:solid}' +
       '.mono{font:600 ' + (base - 2.5) + 'px/1.3 "Courier New",monospace;word-break:break-all}' +
-      '.foot{text-align:center;font-size:' + (base - 1.5) + 'px;font-weight:700;margin-top:1.5mm}' +
+      '.foot{text-align:center;font-size:' + (base - 2) + 'px;font-weight:700;margin-top:1mm}' +
       '.cut{text-align:center;font-size:' + (base - 2) + 'px;margin-top:3mm;letter-spacing:1px}';
   }
 
@@ -121,12 +126,12 @@
     h += '<div class="band">' + esc(spec.game) + '</div>';
     if (spec.round) h += '<div class="sub">' + esc(spec.round) + '</div>';
     if (spec.roundTime) h += '<div class="c small">' + esc(spec.roundTime) + '</div>';
+    h += '<div class="c small" style="font-weight:800">Date : ' + esc(dateTime(spec.placedAt)) + '</div>';
 
     var number = spec.ticket || spec.code;
     if (number) {
-      h += '<div class="tk"><div class="t">' + (spec.ticket ? 'TICKET N°' : 'CODE DU PARI') + '</div>' +
-        '<div class="n">' + esc(spec.ticket || String(spec.code).slice(0, 8).toUpperCase()) + '</div>' +
-        barcodeSvg(spec.ticket || spec.code, 11) + '</div>';
+      h += '<div class="tk"><div class="n">' + esc(spec.ticket || String(spec.code).slice(0, 8).toUpperCase()) + '</div>' +
+        barcodeSvg(spec.ticket || spec.code, 6) + '</div>';
     }
 
     (spec.sections || []).forEach(function (s) {
@@ -149,22 +154,6 @@
       if (s.type === 'stamp') { h += '<div class="stamp' + (s.won ? ' won' : '') + '">' + esc(s.text) + '</div>'; return; }
     });
 
-    h += '<hr class="sep">';
-    var info = [];
-    if (spec.agent) info.push(['Agent', esc(spec.agent)]);
-    info.push(['Émis le', esc(dateTime(spec.placedAt))]);
-    if (spec.ticket && spec.code) info.push(['Réf. pari', esc(String(spec.code).slice(0, 8).toUpperCase())]);
-    h += info.map(function (r) { return row(r[0], r[1]); }).join('');
-    if (spec.hash) {
-      h += '<div class="lbl" style="margin-top:2mm">Empreinte du tirage (SHA-256)</div><div class="mono">' + esc(spec.hash) + '</div>';
-    }
-    if (spec.seed) h += '<div class="lbl">Seed révélé</div><div class="mono">' + esc(spec.seed) + '</div>';
-    if (spec.verifyUrl) h += '<div class="lbl">Vérification</div><div class="mono">' + esc(spec.verifyUrl) + '</div>';
-    h += '<hr class="sep">';
-    h += '<div class="foot">' + esc(spec.footer || 'Gain payable le jour même, avant minuit, sur présentation de ce reçu.') + '<br>' +
-      'Jeu réservé aux personnes de 18 ans et plus.<br>Jouez de façon responsable.</div>';
-    h += '<div class="foot" style="font-size:13px;font-weight:900;margin-top:2mm">MERCI ET BONNE CHANCE !</div>';
-    h += '<div class="cut">- - - - - - - - - - - - - - - - - - - -</div>';
     return h + '</div>';
   }
 
@@ -180,7 +169,7 @@
     container.innerHTML = '';
     var frame = document.createElement('iframe');
     frame.title = 'Aperçu du reçu';
-    frame.style.cssText = 'width:' + mm + 'mm;max-width:100%;border:1px solid #e2e8f0;background:#fff;display:block;margin:0 auto;height:120mm';
+    frame.style.cssText = 'width:' + pageWidth(mm) + 'mm;max-width:100%;border:1px solid #e2e8f0;background:#fff;display:block;margin:0 auto;height:120mm';
     container.appendChild(frame);
     frame.srcdoc = html(spec, mm);
     frame.onload = function () {
@@ -193,15 +182,30 @@
   function fitPage(doc) {
     try {
       var mm = paper();
-      var heightMm = Math.ceil(doc.documentElement.scrollHeight * 25.4 / 96) + 4;
+      var heightMm = Math.ceil(doc.documentElement.scrollHeight * 25.4 / 96) + 1;
+      var width = pageWidth(mm);
+      if (heightMm <= width) heightMm = Math.ceil(width) + 1; // jamais plus large que haut : sinon l'impression passe en paysage
       var st = doc.createElement('style');
-      st.textContent = '@page{size:' + mm + 'mm ' + heightMm + 'mm;margin:0}';
+      st.textContent = '@page{size:' + width + 'mm ' + heightMm + 'mm;margin:0}';
       doc.head.appendChild(st);
     } catch (e) { /* taille par défaut */ }
   }
 
-  /* Impression (cadre caché, attend le logo) */
+  /* Impression : directe en ESC/POS (QZ Tray) si le poste l'a activée, sinon fenêtre du navigateur.
+     En cas d'échec de l'impression directe, retour automatique à la fenêtre du navigateur. */
   function print(spec) {
+    if (global.KPEscPos && global.KPEscPos.enabled()) {
+      global.KPEscPos.print(spec).catch(function (e) {
+        if (global.showToast) global.showToast("Impression directe impossible (" + (e && e.message || e) + ") : impression par le navigateur", 'warning');
+        browserPrint(spec);
+      });
+      return;
+    }
+    browserPrint(spec);
+  }
+
+  /* Impression par le navigateur (cadre caché, attend le logo) */
+  function browserPrint(spec) {
     var frame = document.createElement('iframe');
     frame.setAttribute('aria-hidden', 'true');
     frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';

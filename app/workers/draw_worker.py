@@ -26,18 +26,9 @@ from app.models.audit import AuditLog, AuditAction
 
 logger = get_logger(__name__)
 
-# Connexion à la base de données
-engine = create_async_engine(
-    settings.DATABASE_URL,
-    echo=settings.DEBUG,
-    pool_size=5,
-    max_overflow=10,
-)
-AsyncSessionLocal = async_sessionmaker(
-    engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-)
+# Connexion à la base de données : le pool commun de l'application (un second pool par processus
+# multipliait les connexions ouvertes sur une petite base PostgreSQL)
+from app.core.database import engine, AsyncSessionLocal  # noqa: E402
 
 
 class DrawTask(Task):

@@ -113,12 +113,13 @@ class CashierSessionService(BaseService[CashierSession, CashierSessionOpen, Cash
         if not bureau:
             raise NotFoundException("Bureau", bureau_id)
         
+        starting = Decimal(str(data.starting_balance))  # le schéma donne un float
         session = CashierSession(
             bureau_id=bureau_id,
             agent_id=agent_id,
-            starting_balance=data.starting_balance,
-            current_balance=data.starting_balance,
-            expected_balance=data.starting_balance,
+            starting_balance=starting,
+            current_balance=starting,
+            expected_balance=starting,
             status="OPEN",
             opened_at=datetime.utcnow()
         )
@@ -156,10 +157,11 @@ class CashierSessionService(BaseService[CashierSession, CashierSessionOpen, Cash
         
         # Calculer l'écart
         expected = session.starting_balance + session.cash_in_amount - session.cash_out_amount
-        difference = data.actual_balance - expected
+        actual = Decimal(str(data.actual_balance))  # le schéma donne un float : pas de float - Decimal
+        difference = actual - expected
         
         session.expected_balance = expected
-        session.current_balance = data.actual_balance
+        session.current_balance = actual
         session.difference = difference
         session.difference_reason = data.difference_reason
         session.status = "CLOSED"
@@ -170,7 +172,7 @@ class CashierSessionService(BaseService[CashierSession, CashierSessionOpen, Cash
         # Mettre à jour la caisse du bureau
         bureau = await self.db.get(Bureau, session.bureau_id)
         if bureau:
-            bureau.cash_balance = data.actual_balance
+            bureau.cash_balance = actual
         
         await self.audit_service.log(
             agent_id=agent_id,
@@ -179,7 +181,7 @@ class CashierSessionService(BaseService[CashierSession, CashierSessionOpen, Cash
             resource_id=session.id,
             new_values={
                 "expected_balance": float(expected),
-                "actual_balance": float(data.actual_balance),
+                "actual_balance": float(actual),
                 "difference": float(difference),
                 "difference_reason": data.difference_reason
             }

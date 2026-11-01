@@ -184,6 +184,32 @@ async def get_current_admin(
     return current_user
 
 
+def _role_value(role) -> str:
+    return str(getattr(role, "value", role) or "")
+
+
+def is_super_admin(user) -> bool:
+    return user is not None and _role_value(getattr(user, "role", None)) == "super_admin"
+
+
+def ensure_can_manage(actor, target) -> None:
+    """Seul un super admin peut modifier, supprimer, bloquer, créditer… un super admin."""
+    if target is not None and is_super_admin(target) and not is_super_admin(actor):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Seul un super administrateur peut agir sur un super administrateur",
+        )
+
+
+def ensure_can_assign_role(actor, role) -> None:
+    """Seul un super admin peut donner le rôle super admin (création ou changement de rôle)."""
+    if role is not None and _role_value(role) == "super_admin" and not is_super_admin(actor):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Seul un super administrateur peut attribuer le rôle super administrateur",
+        )
+
+
 async def get_current_agent(
     current_user: User = Depends(get_current_user)
 ):

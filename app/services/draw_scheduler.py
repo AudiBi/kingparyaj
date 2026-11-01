@@ -1,54 +1,39 @@
 # app/services/draw_scheduler.py
+"""Ancien planificateur de tirages Keno : INUTILISÉ.
+
+Les tirages sont gérés par le cycle automatique (app/services/game_loop.py, tâches Celery
+`keno_tick`…) et lancés par les agents (launch_draw). Ce module n'est plus démarré par
+l'application ; il reste pour compatibilité, mais sa boucle ne fait plus rien et laisse
+toujours la main à la boucle d'événements (l'ancienne version la bloquait sur la moindre erreur).
+"""
 import asyncio
-from datetime import datetime, timedelta
+
 from app.core.logger import logger
-from app.services.keno_service import KenoService
-from app.api.websockets.manager import broadcast_draw_result
 
 
 class DrawScheduler:
-    """Planificateur de tirages automatiques"""
-    
-    def __init__(self):
+    """Planificateur désactivé."""
+
+    def __init__(self, *args, **kwargs):  # args : (db, redis) du conteneur de services, inutilisés
         self.is_running = False
         self.task = None
-    
+
     async def start(self):
-        """Démarre le scheduler"""
         self.is_running = True
         self.task = asyncio.create_task(self._run())
-        logger.info("Draw scheduler started")
-    
+        logger.info("Draw scheduler (inactif) démarré")
+
     async def stop(self):
-        """Arrête le scheduler"""
         self.is_running = False
         if self.task:
             self.task.cancel()
         logger.info("Draw scheduler stopped")
-    
+
     async def _run(self):
-        """Boucle principale"""
         while self.is_running:
-            try:
-                # Vérifier si un tirage est dû
-                now = datetime.utcnow()
-                next_draw_time = self._get_next_draw_time()
-                
-                if now >= next_draw_time:
-                    await self._execute_draw()
-                
-                await asyncio.sleep(1)  # Vérifier chaque seconde
-            except Exception as e:
-                logger.error(f"Scheduler error: {e}")
-    
-    async def _execute_draw(self):
-        """Exécute un tirage"""
-        logger.info("Executing draw...")
-        # Logique de tirage à implémenter
-        pass
+            await asyncio.sleep(60)  # aucune logique : les tirages passent par le cycle des jeux
 
 
-# Instance globale
 scheduler = DrawScheduler()
 
 

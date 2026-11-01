@@ -281,6 +281,7 @@ async def test_balls_visible_only_after_start(service):
 @pytest.mark.asyncio
 async def test_tick_runs_full_cycle_and_creates_next_round(service, make_user, monkeypatch):
     monkeypatch.setattr(Lucky6Service, "_within_opening_hours", staticmethod(lambda config: True))
+    await service.save_config(engine.validate_config({"manual_launch": False}))  # manche à l'heure (option)
     user = await make_user(balance=Decimal("100"))
     now = now_utc()
     counts = await service.tick(now)

@@ -273,3 +273,34 @@ async def test_finance_counts_paid_winnings_after_admin_payout(admin_client, adm
     await admin_client.post(f"/admin/api/tickets/{ticket.id}/payout", headers=await _admin(admin_client))
     p = await FinanceReportService(db_session).period(now_utc() - timedelta(days=1), now_utc() + timedelta(days=1))
     assert p["out"]["ticket_payouts"] == 300.0 and p["wins_split"]["paid"] == 300.0
+
+
+@pytest.mark.asyncio
+async def test_horse_race_winnings_are_paid_like_other_games(client, db_session, fake_redis, make_agent, make_ticket):
+    """Un ticket gagnant sur une course de chevaux (réglée par le service) se paie comme Keno et Lucky6."""
+    from app.services.horse_race_service import HorseRaceService
+
+    agent = await make_agent()
+    session = await _open_session(db_session, agent)
+    info = await make_ticket(agent, balance=Decimal("100"))
+    service = HorseRaceService(db_session, fake_redis)
+    race = await service.create_race()
+    first = race.participants[0]["player_number"]
+    bet = await service.place_bet(race.id, "WIN", [first], "40", ticket_number=info["ticket_number"], agent_id=agent.id)
+    race.result = [first] + [p["player_number"] for p in race.participants if p["player_number"] != first]
+    race.status = "FINISHED"
+    await db_session.flush()
+    await service.settle_race(race.id)
+    await db_session.flush()
+    winnings = bet.winnings
+    assert winnings > 0
+
+    await _login(client, agent)
+    summary = (await client.get(f"/agent/api/payouts/{info['ticket_number']}")).json()
+    assert summary["can_pay"] is True and summary["bets"][0]["game"] == "Horse Races"
+    assert summary["amount_to_pay"] == float(winnings + Decimal("60"))  # gain + solde restant du ticket (100 - 40)
+
+    r = await client.post("/agent/api/payouts/pay", headers=await _headers(client), json={"ticket_number": info["ticket_number"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["status"] == "paid"
+    assert session.cash_out_count == 1 and session.cash_out_amount == winnings + Decimal("60")

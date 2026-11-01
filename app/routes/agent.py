@@ -417,11 +417,12 @@ async def agent_dashboard(
 
     next_draw_result = await db.execute(
         select(KenoDraw)
-        .where(KenoDraw.status == KenoDrawStatus.PENDING, KenoDraw.mode == "scheduled", KenoDraw.draw_time > now_utc())
+        .where(KenoDraw.status == KenoDrawStatus.PENDING, KenoDraw.mode == "scheduled")
         .order_by(KenoDraw.draw_time.asc())
         .limit(1)
     )
     next_draw = next_draw_result.scalar_one_or_none()
+    next_draw_manual = bool(next_draw is not None and (next_draw.config or {}).get("manual_launch"))
 
     stats = {
         "today_bets": today_bets,
@@ -448,6 +449,7 @@ async def agent_dashboard(
         "recent_transactions": recent_transactions,
         "active_tickets": active_tickets,
         "next_draw": next_draw,
+        "next_draw_manual": next_draw_manual,
     })
 
 
@@ -1522,7 +1524,7 @@ async def agent_keno_live(
     from app.services.keno_service import KenoService
 
     service = KenoService(db, redis_client)
-    state = await service.live_state()
+    state = await service.live_state(with_totals=True, agent_id=current_agent.id)
     state["config"] = keno_engine.public_config(await service.get_config())
     return state
 
@@ -1575,6 +1577,40 @@ async def agent_keno_shared_bet(
         data["ticket_number"] = ticket.ticket_number if ticket else None
         data["ticket_balance"] = float(ticket.balance) if ticket else None
     return {"success": True, "message": "Ticket Keno enregistré", "bet": data}
+
+
+@router.post("/api/keno/shared/launch")
+async def agent_keno_shared_launch(
+    request: Request,
+    current_agent: User = Depends(get_current_agent),
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    """Lance le tirage partagé ouvert : les tickets se ferment, les 20 numéros sortent, les
+    tickets sont réglés. Les numéros sont fixés par le seed engagé à la création : lancer plus
+    tôt ou plus tard ne les change pas. Journalisé au nom de l'agent."""
+    from app.services.keno_service import KenoService
+
+    try:
+        payload = await request.json()
+    except Exception:
+        raise ValidationException("Requête invalide")
+    if not isinstance(payload, dict) or not payload.get("draw_id") or set(payload) - {"draw_id"}:
+        raise ValidationException("Tirage manquant")
+
+    service = KenoService(db, redis_client)
+    result = await service.launch_draw(str(payload["draw_id"]), by=current_agent.id)  # valide (commit) le tirage
+    from app.workers.draw_worker import _after_draw
+
+    await _after_draw(db, result)  # cache, diffusion, export, notifications (comme le cycle automatique)
+    await service.publish_live("draw_started")
+    try:  # crée tout de suite le tirage suivant (sinon : prochain tour du cycle automatique)
+        from app.workers.keno_worker import _tick_async
+
+        await _tick_async()
+    except Exception:
+        pass
+    return {"success": True, "message": f"Tirage n° {result['draw_number']} lancé", "draw_number": result["draw_number"]}
 
 
 @router.post("/api/keno/shared/screen")
@@ -1686,6 +1722,28 @@ async def agent_payout_lookup(
     from app.services.payout_service import PayoutService
 
     return await PayoutService(db, redis_client).summary(ticket_number, current_agent)
+
+
+@router.post("/api/tickets/{ticket_number}/cancel")
+async def agent_ticket_cancel(
+    ticket_number: str,
+    current_agent: User = Depends(get_current_agent),
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    """Annule, avant le lancement du tirage, un ticket vendu par cet agent : paris annulés, espèces rendues
+    au joueur et retirées de la caisse. Refusé dès que le tirage est lancé ou qu'un résultat existe."""
+    from app.services.ticket_service import TicketService
+
+    try:
+        result = await TicketService(db, redis_client).cancel_before_launch(ticket_number, current_agent)
+        await db.commit()
+    except Exception:
+        await db.rollback()  # tout ou rien
+        raise
+    note = f" ({result['bets_cancelled']} pari(s) annulé(s))" if result["bets_cancelled"] else ""
+    return {"success": True, "message": f"Ticket {result['ticket_number']} annulé{note} : rendre {result['refunded']:.2f} HTG au joueur",
+            "data": result}
 
 
 @router.post("/api/payouts/pay")

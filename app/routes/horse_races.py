@@ -20,6 +20,7 @@ from app.core.security import get_current_admin, get_current_agent
 from app.models.user import User
 from app.schemas.horse_race import (
     AgentHorseRaceBetCreate,
+    AgentHorseRaceLaunch,
     HorseRaceCancel,
     HorseRaceConfigUpdate,
     HorseRaceCreate,
@@ -43,7 +44,7 @@ async def agent_current_race(
     db: AsyncSession = Depends(get_db),
     redis_client: redis.Redis = Depends(get_redis),
 ):
-    return await HorseRaceService(db, redis_client).live_state()
+    return await HorseRaceService(db, redis_client).live_state(with_totals=True, agent_id=current_agent.id)
 
 
 @agent_router.get("/api/horse-races/history")
@@ -74,7 +75,50 @@ async def agent_quote(
     service = HorseRaceService(db, redis_client)
     race = await service.get_race(race_id)
     chosen, odds = service.quote(race, bet_type, numbers)
-    return {"selection": chosen, "odds": float(odds)}
+    return {
+        "selection": chosen, "odds": float(odds),
+        "max_payout": race.config.get("max_payout"),
+        "max_stake": float(service.max_stake(race, (bet_type or "").upper())),
+    }
+
+
+@agent_router.get("/api/horse-races/my-bets")
+async def agent_recent_bets(
+    limit: int = Query(40, ge=1, le=100),
+    current_agent: User = Depends(get_current_agent),
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    """Derniers paris pris par cet agent, TOUTES courses confondues (2 derniers jours), pour retrouver
+    un ticket gagnant et le payer, comme pour Lucky6 et le Keno. Le résultat de la course n'est pas
+    diffusé ici : seul le statut du pari (gagné / perdu) l'est, une fois la course réglée."""
+    from datetime import timedelta
+
+    from sqlalchemy import select
+
+    from app.core.timezone import now_utc
+    from app.models.game import GameBet, GameRound
+    from app.services.cash_ticket import ticket_numbers
+    from app.services.horse_race_service import GAME_TYPE
+
+    rows = (await db.execute(
+        select(GameBet, GameRound).join(GameRound, GameRound.id == GameBet.round_id)
+        .where(GameBet.agent_id == current_agent.id, GameBet.game_type == GAME_TYPE,
+               GameBet.placed_at >= now_utc() - timedelta(days=2))
+        .order_by(GameBet.placed_at.desc()).limit(limit)
+    )).all()
+    numbers = await ticket_numbers(db, [bet.ticket_id for bet, _ in rows])
+    out = []
+    for bet, rnd in rows:
+        names = {p["player_number"]: p["player_name"] for p in rnd.participants}
+        out.append({
+            **HorseRaceService.serialize_bet(bet),
+            "ticket_number": numbers.get(bet.ticket_id),
+            "race_number": rnd.round_number,
+            "race_status": rnd.status,
+            "selection_names": [names.get(n, "") for n in bet.selection],
+        })
+    return {"bets": out}
 
 
 @agent_router.get("/api/horse-races/races/{race_id}/my-bets")
@@ -135,6 +179,28 @@ async def agent_place_bet(
         pass  # l'affichage ne doit jamais bloquer un pari enregistré
     return {"success": True, "message": f"Pari enregistré{' — ticket ' + ticket_number if ticket_number else ''}",
             "bet": {**service.serialize_bet(bet), "ticket_number": ticket_number}}
+
+
+@agent_router.post("/api/horse-races/launch")
+async def agent_launch(
+    payload: AgentHorseRaceLaunch,
+    current_agent: User = Depends(get_current_agent),
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    """Lance la course ouverte : les paris se ferment, les chevaux partent. L'ordre d'arrivée
+    est fixé par le seed engagé à la création : lancer plus tôt ou plus tard ne le change pas.
+    Journalisé au nom de l'agent."""
+    service = HorseRaceService(db, redis_client)
+    race = await service.launch_race(payload.race_id, by=current_agent.id)
+    await service.commit_and_publish()
+    try:  # crée tout de suite la course suivante (sinon : prochain tour du cycle automatique)
+        from app.workers.horse_race_worker import tick_round_game
+
+        await tick_round_game(HorseRaceService, "lock:horse_races:tick", "🐎 Horse Races")
+    except Exception:
+        pass
+    return {"success": True, "message": f"Course n° {race.round_number} lancée", "race": service.serialize_race(race)}
 
 
 @agent_router.post("/api/horse-races/screen")

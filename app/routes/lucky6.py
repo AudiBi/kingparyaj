@@ -25,6 +25,7 @@ from app.models.game import GameBet, GameRound
 from app.models.user import User
 from app.schemas.lucky6 import (
     AgentLucky6BetCreate,
+    AgentLucky6Launch,
     Lucky6Cancel,
     Lucky6ConfigUpdate,
     Lucky6PaytablePreview,
@@ -40,6 +41,13 @@ public_router = APIRouter(prefix="/lucky6", tags=["Lucky6 - Écrans publics"])
 
 def _ip(request: Request) -> Optional[str]:
     return request.client.host if request.client else None
+
+
+def _draw_time(service: Lucky6Service, race: GameRound) -> Optional[str]:
+    """Heure du tirage pour le reçu ; None tant qu'un agent n'a pas lancé la manche."""
+    if service.is_manual(race) and race.started_at is None:
+        return None
+    return service.serialize_race(race)["scheduled_at"]
 
 
 async def _bets_with_rounds(service: Lucky6Service, bets):
@@ -63,7 +71,7 @@ async def agent_state(
     redis_client: redis.Redis = Depends(get_redis),
 ):
     service = Lucky6Service(db, redis_client)
-    state = await service.live_state()
+    state = await service.live_state(with_totals=True, agent_id=current_agent.id)
     state["config"] = engine.public_config(await service.get_config())
     return state
 
@@ -113,9 +121,36 @@ async def agent_place_bet(
         pass  # l'affichage ne bloque jamais un pari enregistré
     race = await service.get_race(bet.round_id)
     data = service.bet_details(bet, race)
-    data.update({"server_seed_hash": race.server_seed_hash, "scheduled_at": service.serialize_race(race)["scheduled_at"],
+    data.update({"server_seed_hash": race.server_seed_hash, "scheduled_at": _draw_time(service, race),
                  "ticket_number": ticket_number})
     return {"success": True, "message": f"Pari enregistré{' — ticket ' + ticket_number if ticket_number else ''}", "bet": data}
+
+
+@agent_router.post("/api/lucky6/launch")
+async def agent_launch(
+    payload: AgentLucky6Launch,
+    current_agent: User = Depends(get_current_agent),
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    """Lance le tirage de la manche ouverte : les paris se ferment, les boules sortent.
+    Le résultat est fixé par le seed engagé à la création : lancer plus tôt ou plus tard
+    ne le change pas. Journalisé au nom de l'agent."""
+    service = Lucky6Service(db, redis_client)
+    race = await service.launch_race(payload.race_id, by=current_agent.id)
+    await service.commit_and_publish()
+    await _kick_cycle()
+    return {"success": True, "message": f"Tirage de la manche n° {race.round_number} lancé", "round": service.serialize_race(race)}
+
+
+async def _kick_cycle():
+    """Crée tout de suite la manche suivante (sans attendre le prochain tour du cycle)."""
+    try:
+        from app.workers.horse_race_worker import tick_round_game
+
+        await tick_round_game(Lucky6Service, "lock:lucky6:tick", "🎱 Lucky6")
+    except Exception:
+        pass  # le cycle automatique s'en chargera dans quelques secondes
 
 
 @agent_router.post("/api/lucky6/screen")
@@ -172,7 +207,7 @@ async def agent_bet_receipt(
     service = Lucky6Service(db, redis_client)
     race = await service.get_race(bet.round_id)
     data = service.bet_details(bet, race)
-    data.update({"server_seed_hash": race.server_seed_hash, "scheduled_at": service.serialize_race(race)["scheduled_at"]})
+    data.update({"server_seed_hash": race.server_seed_hash, "scheduled_at": _draw_time(service, race)})
     return {"bet": data}
 
 
@@ -300,7 +335,10 @@ async def admin_create_round(
     service = Lucky6Service(db, redis_client)
     config = await service.get_config()
     now = now_utc()
-    scheduled_at = now + timedelta(minutes=payload.minutes) if payload.minutes else service.next_scheduled_at(config, now)
+    if payload.minutes:
+        scheduled_at = now + timedelta(minutes=payload.minutes)
+    else:  # lancement manuel : pas d'heure, un agent lance la manche
+        scheduled_at = None if config.get("manual_launch") else service.next_scheduled_at(config, now)
     race = await service.create_race(scheduled_at=scheduled_at, created_by=admin.id, open_betting=payload.open_betting)
     await service.commit_and_publish()
     return {"success": True, "round": service.serialize_race(race)}

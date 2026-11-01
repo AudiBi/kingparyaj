@@ -151,7 +151,11 @@ class KenoService(BaseService[KenoDraw, None, None]):
             draw = await self._get_draw_for_update(draw_id)  # attend les paris en cours
             n = (await self.db.execute(select(func.count(KenoBet.id)).where(KenoBet.draw_id == draw_id))).scalar()
             if draw.status == KenoDrawStatus.PENDING and not n:
-                draw.config = engine.snapshot(config)
+                fresh = engine.snapshot(config)
+                # le mode de lancement reste celui de la création du tirage : un tirage
+                # ouvert sans heure ne doit pas devenir « à l'heure » (et partir seul)
+                fresh["manual_launch"] = self.is_manual(draw)
+                draw.config = fresh
                 count += 1
         await self.db.flush()
         return count
@@ -350,6 +354,8 @@ class KenoService(BaseService[KenoDraw, None, None]):
             has = (await self.db.execute(select(func.count(KenoBet.id)).where(KenoBet.draw_id == draw_id))).scalar()
             if draw.status != KenoDrawStatus.PENDING or has:
                 continue  # un pari est arrivé entre-temps : on garde le tirage
+            if self.is_manual(draw):
+                continue  # ouvert en attendant qu'un agent le lance : pas « périmé »
             draw.status = KenoDrawStatus.CANCELLED
             draw.closed_at = now_utc()
             draw.closed_by = by
@@ -357,19 +363,71 @@ class KenoService(BaseService[KenoDraw, None, None]):
         await self.db.flush()
         return count
 
-    def betting_closes_at(self, draw: KenoDraw) -> datetime:
+    @staticmethod
+    def is_manual(draw: KenoDraw) -> bool:
+        """Tirage sans heure : il reste ouvert jusqu'à ce qu'un agent le lance (launch_draw)."""
+        return bool((draw.config or {}).get("manual_launch"))
+
+    def betting_closes_at(self, draw: KenoDraw) -> Optional[datetime]:
+        """Heure de fermeture des paris ; None pour un tirage lancé à la main."""
+        if self.is_manual(draw):
+            return None
         seconds = (draw.config or {}).get("betting_close_seconds", self.BETTING_CLOSE_SECONDS)
         return draw.draw_time - timedelta(seconds=int(seconds))
 
     def is_betting_open(self, draw: KenoDraw, now: Optional[datetime] = None) -> bool:
         now = now or now_utc()
-        return draw.status == KenoDrawStatus.PENDING and now < self.betting_closes_at(draw)
+        if draw.status != KenoDrawStatus.PENDING:
+            return False
+        closes = self.betting_closes_at(draw)
+        return closes is None or now < closes
 
     async def execute_draw(self, draw_id: str) -> Dict[str, Any]:
         """Exécute un tirage EN ATTENTE et règle tous ses paris."""
         draw = await self._get_draw_for_update(draw_id)
         if draw.status != KenoDrawStatus.PENDING:
             raise GameException(f"Tirage déjà {draw.status}")
+        return await self.settle_bets_for_draw(draw_id, _draw=draw)
+
+    async def launch_draw(self, draw_id: str, by: str) -> Dict[str, Any]:
+        """Lancement MANUEL par un agent : les paris se ferment à cet instant, les 20 numéros
+        (fixés par le seed engagé à la création) sont dévoilés, les tickets sont réglés.
+
+        Le tirage précédent doit avoir fini son animation sur les écrans. Le tirage est
+        verrouillé : deux agents qui cliquent ensemble ne le lancent qu'une fois.
+        Seul un agent qui a vendu au moins un ticket sur ce tirage peut le lancer."""
+        sold = (await self.db.execute(
+            select(func.count(KenoBet.id)).where(KenoBet.draw_id == draw_id, KenoBet.agent_id == by)
+        )).scalar()
+        if not by or not sold:
+            raise GameException("Seul un agent qui a vendu un ticket sur ce tirage peut le lancer")
+        now = now_utc()
+        config = await self.get_config()
+        last = (await self.db.execute(
+            select(KenoDraw).where(
+                KenoDraw.mode == MODE_SCHEDULED, KenoDraw.status == KenoDrawStatus.COMPLETED,
+                KenoDraw.closed_at.is_not(None),
+            ).order_by(KenoDraw.closed_at.desc()).limit(1)
+        )).scalar_one_or_none()
+        if last is not None and last.id != draw_id:
+            end = last.closed_at + timedelta(milliseconds=engine.draw_duration_ms(self.draw_config(last, config)))
+            if now < end:
+                raise GameException("Un tirage est encore en cours : patientez la fin de l'animation avant d'en lancer un autre")
+
+        draw = await self._get_draw_for_update(draw_id)
+        if draw.mode != MODE_SCHEDULED:
+            raise GameException("Seuls les tirages partagés se lancent à la main")
+        if draw.status != KenoDrawStatus.PENDING:
+            raise GameException(f"Tirage déjà {draw.status.value if hasattr(draw.status, 'value') else draw.status}")
+        draw.draw_time = now  # heure réelle du tirage (historique, rapports)
+        await self.audit_service.log(
+            action=AuditAction.DRAW_GENERATED,
+            agent_id=by,
+            resource_type="keno_draw",
+            resource_id=draw.id,
+            new_values={"draw_number": draw.draw_number, "launched_by": by},
+            extra_data={"event": "keno_draw_launched"},
+        )
         return await self.settle_bets_for_draw(draw_id, _draw=draw)
 
     def _numbers_for(self, draw: KenoDraw) -> List[int]:
@@ -730,6 +788,7 @@ class KenoService(BaseService[KenoDraw, None, None]):
             "mode": draw.mode,
             "status": status,
             "draw_time": self._iso(draw.draw_time),
+            "manual": self.is_manual(draw),
             "betting_closes_at": self._iso(self.betting_closes_at(draw)),
             "drawn_at": self._iso(draw.closed_at) if done else None,  # début de l'animation
             "server_time": self._iso(now_utc()),
@@ -746,7 +805,8 @@ class KenoService(BaseService[KenoDraw, None, None]):
             "duration_ms": engine.draw_duration_ms(cfg),
         }
 
-    async def live_state(self, now: Optional[datetime] = None) -> Dict[str, Any]:
+    async def live_state(self, now: Optional[datetime] = None, with_totals: bool = False,
+                         agent_id: Optional[str] = None) -> Dict[str, Any]:
         """Tirage à afficher (celui dont l'animation est en cours, sinon le
         prochain) et tirage qui prend les paris."""
         now = now or now_utc()
@@ -769,10 +829,19 @@ class KenoService(BaseService[KenoDraw, None, None]):
                 display = last
         if display is None and upcoming:
             display = upcoming[0]
-        betting = next((d for d in upcoming if now < self.betting_closes_at(d)), None)
+        betting = next((d for d in upcoming if self.is_betting_open(d, now)), None)
+        betting_data = self.serialize_draw(betting, config) if betting else None
+        if betting_data is not None and with_totals:  # tickets déjà pris (panel agent : il décide quand lancer)
+            totals = (await self.live_totals([betting.id])).get(betting.id, {})
+            betting_data["total_bets"] = totals.get("total_bets", 0)
+            betting_data["total_amount"] = float(totals.get("total_amount", 0))
+        if betting_data is not None and agent_id:  # ses propres tickets : seul un vendeur du tirage peut le lancer
+            betting_data["my_bets"] = (await self.db.execute(
+                select(func.count(KenoBet.id)).where(KenoBet.draw_id == betting.id, KenoBet.agent_id == agent_id)
+            )).scalar() or 0
         return {
             "draw": self.serialize_draw(display, config) if display else None,
-            "betting_draw": self.serialize_draw(betting, config) if betting else None,
+            "betting_draw": betting_data,
             "server_time": self._iso(now_utc()),
             "mode": config["mode"],
             "enabled": config["enabled"],
@@ -798,7 +867,8 @@ class KenoService(BaseService[KenoDraw, None, None]):
             "bet_id": bet.id,
             "draw_id": bet.draw_id,
             "draw_number": draw.draw_number if draw else None,
-            "draw_time": self._iso(draw.draw_time) if draw else None,
+            # tirage lancé à la main : pas d'heure tant qu'un agent ne l'a pas lancé
+            "draw_time": self._iso(draw.draw_time) if draw and not (self.is_manual(draw) and draw.status == KenoDrawStatus.PENDING) else None,
             "server_seed_hash": draw.server_seed_hash if draw else None,
             "picks": [int(n) for n in bet.picks],
             "spots": len(bet.picks),
@@ -828,6 +898,9 @@ class KenoService(BaseService[KenoDraw, None, None]):
         )
         for draw_id in due.scalars().all():
             try:
+                draw = await self.db.get(KenoDraw, draw_id)
+                if draw is not None and self.is_manual(draw):
+                    continue  # lancé par un agent (launch_draw), jamais à l'heure
                 results.append(await self.execute_draw(draw_id))  # valide (commit) le tirage
             except GameException:
                 await self.db.rollback()  # déjà tiré par un autre processus
@@ -836,9 +909,32 @@ class KenoService(BaseService[KenoDraw, None, None]):
         from app.core.timezone import now_haiti
 
         if config["mode"] == MODE_SCHEDULED and int(config["open_hour"]) <= now_haiti().hour < int(config["close_hour"]):
-            created = await self.schedule_next(now)
+            if config.get("manual_launch"):
+                created = await self.ensure_open_draw(now)
+            else:
+                created = await self.schedule_next(now)
             await self.db.commit()
         return {"settled": results, "created": created}
+
+    async def ensure_open_draw(self, now: Optional[datetime] = None) -> int:
+        """Lancement manuel : garde UN tirage ouvert (sans heure) pour que les agents
+        puissent vendre des tickets ; il reste ouvert jusqu'à ce qu'un agent le lance.
+        Le verrou de numérotation sérialise deux créations simultanées."""
+        config = await self.get_config()
+        if config["mode"] != MODE_SCHEDULED or not config["enabled"]:
+            return 0
+        if self.db.bind is not None and self.db.bind.dialect.name == "postgresql":
+            await self.db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": KENO_NUMBER_LOCK})
+        waiting = (await self.db.execute(
+            select(func.count(KenoDraw.id)).where(
+                KenoDraw.status == KenoDrawStatus.PENDING, KenoDraw.mode == MODE_SCHEDULED,
+                KenoDraw.is_deleted == False,  # noqa: E712
+            )
+        )).scalar() or 0
+        if waiting:
+            return 0
+        await self.generate_draw(draw_time=now or now_utc(), mode=MODE_SCHEDULED, config=config)
+        return 1
 
     async def publish_live(self, event: str) -> None:
         """Diffuse l'état en direct à tous les écrans (après commit)."""
@@ -987,7 +1083,7 @@ class KenoService(BaseService[KenoDraw, None, None]):
             raise GameException("Tirage instantané : utilisez le jeu instantané")
         if draw.status != KenoDrawStatus.PENDING:
             raise GameException("Ce tirage n'est plus disponible")
-        if now_utc() >= self.betting_closes_at(draw):
+        if not self.is_betting_open(draw):
             raise GameException("Les paris sont fermés pour ce tirage")
         return await self._new_bet(draw, picks, stake, self.draw_config(draw, config), user_id, ticket_number, agent_id, ip_address)
 

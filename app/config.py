@@ -4,6 +4,17 @@ from pydantic import Field, field_validator
 from typing import List, Optional
 
 
+def async_database_url(url: str) -> str:
+    """Adresse de la base pour SQLAlchemy asynchrone. Les hébergeurs (Render, Heroku…)
+    fournissent `postgres://…` ou `postgresql://…` : le pilote asyncpg exige
+    `postgresql+asyncpg://…`. Les autres adresses (sqlite+aiosqlite…) sont inchangées."""
+    url = (url or "").strip()
+    for prefix in ("postgres://", "postgresql://"):
+        if url.startswith(prefix):
+            return "postgresql+asyncpg://" + url[len(prefix):]
+    return url
+
+
 class Settings(BaseSettings):
     """Configuration de l'application"""
     
@@ -21,8 +32,8 @@ class Settings(BaseSettings):
     DATABASE_URL: str = Field(
         default="postgresql+asyncpg://postgres:Pass%%4025%%23@127.0.0.1:5432/parier_keno"
     )
-    DATABASE_POOL_SIZE: int = Field(default=20)
-    DATABASE_MAX_OVERFLOW: int = Field(default=10)
+    DATABASE_POOL_SIZE: int = Field(default=5)       # par processus ; une petite base (256 Mo) ne supporte pas 30 x N connexions
+    DATABASE_MAX_OVERFLOW: int = Field(default=5)
     DATABASE_POOL_TIMEOUT: int = Field(default=30)
     
     # Redis
@@ -46,6 +57,11 @@ class Settings(BaseSettings):
         "http://localhost:8501",
     ])
     
+    @field_validator("DATABASE_URL", mode="after")
+    @classmethod
+    def normalize_database_url(cls, v):
+        return async_database_url(v)
+
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
     @classmethod
     def parse_cors_origins(cls, v):

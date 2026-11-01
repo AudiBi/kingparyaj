@@ -341,6 +341,7 @@ async def test_finished_race_cannot_be_cancelled(service):
 @pytest.mark.asyncio
 async def test_tick_runs_a_full_race_cycle(service, db_session, fake_redis, make_user, monkeypatch):
     monkeypatch.setattr(HorseRaceService, "_within_opening_hours", staticmethod(lambda config: True))
+    await fake_redis.set(CONFIG_KEY, json.dumps(dict(DEFAULT_CONFIG, manual_launch=False)))  # course à l'heure (option)
     user = await make_user(balance=Decimal("1000"))
 
     now = now_utc()
