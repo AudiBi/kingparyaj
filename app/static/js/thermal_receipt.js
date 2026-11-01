@@ -191,8 +191,21 @@
     } catch (e) { /* taille par défaut */ }
   }
 
-  /* Impression (cadre caché, attend le logo) */
+  /* Impression : directe en ESC/POS (QZ Tray) si le poste l'a activée, sinon fenêtre du navigateur.
+     En cas d'échec de l'impression directe, retour automatique à la fenêtre du navigateur. */
   function print(spec) {
+    if (global.KPEscPos && global.KPEscPos.enabled()) {
+      global.KPEscPos.print(spec).catch(function (e) {
+        if (global.showToast) global.showToast("Impression directe impossible (" + (e && e.message || e) + ") : impression par le navigateur", 'warning');
+        browserPrint(spec);
+      });
+      return;
+    }
+    browserPrint(spec);
+  }
+
+  /* Impression par le navigateur (cadre caché, attend le logo) */
+  function browserPrint(spec) {
     var frame = document.createElement('iframe');
     frame.setAttribute('aria-hidden', 'true');
     frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
