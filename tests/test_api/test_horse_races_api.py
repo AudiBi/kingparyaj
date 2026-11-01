@@ -399,3 +399,44 @@ async def test_player_cannot_launch_a_race(make_client, db_session, fake_redis, 
     assert response.status_code in (303, 401, 403)
     await db_session.refresh(race)
     assert race.status == "BETTING_OPEN"
+
+
+@pytest.mark.asyncio
+async def test_winning_ticket_stays_listed_after_the_race_and_can_be_paid(
+    make_client, db_session, fake_redis, make_agent, make_ticket
+):
+    agent, other = await make_agent(), await make_agent()
+    ticket = await make_ticket(agent, balance=Decimal("100"))
+    other_ticket = await make_ticket(other, balance=Decimal("100"))
+    service = HorseRaceService(db_session, fake_redis)
+    race = await service.create_race()
+    first = race.participants[0]["player_number"]
+    await service.place_bet(race.id, "WIN", [first], "40", ticket_number=ticket["ticket_number"], agent_id=agent.id)
+    await service.place_bet(race.id, "WIN", [first], "10", ticket_number=other_ticket["ticket_number"], agent_id=other.id)
+
+    # la course est lancée, terminée et réglée : le cheval choisi gagne
+    race.result = [first] + [p["player_number"] for p in race.participants if p["player_number"] != first]
+    race.status = "FINISHED"
+    await db_session.flush()
+    await service.settle_race(race.id)
+    await service.create_race()  # la course suivante est déjà ouverte : l'ancienne ne doit pas disparaître de la liste
+    await db_session.commit()
+
+    client = await make_client()
+    await _agent_login(client, agent)
+    data = (await client.get("/agent/api/horse-races/my-bets")).json()["bets"]
+    assert len(data) == 1  # seulement les paris de CET agent
+    bet = data[0]
+    assert bet["status"] == "WON" and bet["winnings"] > 0 and bet["race_number"] == race.round_number
+    assert bet["ticket_number"] == ticket["ticket_number"] and bet["selection_names"][0]
+    assert "result" not in bet and "race_script" not in bet  # le classement n'est pas diffusé par cette liste
+
+    summary = (await client.get(f"/agent/api/payouts/{ticket['ticket_number']}")).json()
+    assert summary["amount_to_pay"] > 0 and any(b.get("game") == "Horse Races" for b in summary.get("bets", []))
+
+
+@pytest.mark.asyncio
+async def test_recent_bets_require_an_agent(make_client, db_session, fake_redis):
+    client = await make_client()
+    response = await client.get("/agent/api/horse-races/my-bets", follow_redirects=False)
+    assert response.status_code in (303, 401, 403)

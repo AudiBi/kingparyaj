@@ -82,6 +82,45 @@ async def agent_quote(
     }
 
 
+@agent_router.get("/api/horse-races/my-bets")
+async def agent_recent_bets(
+    limit: int = Query(40, ge=1, le=100),
+    current_agent: User = Depends(get_current_agent),
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    """Derniers paris pris par cet agent, TOUTES courses confondues (2 derniers jours), pour retrouver
+    un ticket gagnant et le payer, comme pour Lucky6 et le Keno. Le résultat de la course n'est pas
+    diffusé ici : seul le statut du pari (gagné / perdu) l'est, une fois la course réglée."""
+    from datetime import timedelta
+
+    from sqlalchemy import select
+
+    from app.core.timezone import now_utc
+    from app.models.game import GameBet, GameRound
+    from app.services.cash_ticket import ticket_numbers
+    from app.services.horse_race_service import GAME_TYPE
+
+    rows = (await db.execute(
+        select(GameBet, GameRound).join(GameRound, GameRound.id == GameBet.round_id)
+        .where(GameBet.agent_id == current_agent.id, GameBet.game_type == GAME_TYPE,
+               GameBet.placed_at >= now_utc() - timedelta(days=2))
+        .order_by(GameBet.placed_at.desc()).limit(limit)
+    )).all()
+    numbers = await ticket_numbers(db, [bet.ticket_id for bet, _ in rows])
+    out = []
+    for bet, rnd in rows:
+        names = {p["player_number"]: p["player_name"] for p in rnd.participants}
+        out.append({
+            **HorseRaceService.serialize_bet(bet),
+            "ticket_number": numbers.get(bet.ticket_id),
+            "race_number": rnd.round_number,
+            "race_status": rnd.status,
+            "selection_names": [names.get(n, "") for n in bet.selection],
+        })
+    return {"bets": out}
+
+
 @agent_router.get("/api/horse-races/races/{race_id}/my-bets")
 async def agent_race_bets(
     race_id: str,
