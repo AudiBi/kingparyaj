@@ -1724,6 +1724,28 @@ async def agent_payout_lookup(
     return await PayoutService(db, redis_client).summary(ticket_number, current_agent)
 
 
+@router.post("/api/tickets/{ticket_number}/cancel")
+async def agent_ticket_cancel(
+    ticket_number: str,
+    current_agent: User = Depends(get_current_agent),
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
+):
+    """Annule, avant le lancement du tirage, un ticket vendu par cet agent : paris annulés, espèces rendues
+    au joueur et retirées de la caisse. Refusé dès que le tirage est lancé ou qu'un résultat existe."""
+    from app.services.ticket_service import TicketService
+
+    try:
+        result = await TicketService(db, redis_client).cancel_before_launch(ticket_number, current_agent)
+        await db.commit()
+    except Exception:
+        await db.rollback()  # tout ou rien
+        raise
+    note = f" ({result['bets_cancelled']} pari(s) annulé(s))" if result["bets_cancelled"] else ""
+    return {"success": True, "message": f"Ticket {result['ticket_number']} annulé{note} : rendre {result['refunded']:.2f} HTG au joueur",
+            "data": result}
+
+
 @router.post("/api/payouts/pay")
 async def agent_payout_pay(
     request: Request,

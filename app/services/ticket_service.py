@@ -198,6 +198,85 @@ class TicketService(BaseService[Ticket, TicketCreate, None]):
         await self.db.flush()
         return {"released": len(plan), "blocked": 0, "amount": total}
 
+    async def cancel_before_launch(self, ticket_number: str, agent) -> dict:
+        """Annulation AU GUICHET, avant le lancement du tirage : le ticket vendu par cet agent est annulé,
+        ses paris (Keno, Lucky6, courses) dont le tirage n'est pas lancé sont annulés avec lui et l'argent
+        est rendu au joueur EN ESPÈCES, retiré de la caisse de l'agent.
+
+        Règles : session de caisse ouverte ; ticket actif, du bureau de l'agent et vendu par lui (ou par
+        un responsable du bureau) ; aucun pari déjà réglé ; aucun tirage déjà lancé ; assez d'espèces en
+        caisse. Tout ou rien : à la moindre règle non respectée, rien n'est modifié."""
+        from decimal import Decimal
+
+        from sqlalchemy import select
+
+        from app.core.exceptions import AppException, ValidationException
+        from app.models.bureau import Bureau, CashierSession
+        from app.models.enums import AuditAction, KenoBetStatus
+        from app.models.game import GameBet, GameBetStatus
+        from app.models.keno import KenoBet
+
+        if not agent.bureau_id:
+            raise ValidationException("Agent non affecté à un bureau")
+        session = (await self.db.execute(
+            select(CashierSession).where(CashierSession.agent_id == agent.id, CashierSession.status == "OPEN").with_for_update()
+        )).scalar_one_or_none()
+        if session is None:
+            raise ValidationException("Ouvrez votre session de caisse (menu Caisse) avant d'annuler un ticket")
+
+        ticket = await self.get_for_update(ticket_number)
+        if ticket.status != TicketStatus.ACTIVE:
+            raise AppException(400, f"Ticket {getattr(ticket.status, 'value', ticket.status)} : annulation impossible", "TICKET_NOT_ACTIVE")
+        if ticket.bureau_id != agent.bureau_id:
+            raise AppException(400, "Ce ticket a été vendu dans un autre bureau : il s'annule dans ce bureau")
+        is_manager = getattr(getattr(agent, "role", None), "value", getattr(agent, "role", None)) == "manager"
+        if ticket.agent_id != agent.id and not is_manager:
+            raise AppException(403, "Seul l'agent qui a vendu ce ticket (ou un responsable du bureau) peut l'annuler", "NOT_SELLER")
+
+        settled = (await self.db.execute(
+            select(func.count(KenoBet.id)).where(
+                KenoBet.ticket_id == ticket.id, KenoBet.status.notin_([KenoBetStatus.PENDING, KenoBetStatus.REFUNDED]))
+        )).scalar() or 0
+        settled += (await self.db.execute(
+            select(func.count(GameBet.id)).where(
+                GameBet.ticket_id == ticket.id, GameBet.status.notin_([GameBetStatus.PENDING.value, GameBetStatus.REFUNDED.value]))
+        )).scalar() or 0
+        if settled:
+            raise AppException(400, "Ce ticket a déjà un résultat : l'annulation au guichet n'est possible qu'avant le tirage", "ALREADY_PLAYED")
+
+        released = await self.release_pending_bets(ticket, agent.id)
+        if released["blocked"]:
+            raise AppException(400, "Le tirage de ce ticket est déjà lancé : annulation impossible", "DRAW_LAUNCHED")
+
+        amount = Decimal(str(ticket.balance or 0))
+        if amount > 0 and Decimal(str(session.current_balance or 0)) < amount:
+            raise AppException(
+                400, f"Caisse insuffisante : {Decimal(str(session.current_balance or 0)):.2f} HTG disponibles pour rendre {amount:.2f} HTG",
+                "CASH_INSUFFICIENT",
+            )
+
+        amount = ticket.record_cancellation(agent.id, session.id)  # espèces rendues, mouvement daté rattaché à la session
+        if amount > 0:
+            session.cash_out_count += 1
+            session.cash_out_amount += amount
+            session.current_balance -= amount
+            bureau = await self.db.get(Bureau, ticket.bureau_id)
+            if bureau:
+                bureau.cash_balance = Bureau.cash_balance - amount            # atomique en base
+                bureau.total_cash_out_today = Bureau.total_cash_out_today + amount
+        await self.audit_service.log(
+            agent_id=agent.id,
+            action=AuditAction.USER_UPDATED,
+            resource_type="ticket",
+            resource_id=ticket.id,
+            new_values={"status": "CANCELLED", "refunded": float(amount), "bets_cancelled": released["released"]},
+            extra_data={"event": "ticket_cancelled_at_counter", "ticket": ticket.ticket_number},
+            reason="Annulé au guichet avant le tirage",
+        )
+        await self.db.flush()
+        return {"ticket_number": ticket.ticket_number, "refunded": float(amount), "bets_cancelled": released["released"],
+                "cash_balance": float(session.current_balance)}
+
     async def get_for_update(self, ticket_number: str) -> Ticket:
         """Ticket verrouillé (SELECT … FOR UPDATE) : deux paiements simultanés
         du même ticket se suivent, le second voit le ticket déjà payé."""

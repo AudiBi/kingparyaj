@@ -422,7 +422,7 @@
                 <td>${b.selection.map((n, i) => '№' + n + (b.selection_names[i] ? ' ' + esc(b.selection_names[i]) : '')).join(RULES[b.bet_type].ordered ? ' → ' : ' + ')}</td>
                 <td>${money(b.stake)}</td><td>${b.odds.toFixed(2)}</td>
                 <td>${STATUS_FR[b.status] || b.status}${b.winnings > 0 ? ' · <b>' + money(b.winnings) + '</b>' : ''}</td>
-                <td><button class="btn btn-secondary btn-sm" data-receipt='${esc(JSON.stringify(b))}' title="Réimprimer le reçu"><i class="fas fa-print"></i></button>${won && b.ticket_number ? ' <a class="btn btn-primary btn-sm" href="/agent/gains?ticket=' + encodeURIComponent(b.ticket_number) + '" title="Payer les gains"><i class="fas fa-hand-holding-usd"></i> Payer</a>' : ''}${won && !b.ticket_number ? ' <span class="text-muted" title="Gain déjà crédité sur le compte du joueur">crédité</span>' : ''}</td>
+                <td><button class="btn btn-secondary btn-sm" data-receipt='${esc(JSON.stringify(b))}' title="Réimprimer le reçu"><i class="fas fa-print"></i></button>${won && b.ticket_number ? ' <a class="btn btn-primary btn-sm" href="/agent/gains?ticket=' + encodeURIComponent(b.ticket_number) + '" title="Payer les gains"><i class="fas fa-hand-holding-usd"></i> Payer</a>' : ''}${won && !b.ticket_number ? ' <span class="text-muted" title="Gain déjà crédité sur le compte du joueur">crédité</span>' : ''}${b.status === 'PENDING' && b.ticket_number ? ' <button class="btn btn-danger btn-sm" data-cancel-ticket="' + esc(b.ticket_number) + '" title="Annuler le ticket (avant le lancement)"><i class="fas fa-ban"></i></button>' : ''}</td>
             </tr>`;
             });
             $('myBets').innerHTML = rows.join('') || '<tr><td colspan="9" class="text-muted">Aucun pari</td></tr>';
@@ -547,6 +547,10 @@
         $('identifier').placeholder = t === 'ticket' ? 'Numéro de ticket existant (KNO-XXXX-XXXX)' : 'Téléphone du joueur';
         if (t === 'cash') $('identifier').value = '';
     }));
+    $('myBets').addEventListener('click', e => {
+        const cancel = e.target.closest('[data-cancel-ticket]');
+        if (cancel) kpCancelTicket(cancel.dataset.cancelTicket, () => { loadMyBets(); loadCurrent(); });
+    });
     $('myBets').addEventListener('click', e => {
         const btn = e.target.closest('[data-receipt]');
         if (btn) showReceipt(JSON.parse(btn.dataset.receipt), { player_type: 'account' });
