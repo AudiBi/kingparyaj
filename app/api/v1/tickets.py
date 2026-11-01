@@ -651,21 +651,14 @@ async def cancel_ticket(
     if ticket.status != TicketStatus.ACTIVE:
         raise HTTPException(400, "Ce ticket ne peut pas être annulé")
     
-    # Vérifier s'il y a des paris en attente
-    bets_result = await db.execute(
-        select(KenoBet).where(
-            and_(
-                KenoBet.ticket_id == ticket.id,
-                KenoBet.status == "PENDING"
-            )
-        )
-    )
-    pending_bets = bets_result.scalars().all()
-    
-    if pending_bets:
+    # Paris en attente (Keno, Lucky6, courses) : un gain crédité plus tard sur un ticket annulé serait perdu
+    from app.services.ticket_service import TicketService
+
+    pending = await TicketService(db, redis_client).pending_bets_count(ticket.id)
+    if pending:
         raise HTTPException(
-            400, 
-            f"Impossible d'annuler: {len(pending_bets)} paris en attente. "
+            400,
+            f"Impossible d'annuler: {pending} paris en attente. "
             "Attendez que les tirages soient effectués."
         )
     

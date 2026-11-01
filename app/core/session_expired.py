@@ -40,9 +40,21 @@ def _wants_page(request: Request) -> bool:
     return request.method == "GET" and "text/html" in accept and "/api/" not in request.url.path
 
 
+def _is_panel_api(request: Request) -> bool:
+    return panel_for(request.url.path) is not None and "/api/" in request.url.path
+
+
 async def session_expired_handler(request: Request, exc: StarletteHTTPException):
     panel = panel_for(request.url.path)
     if exc.status_code != 401 or panel is None:
+        if exc.status_code >= 400 and exc.status_code != 401 and _is_panel_api(request) and isinstance(exc.detail, str):
+            # Les pages du panel affichent `data.error` : sans cette clé, un refus (« paris en attente »,
+            # « solde insuffisant »…) s'affichait comme un simple « Erreur », sans le motif.
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"detail": exc.detail, "error": exc.detail, "success": False},
+                headers=getattr(exc, "headers", None),
+            )
         return await http_exception_handler(request, exc)
 
     login, cookies = panel
