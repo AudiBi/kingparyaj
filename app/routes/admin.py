@@ -638,6 +638,40 @@ async def admin_dashboard_charts_api(
 
 # ==================== UTILISATEURS ====================
 
+def _users_query(search=None, role=None, kyc_status=None, status=None):
+    """Utilisateurs non supprimés, selon les filtres de la liste (la liste et l'export les partagent).
+    Une valeur de filtre inconnue (rôle, KYC) est ignorée : sous PostgreSQL, comparer une énumération à un
+    texte inconnu provoquerait une erreur 500."""
+    query = select(User).where(User.is_deleted == False)
+    if search:
+        query = query.where(
+            or_(
+                User.phone.contains(search),
+                User.email.contains(search),
+                User.first_name.contains(search),
+                User.last_name.contains(search),
+                User.national_id.contains(search)
+            )
+        )
+    if role:
+        try:
+            query = query.where(User.role == UserRole(role.lower()))
+        except ValueError:
+            pass
+    if kyc_status:
+        try:
+            query = query.where(User.kyc_status == KYCStatus(kyc_status.lower()))
+        except ValueError:
+            pass
+    if status == "active":
+        query = query.where(User.is_active == True)
+    elif status == "inactive":
+        query = query.where(User.is_active == False)
+    elif status == "locked":
+        query = query.where(User.is_locked == True)
+    return query
+
+
 @router.get("/users", response_class=HTMLResponse)
 async def admin_users(
     request: Request,
@@ -653,33 +687,8 @@ async def admin_users(
     """
     Liste des utilisateurs avec filtres
     """
-    query = select(User).where(User.is_deleted == False)
-    
-    # Filtres
-    if search:
-        query = query.where(
-            or_(
-                User.phone.contains(search),
-                User.email.contains(search),
-                User.first_name.contains(search),
-                User.last_name.contains(search),
-                User.national_id.contains(search)
-            )
-        )
-    
-    if role:
-        query = query.where(User.role == role)
-    
-    if kyc_status:
-        query = query.where(User.kyc_status == kyc_status)
-    
-    if status == "active":
-        query = query.where(User.is_active == True)
-    elif status == "inactive":
-        query = query.where(User.is_active == False)
-    elif status == "locked":
-        query = query.where(User.is_locked == True)
-    
+    query = _users_query(search, role, kyc_status, status)
+
     # Pagination
     total_result = await db.execute(select(func.count()).select_from(query.subquery()))
     total = total_result.scalar() or 0
@@ -951,6 +960,121 @@ async def admin_user_edit_page(
     })
 
 
+def _csv_cell(value) -> str:
+    """Cellule de CSV sans « injection de formule » (=, +, -, @ en tête sont neutralisés dans Excel)."""
+    text = "" if value is None else str(value)
+    return "'" + text if text[:1] in ("=", "+", "-", "@") else text
+
+
+@router.get("/api/users/export")
+async def admin_users_export(
+    search: Optional[str] = None,
+    role: Optional[str] = None,
+    kyc_status: Optional[str] = None,
+    status: Optional[str] = None,
+    ids: Optional[str] = Query(None, description="Identifiants séparés par des virgules (utilisateurs cochés)"),
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Export CSV de la liste (mêmes filtres que la page) ou des utilisateurs cochés."""
+    import csv
+    import io
+
+    query = _users_query(search, role, kyc_status, status)
+    if ids:
+        wanted = [i for i in ids.split(",") if i.strip()][:1000]
+        query = query.where(User.id.in_(wanted))
+    users = (await db.execute(query.order_by(User.created_at.desc()).limit(10000))).scalars().all()
+    balances = {}
+    if users:
+        rows = await db.execute(select(Wallet.user_id, Wallet.balance).where(Wallet.user_id.in_([u.id for u in users])))
+        balances = {uid: bal for uid, bal in rows.all()}
+
+    def state(u):
+        if u.is_locked:
+            return "Bloqué"
+        return "Actif" if u.is_active else "Inactif"
+
+    out = io.StringIO()
+    writer = csv.writer(out, delimiter=";")
+    writer.writerow(["Téléphone", "Prénom", "Nom", "E-mail", "Rôle", "KYC", "Statut", "Solde (HTG)", "Créé le"])
+    for u in users:
+        writer.writerow([
+            _csv_cell(u.phone), _csv_cell(u.first_name), _csv_cell(u.last_name), _csv_cell(u.email),
+            _csv_cell(getattr(u.role, "value", u.role)), _csv_cell(getattr(u.kyc_status, "value", u.kyc_status)),
+            state(u), f"{Decimal(str(balances.get(u.id, 0))):.2f}",
+            to_haiti(u.created_at).strftime("%d/%m/%Y %H:%M") if u.created_at else "",
+        ])
+    filename = f"utilisateurs_{today_haiti().strftime('%Y%m%d')}.csv"
+    return Response(
+        content="\ufeff" + out.getvalue(),  # BOM : Excel lit correctement les accents
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/api/users/bulk/{action}")
+async def admin_users_bulk(
+    action: str,
+    user_ids: List[str] = Body(..., embed=True),
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Actions groupées de la liste : activer, désactiver, supprimer.
+    Chaque utilisateur est contrôlé séparément ; ceux qui ne peuvent pas l'être sont ignorés avec leur motif
+    (soi-même, super administrateur, compte bloqué à débloquer d'abord, introuvable)."""
+    if action not in ("activate", "deactivate", "delete"):
+        raise HTTPException(404, "Action inconnue")
+    ids = list(dict.fromkeys(i for i in user_ids if i))[:200]
+    if not ids:
+        raise HTTPException(400, "Aucun utilisateur sélectionné")
+
+    users = {u.id: u for u in (await db.execute(
+        select(User).where(User.id.in_(ids), User.is_deleted == False).with_for_update()
+    )).scalars().all()}
+    done, skipped = 0, []
+    labels = {"activate": "activé", "deactivate": "désactivé", "delete": "supprimé"}
+    for uid in ids:
+        user = users.get(uid)
+        who = (user.full_name or user.phone) if user else uid
+        if user is None:
+            skipped.append({"id": uid, "reason": "introuvable"})
+            continue
+        if user.id == admin.id and action in ("deactivate", "delete"):
+            skipped.append({"id": uid, "reason": f"{who} : vous-même"})
+            continue
+        try:
+            ensure_can_manage(admin, user)
+        except HTTPException:
+            skipped.append({"id": uid, "reason": f"{who} : super administrateur"})
+            continue
+        if action == "activate":
+            if user.is_locked:
+                skipped.append({"id": uid, "reason": f"{who} : bloqué (utilisez Débloquer)"})
+                continue
+            user.is_active = True
+        elif action == "deactivate":
+            user.is_active = False
+        else:
+            user.soft_delete(admin.id)
+            user.is_active = False
+        db.add(AuditLog(
+            user_id=admin.id, action=AuditAction.USER_UPDATED, resource_type="user", resource_id=user.id,
+            ip_address="0.0.0.0", new_values={"bulk": action, "is_active": user.is_active},
+            reason=f"Action groupée : {labels[action]}",
+        ))
+        done += 1
+
+    if not done:
+        raise HTTPException(400, "Aucun utilisateur " + labels[action] + " : " + "; ".join(s["reason"] for s in skipped[:5]))
+    await db.commit()
+    plural = "s" if done > 1 else ""
+    message = f"{done} utilisateur{plural} {labels[action]}{plural}"
+    if skipped:
+        message += f" ; {len(skipped)} ignoré(s) ({'; '.join(s['reason'] for s in skipped[:3])})"
+    return {"success": True, "message": message, "done": done, "skipped": skipped}
+
+
 @router.put("/api/users/{user_id}")
 async def admin_user_update(
     user_id: str,
@@ -1021,6 +1145,8 @@ async def admin_user_delete(
     if not user:
         raise HTTPException(404, "Utilisateur non trouvé")
     ensure_can_manage(admin, user)
+    if user.id == admin.id:
+        raise HTTPException(400, "Vous ne pouvez pas supprimer votre propre compte")
     
     user.soft_delete(admin.id)
     user.is_active = False

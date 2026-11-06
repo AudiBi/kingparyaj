@@ -54,7 +54,9 @@
                         <option value="">Tous les rôles</option>
                         <option value="player" {% if filters.role == 'player' %}selected{% endif %}>Joueur</option>
                         <option value="agent" {% if filters.role == 'agent' %}selected{% endif %}>Agent</option>
+                        <option value="manager" {% if filters.role == 'manager' %}selected{% endif %}>Responsable</option>
                         <option value="admin" {% if filters.role == 'admin' %}selected{% endif %}>Admin</option>
+                        <option value="super_admin" {% if filters.role == 'super_admin' %}selected{% endif %}>Super admin</option>
                     </select>
                 </div>
                 <div class="form-group" style="margin-bottom: 0;">
@@ -357,6 +359,10 @@
         bulkUserIds = Array.from(document.querySelectorAll('.user-checkbox:checked')).map(cb => cb.value);
         if (bulkUserIds.length === 0) return;
         
+        if (action === 'export') {  // export : simple téléchargement des utilisateurs cochés, sans confirmation
+            window.location.href = '/admin/api/users/export?ids=' + encodeURIComponent(bulkUserIds.join(','));
+            return;
+        }
         bulkActionType = action;
         const labels = {
             'export': 'Exporter',
