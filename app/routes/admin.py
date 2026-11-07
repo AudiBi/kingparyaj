@@ -1237,6 +1237,46 @@ async def admin_user_unblock(
 
 # ==================== AGENTS ====================
 
+AGENT_ROLES = (UserRole.AGENT, UserRole.MANAGER)
+
+
+def _agents_query(search=None, bureau_id=None, status=None):
+    """Agents (et responsables) non supprimés, selon les filtres de la liste (partagés avec l'export)."""
+    query = select(User).options(selectinload(User.bureau)).where(User.role.in_(AGENT_ROLES), User.is_deleted == False)
+    if search:
+        query = query.where(
+            or_(
+                User.phone.contains(search),
+                User.email.contains(search),
+                User.first_name.contains(search),
+                User.last_name.contains(search)
+            )
+        )
+    if bureau_id:
+        query = query.where(User.bureau_id == bureau_id)
+    if status == "active":
+        query = query.where(User.is_active == True)
+    elif status == "inactive":
+        query = query.where(User.is_active == False)
+    return query
+
+
+async def _get_agent(db: AsyncSession, agent_id: str) -> User:
+    """Un agent (ou responsable) existant : une route « agent » ne doit jamais agir sur un joueur ou un admin."""
+    user = (await db.execute(
+        select(User).where(User.id == agent_id, User.is_deleted == False, User.role.in_(AGENT_ROLES))
+    )).scalar_one_or_none()
+    if user is None:
+        raise HTTPException(404, "Agent non trouvé")
+    return user
+
+
+async def _open_cash_session(db: AsyncSession, agent_id: str):
+    return (await db.execute(
+        select(CashierSession).where(CashierSession.agent_id == agent_id, CashierSession.status == "OPEN")
+    )).scalars().first()
+
+
 @router.get("/agents", response_class=HTMLResponse)
 async def admin_agents(
     request: Request,
@@ -1251,28 +1291,7 @@ async def admin_agents(
 ):
     """Liste des agents"""
 
-    query = select(User).options(selectinload(User.bureau)).where(
-        User.role.in_([UserRole.AGENT, UserRole.MANAGER]),
-        User.is_deleted == False
-    )
-
-    if search:
-        query = query.where(
-            or_(
-                User.phone.contains(search),
-                User.email.contains(search),
-                User.first_name.contains(search),
-                User.last_name.contains(search)
-            )
-        )
-
-    if bureau_id:
-        query = query.where(User.bureau_id == bureau_id)
-
-    if status == "active":
-        query = query.where(User.is_active == True)
-    elif status == "inactive":
-        query = query.where(User.is_active == False)
+    query = _agents_query(search, bureau_id, status)
 
     # ============================================================
     # Pagination
@@ -1437,6 +1456,10 @@ async def admin_agent_create(
     if existing.scalar_one_or_none():
         raise HTTPException(400, "Ce numéro de téléphone est déjà utilisé")
     
+    if agent_data.email:
+        if (await db.execute(select(User.id).where(User.email == agent_data.email))).first():
+            raise HTTPException(400, "Cet email est déjà utilisé")
+
     # Vérifier le bureau
     if agent_data.bureau_id:
         bureau_result = await db.execute(
@@ -1481,6 +1504,101 @@ async def admin_agent_create(
     return {"success": True, "agent_id": user.id, "message": "Agent créé avec succès"}
 
 
+@router.get("/api/agents/export")
+async def admin_agents_export(
+    search: Optional[str] = None,
+    bureau_id: Optional[str] = None,
+    status: Optional[str] = None,
+    ids: Optional[str] = Query(None, description="Identifiants séparés par des virgules (agents cochés)"),
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Export CSV de la liste des agents (mêmes filtres que la page) ou des agents cochés."""
+    import csv
+    import io
+
+    query = _agents_query(search, bureau_id, status)
+    if ids:
+        query = query.where(User.id.in_([i for i in ids.split(",") if i.strip()][:1000]))
+    agents = (await db.execute(query.order_by(User.created_at.desc()).limit(10000))).scalars().all()
+
+    out = io.StringIO()
+    writer = csv.writer(out, delimiter=";")
+    writer.writerow(["Téléphone", "Prénom", "Nom", "E-mail", "Rôle", "Bureau", "Statut", "Commission (%)", "Créé le"])
+    for a in agents:
+        writer.writerow([
+            _csv_cell(a.phone), _csv_cell(a.first_name), _csv_cell(a.last_name), _csv_cell(a.email),
+            _csv_cell(getattr(a.role, "value", a.role)), _csv_cell(a.bureau.name if a.bureau else ""),
+            "Actif" if a.is_active else "Inactif",
+            "" if a.commission_rate is None else f"{Decimal(str(a.commission_rate)):.2f}",
+            to_haiti(a.created_at).strftime("%d/%m/%Y %H:%M") if a.created_at else "",
+        ])
+    filename = f"agents_{today_haiti().strftime('%Y%m%d')}.csv"
+    return Response(
+        content="\ufeff" + out.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/api/agents/bulk/{action}")
+async def admin_agents_bulk(
+    action: str,
+    agent_ids: List[str] = Body(..., embed=True),
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Actions groupées de la liste des agents : activer, désactiver, supprimer. Chaque agent est contrôlé
+    séparément ; les autres sont ignorés avec leur motif (introuvable, caisse ouverte pour une suppression)."""
+    if action not in ("activate", "deactivate", "delete"):
+        raise HTTPException(404, "Action inconnue")
+    ids = list(dict.fromkeys(i for i in agent_ids if i))[:200]
+    if not ids:
+        raise HTTPException(400, "Aucun agent sélectionné")
+
+    agents = {u.id: u for u in (await db.execute(
+        select(User).where(User.id.in_(ids), User.is_deleted == False, User.role.in_(AGENT_ROLES)).with_for_update()
+    )).scalars().all()}
+    labels = {"activate": "activé", "deactivate": "désactivé", "delete": "supprimé"}
+    done, skipped = 0, []
+    for aid in ids:
+        agent = agents.get(aid)
+        if agent is None:
+            skipped.append({"id": aid, "reason": "agent introuvable"})
+            continue
+        who = agent.full_name or agent.phone
+        try:
+            ensure_can_manage(admin, agent)
+        except HTTPException:
+            skipped.append({"id": aid, "reason": f"{who} : super administrateur"})
+            continue
+        if action == "delete" and await _open_cash_session(db, agent.id):
+            skipped.append({"id": aid, "reason": f"{who} : session de caisse ouverte"})
+            continue
+        if action == "activate":
+            agent.is_active = True
+        elif action == "deactivate":
+            agent.is_active = False
+        else:
+            agent.soft_delete(admin.id)
+            agent.is_active = False
+        db.add(AuditLog(
+            user_id=admin.id, action=AuditAction.USER_UPDATED, resource_type="agent", resource_id=agent.id,
+            ip_address="0.0.0.0", new_values={"bulk": action, "is_active": agent.is_active},
+            reason=f"Action groupée : {labels[action]}",
+        ))
+        done += 1
+
+    if not done:
+        raise HTTPException(400, f"Aucun agent {labels[action]} : " + "; ".join(x["reason"] for x in skipped[:5]))
+    await db.commit()
+    plural = "s" if done > 1 else ""
+    message = f"{done} agent{plural} {labels[action]}{plural}"
+    if skipped:
+        message += f" ; {len(skipped)} ignoré(s) ({'; '.join(x['reason'] for x in skipped[:3])})"
+    return {"success": True, "message": message, "done": done, "skipped": skipped}
+
+
 @router.put("/api/agents/{agent_id}")
 async def admin_agent_update(
     agent_id: str,
@@ -1490,13 +1608,7 @@ async def admin_agent_update(
 ):
     """Mise à jour d'un agent"""
 
-    result = await db.execute(
-        select(User).where(User.id == agent_id, User.is_deleted == False)
-    )
-    user = result.scalar_one_or_none()
-
-    if not user:
-        raise HTTPException(404, "Agent non trouvé")
+    user = await _get_agent(db, agent_id)
     ensure_can_manage(admin, user)
 
     if agent_data.password:
@@ -1505,11 +1617,15 @@ async def admin_agent_update(
         user.first_name = agent_data.first_name
     if agent_data.last_name:
         user.last_name = agent_data.last_name
-    if agent_data.email:
+    if agent_data.email and agent_data.email != user.email:
+        if (await db.execute(select(User.id).where(User.email == agent_data.email, User.id != user.id))).first():
+            raise HTTPException(400, "Cet email est déjà utilisé")
         user.email = agent_data.email
     if agent_data.national_id:
         user.national_id = agent_data.national_id
     if agent_data.bureau_id:
+        if (await db.get(Bureau, agent_data.bureau_id)) is None:
+            raise HTTPException(404, "Bureau non trouvé")
         user.bureau_id = agent_data.bureau_id
     if agent_data.is_active is not None:
         user.is_active = agent_data.is_active
@@ -1552,14 +1668,10 @@ async def admin_agent_delete(
 ):
     """Suppression d'un agent"""
     
-    result = await db.execute(
-        select(User).where(User.id == agent_id, User.is_deleted == False)
-    )
-    user = result.scalar_one_or_none()
-    
-    if not user:
-        raise HTTPException(404, "Agent non trouvé")
+    user = await _get_agent(db, agent_id)
     ensure_can_manage(admin, user)
+    if await _open_cash_session(db, user.id):
+        raise HTTPException(400, "Cet agent a une session de caisse ouverte : fermez-la avant de le supprimer")
     
     user.soft_delete(admin.id)
     user.is_active = False
@@ -1576,13 +1688,7 @@ async def admin_agent_toggle_status(
     db: AsyncSession = Depends(get_db)
 ):
     """Active/désactive un agent"""
-    result = await db.execute(
-        select(User).where(User.id == agent_id, User.is_deleted == False)
-    )
-    user = result.scalar_one_or_none()
-
-    if not user:
-        raise HTTPException(404, "Agent non trouvé")
+    user = await _get_agent(db, agent_id)
     ensure_can_manage(admin, user)
 
     user.is_active = not user.is_active
@@ -1599,13 +1705,7 @@ async def admin_agent_reset_password(
     db: AsyncSession = Depends(get_db)
 ):
     """Réinitialise le mot de passe d'un agent et lui envoie par SMS"""
-    result = await db.execute(
-        select(User).where(User.id == agent_id, User.is_deleted == False)
-    )
-    user = result.scalar_one_or_none()
-
-    if not user:
-        raise HTTPException(404, "Agent non trouvé")
+    user = await _get_agent(db, agent_id)
     ensure_can_manage(admin, user)
 
     new_password = secrets.token_urlsafe(9)
@@ -1622,10 +1722,10 @@ async def admin_agent_reset_password(
     db.add(audit)
     await db.commit()
 
-    # À implémenter avec un vrai fournisseur SMS (Twilio, etc.)
-    logger.info(f"SMS nouveau mot de passe à {user.phone}: {new_password}")
-
-    return {"success": True, "message": "Mot de passe réinitialisé et envoyé par SMS"}
+    # Pas de SMS branché : le mot de passe temporaire est affiché UNE fois à l'administrateur, qui le
+    # communique à l'agent. Il n'est ni conservé ni écrit dans les journaux.
+    return {"success": True, "message": "Mot de passe réinitialisé : communiquez le mot de passe temporaire à l'agent",
+            "temporary_password": new_password, "phone": user.phone}
 
 
 @router.get("/agents/create", response_class=HTMLResponse)

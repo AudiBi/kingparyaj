@@ -74,6 +74,10 @@ async def test_admin_cannot_touch_a_super_admin(admin_client, admin_user, make_u
     await _login(admin_client)
     for method, url, body in _actions(boss.id):
         response = await _call(admin_client, method, url, body)
+        if "/api/agents/" in url:
+            # les routes « agent » ne voient que les agents : un super admin n'y est pas atteignable du tout
+            assert response.status_code == 404, (method, url, response.status_code, response.text)
+            continue
         assert response.status_code == 403, (method, url, response.status_code, response.text)
         assert "super" in response.json()["detail"].lower()
     await db_session.refresh(boss)

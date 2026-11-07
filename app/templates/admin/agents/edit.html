@@ -259,7 +259,10 @@
         .then(data => {
             closeModal('resetModal');
             if (data.success) {
-                showToast(data.message || 'Mot de passe réinitialisé et envoyé par SMS', 'success');
+                showToast(data.message || 'Mot de passe réinitialisé', 'success');
+                if (data.temporary_password) {  // aucun SMS n'est envoyé : l'admin le communique à l'agent (affiché une seule fois)
+                    window.prompt('Mot de passe temporaire de ' + (data.phone || "l'agent") + ' (à communiquer à l\'agent, il ne sera plus affiché) :', data.temporary_password);
+                }
             } else {
                 showToast(data.error || 'Erreur', 'error');
             }
