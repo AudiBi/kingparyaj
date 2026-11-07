@@ -3,7 +3,7 @@
 
 (Lucky Wheel retirée : table lucky_plays conservée pour l'historique.)"""
 
-from fastapi import APIRouter, Body, Depends, Request, Form, HTTPException, Query, BackgroundTasks, Response
+from fastapi import APIRouter, Body, Depends, Request, Form, HTTPException, Query, BackgroundTasks, Response, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,6 +43,7 @@ from app.models.transaction import Transaction, TransactionType, TransactionStat
 from app.models.audit import AuditLog, AuditAction
 from app.models.notification import Notification
 from app.models.promotion import Promotion, PromotionStatus, UserPromotion
+from app.models.enums import PaymentMethod, PromotionType
 from app.models.responsible import SelfExclusion, PlayerLimit
 from app.schemas.admin import (
     AdminUserCreate, AdminUserUpdate, AdminAgentCreate, AdminAgentUpdate,
@@ -72,6 +73,23 @@ router = APIRouter(prefix="/admin", tags=["Admin"])
 # "app/templates/admin/admin/base.html" (inexistant) : TemplateNotFound sur
 # CHAQUE page admin sauf login.html (qui n'extends rien) - jamais détecté car
 # aucun test ne rendait de page HTML au-delà du login.
+_raw_day_start, _raw_day_end = local_date_start_utc, local_date_end_utc
+
+
+def local_date_start_utc(value):  # noqa: F811 - version tolérante pour les dates saisies dans les filtres
+    try:
+        return _raw_day_start(value)
+    except (ValueError, TypeError):
+        raise HTTPException(400, "Date invalide : utilisez le format AAAA-MM-JJ")
+
+
+def local_date_end_utc(value):  # noqa: F811
+    try:
+        return _raw_day_end(value)
+    except (ValueError, TypeError):
+        raise HTTPException(400, "Date invalide : utilisez le format AAAA-MM-JJ")
+
+
 templates = Jinja2Templates(directory="app/templates")
 # Rend `{{ csrf_token() }}` utilisable dans les templates, déjà appelé ainsi
 # partout (formulaires cachés et headers X-CSRFToken des appels fetch()).
@@ -1171,7 +1189,7 @@ async def admin_user_delete(
 @router.post("/api/users/{user_id}/block")
 async def admin_user_block(
     user_id: str,
-    reason: str = Form(...),
+    reason: str = Body(..., embed=True),
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
@@ -2089,26 +2107,46 @@ async def admin_bureau_update(
     return {"success": True, "message": "Bureau mis à jour avec succès"}
 
 
+async def _bureau_delete_blocker(db: AsyncSession, bureau: Bureau):
+    """Motif empêchant la suppression d'un bureau (None si la suppression est possible)."""
+    agents = (await db.execute(select(func.count(User.id)).where(
+        User.bureau_id == bureau.id, User.role.in_(AGENT_ROLES), User.is_deleted == False))).scalar() or 0
+    if agents:
+        return f"{bureau.name} : {agents} agent(s) rattaché(s)"
+    open_sessions = (await db.execute(select(func.count(CashierSession.id)).where(
+        CashierSession.bureau_id == bureau.id, CashierSession.status == "OPEN"))).scalar() or 0
+    if open_sessions:
+        return f"{bureau.name} : session de caisse ouverte"
+    active_tickets = (await db.execute(select(func.count(Ticket.id)).where(
+        Ticket.bureau_id == bureau.id, Ticket.status == TicketStatus.ACTIVE))).scalar() or 0
+    if active_tickets:
+        return f"{bureau.name} : {active_tickets} ticket(s) actif(s)"
+    if (bureau.cash_balance or 0) != 0:
+        return f"{bureau.name} : la caisse n'est pas vide ({bureau.cash_balance} HTG)"
+    return None
+
+
 @router.delete("/api/bureaus/{bureau_id}")
 async def admin_bureau_delete(
     bureau_id: str,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Suppression d'un bureau"""
-    
-    result = await db.execute(
-        select(Bureau).where(Bureau.id == bureau_id, Bureau.is_deleted == False)
-    )
-    bureau = result.scalar_one_or_none()
-    
+    """Suppression d'un bureau (refusée s'il a encore des agents, une caisse ouverte, des tickets actifs ou de l'argent)."""
+    bureau = (await db.execute(
+        select(Bureau).where(Bureau.id == bureau_id, Bureau.is_deleted == False).with_for_update()
+    )).scalar_one_or_none()
     if not bureau:
         raise HTTPException(404, "Bureau non trouvé")
-    
+    blocker = await _bureau_delete_blocker(db, bureau)
+    if blocker:
+        raise HTTPException(400, f"Suppression impossible — {blocker}")
+
     bureau.soft_delete(admin.id)
-
+    bureau.is_active = False
+    db.add(AuditLog(user_id=admin.id, action=AuditAction.USER_UPDATED, resource_type="bureau", resource_id=bureau.id,
+                    ip_address="0.0.0.0", new_values={"deleted": True}, reason="Suppression du bureau"))
     await db.commit()
-
     return {"success": True, "message": "Bureau supprimé avec succès"}
 
 
@@ -2539,12 +2577,12 @@ async def admin_transactions(
 
     if search:
         query = query.where(Transaction.reference.contains(search))
-    if transaction_type:
-        query = query.where(Transaction.transaction_type == transaction_type)
-    if status:
-        query = query.where(Transaction.status == status)
-    if method:
-        query = query.where(Transaction.payment_method == method)
+    if transaction_type and _parse_enum(TransactionType, transaction_type):
+        query = query.where(Transaction.transaction_type == _parse_enum(TransactionType, transaction_type))
+    if status and _parse_enum(TransactionStatus, status):
+        query = query.where(Transaction.status == _parse_enum(TransactionStatus, status))
+    if method and _parse_enum(PaymentMethod, method):
+        query = query.where(Transaction.payment_method == _parse_enum(PaymentMethod, method))
     if user_id:
         query = query.where(Transaction.user_id == user_id)
     if min_amount is not None:
@@ -2687,8 +2725,8 @@ async def admin_tickets(
 
     query = select(Ticket).options(selectinload(Ticket.bureau), selectinload(Ticket.agent))
 
-    if status:
-        query = query.where(Ticket.status == status)
+    if status and status.lower() in {x.value for x in TicketStatus}:
+        query = query.where(Ticket.status == TicketStatus(status.lower()))
     if bureau_id:
         query = query.where(Ticket.bureau_id == bureau_id)
     if agent_id:
@@ -2910,6 +2948,48 @@ async def _financial_report(db: AsyncSession, start_date: Optional[str], end_dat
     }
 
 
+# ==================== RECHERCHE GLOBALE ====================
+
+@router.get("/search", response_class=HTMLResponse)
+async def admin_global_search(
+    request: Request,
+    q: str = Query("", max_length=100),
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Recherche transversale : utilisateurs/agents, tickets, bureaux et transactions."""
+    term = q.strip()
+    users, tickets, bureaus, transactions = [], [], [], []
+    if len(term) >= 2:
+        users = (await db.execute(
+            select(User).where(User.is_deleted == False, or_(
+                User.phone.contains(term), User.email.contains(term),
+                User.first_name.contains(term), User.last_name.contains(term)))
+            .order_by(User.created_at.desc()).limit(10))).scalars().all()
+        tickets = (await db.execute(
+            select(Ticket).where(or_(Ticket.ticket_number.contains(term), Ticket.player_name.contains(term),
+                                     Ticket.player_phone.contains(term)))
+            .order_by(Ticket.created_at.desc()).limit(10))).scalars().all()
+        bureaus = (await db.execute(
+            select(Bureau).where(Bureau.is_deleted == False,
+                                 or_(Bureau.name.contains(term), Bureau.code.contains(term), Bureau.city.contains(term)))
+            .order_by(Bureau.name).limit(10))).scalars().all()
+        transactions = (await db.execute(
+            select(Transaction).where(Transaction.reference.contains(term))
+            .order_by(Transaction.created_at.desc()).limit(10))).scalars().all()
+
+    return templates.TemplateResponse(request, "admin/search.html", {
+        "active": "",
+        "q": term,
+        "too_short": 0 < len(term) < 2,
+        "users": users, "tickets": tickets, "bureaus": bureaus, "transactions": transactions,
+        "total": len(users) + len(tickets) + len(bureaus) + len(transactions),
+        "admin_name": admin.full_name or admin.email,
+        "admin_role": admin.role,
+        "version": "1.0.0"
+    })
+
+
 # ==================== AUDIT LOGS ====================
 
 @router.get("/audit/logs", response_class=HTMLResponse)
@@ -2939,8 +3019,8 @@ async def admin_audit_logs(
                 AuditLog.reason.contains(search)
             )
         )
-    if action:
-        query = query.where(AuditLog.action == action)
+    if action and action in {a.value for a in AuditAction}:
+        query = query.where(AuditLog.action == AuditAction(action))
     if resource_type:
         query = query.where(AuditLog.resource_type == resource_type)
     if user_id:
@@ -3058,17 +3138,17 @@ async def admin_audit_export(
     for log in logs:
         writer.writerow([
             log.id,
-            log.created_at.isoformat(),
+            to_haiti(log.created_at).strftime("%d/%m/%Y %H:%M:%S"),
             log.user_id,
             log.action.value,
             log.resource_type,
-            json.dumps(log.old_values) if log.old_values else "",
-            json.dumps(log.new_values) if log.new_values else "",
+            _csv_cell(json.dumps(log.old_values, ensure_ascii=False)) if log.old_values else "",
+            _csv_cell(json.dumps(log.new_values, ensure_ascii=False)) if log.new_values else "",
             log.ip_address
         ])
     
     return Response(
-        content=output.getvalue(),
+        content="﻿" + output.getvalue(),
         media_type="text/csv",
         headers={
             "Content-Disposition": f"attachment; filename=audit_export_{start_date}_{end_date}.csv"
@@ -3102,16 +3182,14 @@ async def admin_promotions(
                 Promotion.code.contains(search)
             )
         )
-    if status:
-        query = query.where(Promotion.status == status)
-    if type:
-        query = query.where(Promotion.type == type)
+    if status and _parse_enum(PromotionStatus, status):
+        query = query.where(Promotion.status == _parse_enum(PromotionStatus, status))
+    if type and _parse_enum(PromotionType, type):
+        query = query.where(Promotion.type == _parse_enum(PromotionType, type))
     if start_date:
-        start = datetime.strptime(start_date, "%Y-%m-%d")
-        query = query.where(Promotion.start_date >= start)
+        query = query.where(Promotion.start_date >= _parse_day(start_date))
     if end_date:
-        end = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
-        query = query.where(Promotion.end_date < end)
+        query = query.where(Promotion.end_date < _parse_day(end_date) + timedelta(days=1))
 
     total_result = await db.execute(select(func.count()).select_from(query.subquery()))
     total = total_result.scalar() or 0
@@ -3227,25 +3305,31 @@ async def admin_promotion_update(
     return {"success": True, "message": "Promotion mise à jour avec succès"}
 
 
+async def _promotion_delete_blocker(db: AsyncSession, promotion: Promotion):
+    claims = (await db.execute(select(func.count(UserPromotion.id)).where(
+        UserPromotion.promotion_id == promotion.id))).scalar() or 0
+    if claims or (promotion.total_claims or 0):
+        return f"{promotion.name} : déjà utilisée par des joueurs ({max(claims, promotion.total_claims or 0)})"
+    return None
+
+
 @router.delete("/api/promotions/{promotion_id}")
 async def admin_promotion_delete(
     promotion_id: str,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Suppression d'une promotion"""
-    
-    result = await db.execute(
-        select(Promotion).where(Promotion.id == promotion_id)
-    )
-    promotion = result.scalar_one_or_none()
-    
+    """Suppression d'une promotion jamais utilisée (sinon : la mettre en pause, l'historique des bonus est conservé)."""
+    promotion = (await db.execute(select(Promotion).where(Promotion.id == promotion_id))).scalar_one_or_none()
     if not promotion:
         raise HTTPException(404, "Promotion non trouvée")
-    
+    blocker = await _promotion_delete_blocker(db, promotion)
+    if blocker:
+        raise HTTPException(400, f"Suppression impossible — {blocker}. Mettez-la en pause à la place.")
+    db.add(AuditLog(user_id=admin.id, action=AuditAction.USER_UPDATED, resource_type="promotion", resource_id=promotion.id,
+                    ip_address="0.0.0.0", new_values={"deleted": True, "name": promotion.name}, reason="Suppression de la promotion"))
     await db.delete(promotion)
     await db.commit()
-
     return {"success": True, "message": "Promotion supprimée avec succès"}
 
 
@@ -3433,6 +3517,180 @@ async def admin_user_kyc_reset(
     return {"success": True, "message": "KYC réinitialisé"}
 
 
+def _parse_day(raw: str) -> datetime:
+    try:
+        return datetime.strptime(raw, "%Y-%m-%d")
+    except (ValueError, TypeError):
+        raise HTTPException(400, "Date invalide : utilisez le format AAAA-MM-JJ")
+
+
+def _parse_enum(enum_cls, raw):
+    """Valeur de filtre -> membre de l'enum, ou None si inconnue (un filtre invalide est ignoré, jamais une erreur)."""
+    if raw is None or isinstance(raw, enum_cls):
+        return raw
+    text = str(raw).strip()
+    for candidate in (text, text.lower()):
+        try:
+            return enum_cls(candidate)
+        except ValueError:
+            pass
+    return enum_cls.__members__.get(text.upper())
+
+
+KYC_MAX_BYTES = 5 * 1024 * 1024
+KYC_MAX_DOCS = 10
+KYC_DOC_TYPES = {"id", "passport", "proof", "selfie", "other"}
+_KYC_SIGNATURES = (
+    (b"\xff\xd8\xff", "jpg", "image/jpeg", "file-image"),
+    (b"\x89PNG\r\n\x1a\n", "png", "image/png", "file-image"),
+    (b"%PDF", "pdf", "application/pdf", "file-pdf"),
+)
+
+
+def _kyc_dir(user_id: str):
+    import os
+    from pathlib import Path
+    return Path(os.getenv("KYC_UPLOAD_DIR", "uploads/kyc")) / user_id
+
+
+def _kyc_docs(user: User) -> list:
+    try:
+        docs = json.loads(user.kyc_documents) if user.kyc_documents else []
+    except (TypeError, ValueError):
+        return []
+    return docs if isinstance(docs, list) else []
+
+
+def _kyc_documents_for_page(user: User) -> list:
+    pages = []
+    for d in _kyc_docs(user):
+        try:
+            uploaded = datetime.fromisoformat(d.get("uploaded_at"))
+        except (TypeError, ValueError):
+            uploaded = now_utc()
+        pages.append({
+            "id": d.get("id"), "name": d.get("name") or "document", "size": d.get("size") or 0,
+            "type": d.get("icon") or "file", "uploaded_at": uploaded,
+            "url": f"/admin/users/{user.id}/kyc/document/{d.get('id')}",
+        })
+    return pages
+
+
+async def _kyc_target(db: AsyncSession, admin: User, user_id: str) -> User:
+    user = (await db.execute(select(User).where(User.id == user_id, User.is_deleted == False))).scalar_one_or_none()
+    if not user:
+        raise HTTPException(404, "Utilisateur non trouvé")
+    ensure_can_manage(admin, user)
+    return user
+
+
+@router.post("/api/users/{user_id}/kyc/upload")
+async def admin_user_kyc_upload(
+    user_id: str,
+    doc_type: str = Form(...),
+    file: UploadFile = File(...),
+    comment: Optional[str] = Form(None),
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Ajoute un document KYC (JPG, PNG ou PDF, 5 Mo maximum) au dossier d'un utilisateur."""
+    import uuid
+    user = await _kyc_target(db, admin, user_id)
+    if doc_type not in KYC_DOC_TYPES:
+        raise HTTPException(400, "Type de document invalide")
+    docs = _kyc_docs(user)
+    if len(docs) >= KYC_MAX_DOCS:
+        raise HTTPException(400, f"Maximum {KYC_MAX_DOCS} documents par utilisateur")
+    content = await file.read(KYC_MAX_BYTES + 1)
+    if not content:
+        raise HTTPException(400, "Fichier vide")
+    if len(content) > KYC_MAX_BYTES:
+        raise HTTPException(400, "Fichier trop volumineux (5 Mo maximum)")
+    kind = next((sig for sig in _KYC_SIGNATURES if content.startswith(sig[0])), None)
+    if kind is None:
+        raise HTTPException(400, "Format non accepté : utilisez JPG, PNG ou PDF")
+    _, ext, mime, icon = kind
+
+    doc_id = uuid.uuid4().hex
+    folder = _kyc_dir(user.id)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{doc_id}.{ext}").write_bytes(content)
+    docs.append({
+        "id": doc_id, "doc_type": doc_type, "name": (file.filename or f"document.{ext}")[:120],
+        "ext": ext, "mime": mime, "icon": icon, "size": len(content),
+        "comment": (comment or "")[:200], "uploaded_at": now_utc().isoformat(), "uploaded_by": admin.id,
+    })
+    user.kyc_documents = json.dumps(docs)
+    db.add(AuditLog(user_id=admin.id, action=AuditAction.KYC_SUBMITTED, resource_type="user", resource_id=user.id,
+                    ip_address="0.0.0.0", reason=f"Document ajouté ({doc_type})"))
+    await db.commit()
+    return {"success": True, "message": "Document ajouté avec succès"}
+
+
+@router.get("/users/{user_id}/kyc/document/{doc_id}")
+async def admin_user_kyc_document(
+    user_id: str,
+    doc_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Affiche un document KYC (réservé aux administrateurs)."""
+    user = await _kyc_target(db, admin, user_id)
+    doc = next((d for d in _kyc_docs(user) if d.get("id") == doc_id), None)
+    if not doc:
+        raise HTTPException(404, "Document non trouvé")
+    path = _kyc_dir(user.id) / f"{doc['id']}.{doc['ext']}"
+    if not path.is_file():
+        raise HTTPException(404, "Fichier introuvable sur le serveur")
+    return FileResponse(path, media_type=doc.get("mime") or "application/octet-stream",
+                        headers={"Content-Disposition": "inline", "X-Content-Type-Options": "nosniff"})
+
+
+@router.delete("/api/users/{user_id}/kyc/document/{doc_id}")
+async def admin_user_kyc_document_delete(
+    user_id: str,
+    doc_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Supprime un document KYC."""
+    user = await _kyc_target(db, admin, user_id)
+    docs = _kyc_docs(user)
+    doc = next((d for d in docs if d.get("id") == doc_id), None)
+    if not doc:
+        raise HTTPException(404, "Document non trouvé")
+    user.kyc_documents = json.dumps([d for d in docs if d.get("id") != doc_id])
+    (_kyc_dir(user.id) / f"{doc['id']}.{doc['ext']}").unlink(missing_ok=True)
+    db.add(AuditLog(user_id=admin.id, action=AuditAction.KYC_SUBMITTED, resource_type="user", resource_id=user.id,
+                    ip_address="0.0.0.0", reason=f"Document supprimé ({doc.get('doc_type')})"))
+    await db.commit()
+    return {"success": True, "message": "Document supprimé"}
+
+
+@router.post("/api/users/{user_id}/kyc/remind")
+async def admin_user_kyc_remind(
+    user_id: str,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis)
+):
+    """Envoie au joueur un rappel (notification) pour compléter son KYC."""
+    from app.models.enums import NotificationType, NotificationChannel
+    user = await _kyc_target(db, admin, user_id)
+    if user.kyc_status == KYCStatus.VERIFIED:
+        raise HTTPException(400, "Le KYC de cet utilisateur est déjà validé")
+    await NotificationService(db, redis_client).create_notification(
+        user_id=user.id, notification_type=NotificationType.ACCOUNT_ALERT,
+        title="Vérification d'identité requise",
+        message="Merci de fournir vos documents d'identité (KYC) pour continuer à utiliser votre compte.",
+        channel=NotificationChannel.IN_APP,
+    )
+    db.add(AuditLog(user_id=admin.id, action=AuditAction.KYC_SUBMITTED, resource_type="user", resource_id=user.id,
+                    ip_address="0.0.0.0", reason="Rappel KYC envoyé au joueur"))
+    await db.commit()
+    return {"success": True, "message": "Rappel envoyé au joueur"}
+
+
 @router.get("/users/{user_id}/kyc", response_class=HTMLResponse)
 async def admin_user_kyc_page(
     request: Request,
@@ -3479,7 +3737,7 @@ async def admin_user_kyc_page(
     return templates.TemplateResponse(request, "admin/users/kyc.html", {
         "active": "users",
         "user": user,
-        "documents": [],
+        "documents": _kyc_documents_for_page(user),
         "kyc_history": kyc_history,
         "admin_name": admin.full_name or admin.email,
         "admin_role": admin.role,
@@ -3611,36 +3869,90 @@ async def admin_bureaus_statistics(
     }
 
 
-@router.post("/api/bureaus/bulk/activate")
-async def admin_bureaus_bulk_activate(
-    bureau_ids: List[str] = Body(...),
+@router.get("/api/bureaus/export")
+async def admin_bureaus_export(
+    request: Request,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Active plusieurs bureaux"""
-    result = await db.execute(
-        update(Bureau)
-        .where(Bureau.id.in_(bureau_ids))
-        .values(is_active=True)
+    """Export CSV des bureaux (mêmes filtres que la liste)."""
+    import csv
+    import io
+    params = dict(request.query_params)
+    query = select(Bureau).where(Bureau.is_deleted == False).order_by(Bureau.created_at.desc())
+    if params.get("search"):
+        like = params["search"]
+        query = query.where(or_(Bureau.name.contains(like), Bureau.code.contains(like), Bureau.city.contains(like)))
+    if params.get("city"):
+        query = query.where(Bureau.city == params["city"])
+    if params.get("status") == "active":
+        query = query.where(Bureau.is_active == True)
+    elif params.get("status") == "inactive":
+        query = query.where(Bureau.is_active == False)
+    if params.get("ids"):
+        query = query.where(Bureau.id.in_([i for i in params["ids"].split(",") if i.strip()][:1000]))
+    bureaus = (await db.execute(query.limit(10000))).scalars().all()
+    counts = dict((await db.execute(
+        select(User.bureau_id, func.count(User.id)).where(User.role.in_(AGENT_ROLES), User.is_deleted == False)
+        .group_by(User.bureau_id))).all())
+
+    output = io.StringIO()
+    writer = csv.writer(output, delimiter=";")
+    writer.writerow(["Code", "Nom", "Ville", "Adresse", "Téléphone", "Statut", "Agents", "Caisse (HTG)", "Créé le"])
+    for b in bureaus:
+        writer.writerow([
+            _csv_cell(b.code), _csv_cell(b.name), _csv_cell(b.city or ""), _csv_cell(getattr(b, "address", "") or ""),
+            _csv_cell(getattr(b, "phone", "") or ""), "Actif" if b.is_active else "Inactif",
+            counts.get(b.id, 0), float(b.cash_balance or 0), to_haiti(b.created_at).strftime("%d/%m/%Y %H:%M"),
+        ])
+    return Response(
+        content="\ufeff" + output.getvalue(), media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename=bureaux_{now_haiti().strftime('%Y%m%d')}.csv"},
     )
-    await db.commit()
-    return {"success": True, "message": f"{result.rowcount} bureaux activés"}
 
 
-@router.post("/api/bureaus/bulk/deactivate")
-async def admin_bureaus_bulk_deactivate(
-    bureau_ids: List[str] = Body(...),
+@router.post("/api/bureaus/bulk/{action}")
+async def admin_bureaus_bulk(
+    action: str,
+    bureau_ids: List[str] = Body(..., embed=True),
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Désactive plusieurs bureaux"""
-    result = await db.execute(
-        update(Bureau)
-        .where(Bureau.id.in_(bureau_ids))
-        .values(is_active=False)
-    )
+    """Active, désactive ou supprime plusieurs bureaux ; les bureaux non éligibles sont ignorés avec leur motif."""
+    if action not in ("activate", "deactivate", "delete"):
+        raise HTTPException(400, "Action inconnue")
+    ids = list(dict.fromkeys(bureau_ids))[:200]
+    if not ids:
+        raise HTTPException(400, "Aucun bureau sélectionné")
+    bureaus = {b.id: b for b in (await db.execute(
+        select(Bureau).where(Bureau.id.in_(ids), Bureau.is_deleted == False).with_for_update())).scalars().all()}
+    labels = {"activate": "activé", "deactivate": "désactivé", "delete": "supprimé"}
+    done, skipped = 0, []
+    for bid in ids:
+        bureau = bureaus.get(bid)
+        if bureau is None:
+            skipped.append({"id": bid, "reason": "bureau introuvable"})
+            continue
+        if action == "delete":
+            blocker = await _bureau_delete_blocker(db, bureau)
+            if blocker:
+                skipped.append({"id": bid, "reason": blocker})
+                continue
+            bureau.soft_delete(admin.id)
+            bureau.is_active = False
+        else:
+            bureau.is_active = action == "activate"
+        db.add(AuditLog(user_id=admin.id, action=AuditAction.USER_UPDATED, resource_type="bureau", resource_id=bureau.id,
+                        ip_address="0.0.0.0", new_values={"bulk": action}, reason=f"Action groupée : {labels[action]}"))
+        done += 1
+    if not done:
+        raise HTTPException(400, f"Aucun bureau {labels[action]} : " + "; ".join(x["reason"] for x in skipped[:5]))
     await db.commit()
-    return {"success": True, "message": f"{result.rowcount} bureaux désactivés"}
+    plural = "x" if done > 1 else ""
+    message = f"{done} bureau{plural} {labels[action]}{'s' if done > 1 else ''}"
+    if skipped:
+        message += f" ; {len(skipped)} ignoré(s) ({'; '.join(x['reason'] for x in skipped[:3])})"
+    return {"success": True, "message": message, "done": done, "skipped": skipped}
 
 
 @router.post("/api/bureaus/{bureau_id}/toggle-status")
@@ -4325,36 +4637,46 @@ async def admin_promotion_status_update(
     return {"success": True, "message": f"Statut mis à jour: {status.value}"}
 
 
-@router.post("/api/promotions/bulk/activate")
-async def admin_promotions_bulk_activate(
-    promo_ids: List[str] = Body(...),
+@router.post("/api/promotions/bulk/{action}")
+async def admin_promotions_bulk(
+    action: str,
+    promo_ids: List[str] = Body(..., embed=True),
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Active plusieurs promotions"""
-    result = await db.execute(
-        update(Promotion)
-        .where(Promotion.id.in_(promo_ids))
-        .values(status=PromotionStatus.ACTIVE)
-    )
+    """Active, met en pause ou supprime plusieurs promotions (suppression refusée si déjà utilisées)."""
+    if action not in ("activate", "pause", "delete"):
+        raise HTTPException(400, "Action inconnue")
+    ids = list(dict.fromkeys(promo_ids))[:200]
+    if not ids:
+        raise HTTPException(400, "Aucune promotion sélectionnée")
+    promos = {x.id: x for x in (await db.execute(select(Promotion).where(Promotion.id.in_(ids)))).scalars().all()}
+    labels = {"activate": "activée", "pause": "mise en pause", "delete": "supprimée"}
+    done, skipped = 0, []
+    for pid in ids:
+        promo = promos.get(pid)
+        if promo is None:
+            skipped.append({"id": pid, "reason": "promotion introuvable"})
+            continue
+        if action == "delete":
+            blocker = await _promotion_delete_blocker(db, promo)
+            if blocker:
+                skipped.append({"id": pid, "reason": blocker})
+                continue
+            await db.delete(promo)
+        else:
+            promo.status = PromotionStatus.ACTIVE if action == "activate" else PromotionStatus.PAUSED
+        db.add(AuditLog(user_id=admin.id, action=AuditAction.USER_UPDATED, resource_type="promotion", resource_id=pid,
+                        ip_address="0.0.0.0", new_values={"bulk": action}, reason=f"Action groupée : {labels[action]}"))
+        done += 1
+    if not done:
+        raise HTTPException(400, "Aucune promotion traitée : " + "; ".join(x["reason"] for x in skipped[:5]))
     await db.commit()
-    return {"success": True, "message": f"{result.rowcount} promotions activées"}
+    message = f"{done} promotion(s) {labels[action]}(s)" if action != "pause" else f"{done} promotion(s) mise(s) en pause"
+    if skipped:
+        message += f" ; {len(skipped)} ignorée(s) ({'; '.join(x['reason'] for x in skipped[:3])})"
+    return {"success": True, "message": message, "done": done, "skipped": skipped}
 
-
-@router.post("/api/promotions/bulk/pause")
-async def admin_promotions_bulk_pause(
-    promo_ids: List[str] = Body(...),
-    admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db)
-):
-    """Met en pause plusieurs promotions"""
-    result = await db.execute(
-        update(Promotion)
-        .where(Promotion.id.in_(promo_ids))
-        .values(status=PromotionStatus.PAUSED)
-    )
-    await db.commit()
-    return {"success": True, "message": f"{result.rowcount} promotions mises en pause"}
 
 # ==================== API SUPPLEMENTAIRES POUR AUDIT ====================
 
@@ -4432,14 +4754,14 @@ async def admin_audit_log_detail(
         "user_id": log.user_id,
         "user_name": log.user.full_name if log.user else None,
         "agent_id": log.agent_id,
-        "action": log.action,
-        "action_color": "info" if log.action in ["login", "logout"] else "purple" if log.action in ["bet_placed", "bet_settled"] else "success" if log.action in ["deposit", "withdrawal"] else "danger" if log.action in ["user_blocked", "account_frozen"] else "gray",
+        "action": getattr(log.action, "value", log.action),
+        "action_color": "info" if str(getattr(log.action, "value", log.action)).lower() in ["login", "logout"] else "purple" if str(getattr(log.action, "value", log.action)).lower() in ["bet_placed", "bet_settled"] else "success" if str(getattr(log.action, "value", log.action)).lower() in ["deposit", "withdrawal"] else "danger" if str(getattr(log.action, "value", log.action)).lower() in ["user_blocked", "account_frozen"] else "gray",
         "resource_type": log.resource_type,
         "resource_id": log.resource_id,
         "old_values": log.old_values,
         "new_values": log.new_values,
         "reason": log.reason,
-        "metadata": log.metadata,
+        "metadata": log.extra_data,
         "ip_address": log.ip_address,
         "user_agent": log.user_agent,
         "session_id": log.session_id,
@@ -4448,6 +4770,23 @@ async def admin_audit_log_detail(
         "created_at": log.created_at,
         "updated_at": log.updated_at
     }
+
+
+@router.post("/api/audit/logs/bulk/leh-export")
+async def admin_audit_logs_bulk_leh_export(
+    log_ids: List[str] = Body(..., embed=True),
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Marque plusieurs logs comme exportés vers la LEH"""
+    result = await db.execute(
+        update(AuditLog)
+        .where(AuditLog.id.in_(log_ids))
+        .values(leh_exported=True, leh_exported_at=now_utc())
+    )
+    await db.commit()
+    
+    return {"success": True, "message": f"{result.rowcount} logs marqués comme exportés"}
 
 
 @router.post("/api/audit/logs/{log_id}/leh-export")
@@ -4473,80 +4812,68 @@ async def admin_audit_log_leh_export(
     return {"success": True, "message": "Log marqué comme exporté"}
 
 
-@router.post("/api/audit/logs/bulk/leh-export")
-async def admin_audit_logs_bulk_leh_export(
-    log_ids: List[str] = Body(...),
-    admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db)
-):
-    """Marque plusieurs logs comme exportés vers la LEH"""
-    result = await db.execute(
-        update(AuditLog)
-        .where(AuditLog.id.in_(log_ids))
-        .values(leh_exported=True, leh_exported_at=now_utc())
-    )
-    await db.commit()
-    
-    return {"success": True, "message": f"{result.rowcount} logs marqués comme exportés"}
-
-
 @router.get("/api/audit/export")
 async def admin_audit_export_csv(
     request: Request,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Export des logs d'audit"""
+    """Export CSV des logs d'audit (mêmes filtres que la page)."""
     import csv
     import io
-    
+
     params = dict(request.query_params)
-    query = select(AuditLog).order_by(AuditLog.created_at.desc())
-    
+    query = select(AuditLog).options(selectinload(AuditLog.user)).order_by(AuditLog.created_at.desc())
+
     if params.get('search'):
-        # Recherche avancée
-        pass
-    if params.get('action'):
-        query = query.where(AuditLog.action == params['action'])
+        query = query.where(or_(AuditLog.resource_id.contains(params['search']), AuditLog.reason.contains(params['search'])))
+    if params.get('action') and params['action'] in {a.value for a in AuditAction}:
+        query = query.where(AuditLog.action == AuditAction(params['action']))
+    if params.get('resource_type'):
+        query = query.where(AuditLog.resource_type == params['resource_type'])
+    if params.get('user_id'):
+        query = query.where(AuditLog.user_id == params['user_id'])
+    if params.get('ip_address'):
+        query = query.where(AuditLog.ip_address == params['ip_address'])
+    if params.get('leh_exported') in ('true', 'false'):
+        query = query.where(AuditLog.leh_exported == (params['leh_exported'] == 'true'))
+    if params.get('ids'):
+        query = query.where(AuditLog.id.in_([i for i in params['ids'].split(',') if i.strip()][:1000]))
     if params.get('start_date'):
-        start = local_date_start_utc(params['start_date'])
-        query = query.where(AuditLog.created_at >= start)
+        query = query.where(AuditLog.created_at >= local_date_start_utc(params['start_date']))
     if params.get('end_date'):
-        end = local_date_end_utc(params['end_date'])
-        query = query.where(AuditLog.created_at < end)
-    
-    result = await db.execute(query.limit(10000))
-    logs = result.scalars().all()
-    
+        query = query.where(AuditLog.created_at < local_date_end_utc(params['end_date']))
+
+    logs = (await db.execute(query.limit(10000))).scalars().all()
+
     output = io.StringIO()
-    writer = csv.writer(output)
+    writer = csv.writer(output, delimiter=";")
     writer.writerow([
-        "ID", "Date", "Utilisateur", "Action", "Resource", "Resource ID",
+        "ID", "Date", "Utilisateur", "Action", "Ressource", "ID ressource",
         "Anciennes valeurs", "Nouvelles valeurs", "Raison", "IP", "Export LEH"
     ])
-    
     for log in logs:
+        who = (log.user.full_name or log.user.email or log.user.phone) if log.user else "Système"
         writer.writerow([
             log.id,
-            log.created_at.isoformat(),
-            log.user_id or "Système",
-            log.action,
-            log.resource_type or "",
-            log.resource_id or "",
-            json.dumps(log.old_values) if log.old_values else "",
-            json.dumps(log.new_values) if log.new_values else "",
-            log.reason or "",
-            log.ip_address or "",
+            to_haiti(log.created_at).strftime("%d/%m/%Y %H:%M:%S"),
+            _csv_cell(who),
+            getattr(log.action, 'value', log.action),
+            _csv_cell(log.resource_type or ""),
+            _csv_cell(log.resource_id or ""),
+            _csv_cell(json.dumps(log.old_values, ensure_ascii=False) if log.old_values else ""),
+            _csv_cell(json.dumps(log.new_values, ensure_ascii=False) if log.new_values else ""),
+            _csv_cell(log.reason or ""),
+            _csv_cell(log.ip_address or ""),
             "Oui" if log.leh_exported else "Non"
         ])
-    
+
     return Response(
-        content=output.getvalue(),
-        media_type="text/csv",
-        headers={
-            "Content-Disposition": f"attachment; filename=audit_logs_{now_haiti().strftime('%Y%m%d')}.csv"
-        }
+        content="﻿" + output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename=audit_logs_{now_haiti().strftime('%Y%m%d')}.csv"}
     )
+
 
 # ==================== API SUPPLEMENTAIRES POUR REPORTS ====================
 
@@ -4779,6 +5106,72 @@ async def admin_tickets_statistics(
     }
 
 
+@router.get("/api/tickets/export")
+async def admin_tickets_export(
+    request: Request,
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Export des tickets au format CSV"""
+    import csv
+    import io
+    
+    params = dict(request.query_params)
+    query = select(Ticket).options(selectinload(Ticket.bureau), selectinload(Ticket.agent)).order_by(Ticket.created_at.desc())
+    
+    if params.get('search'):
+        query = query.where(
+            or_(
+                Ticket.ticket_number.contains(params['search']),
+                Ticket.player_name.contains(params['search']),
+                Ticket.player_phone.contains(params['search'])
+            )
+        )
+    if params.get('status') and params['status'].lower() in {x.value for x in TicketStatus}:
+        query = query.where(Ticket.status == TicketStatus(params['status'].lower()))
+    if params.get('ids'):
+        query = query.where(Ticket.id.in_([i for i in params['ids'].split(',') if i.strip()][:1000]))
+    if params.get('start_date'):
+        start = local_date_start_utc(params['start_date'])
+        query = query.where(Ticket.created_at >= start)
+    if params.get('end_date'):
+        end = local_date_end_utc(params['end_date'])
+        query = query.where(Ticket.created_at < end)
+    
+    result = await db.execute(query.limit(10000))
+    tickets = result.scalars().all()
+    
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Numéro", "Joueur", "Téléphone", "Montant initial", "Solde",
+        "Statut", "Bureau", "Agent", "Créé le", "Expire le", "Payé le"
+    ])
+    
+    for ticket in tickets:
+        writer.writerow([
+            _csv_cell(ticket.ticket_number),
+            _csv_cell(ticket.player_name or ""),
+            _csv_cell(ticket.player_phone or ""),
+            float(ticket.initial_amount),
+            float(ticket.balance),
+            getattr(ticket.status, 'value', ticket.status),
+            _csv_cell(ticket.bureau.name if ticket.bureau else ""),
+            _csv_cell(ticket.agent.full_name if ticket.agent else ""),
+            ticket.created_at.isoformat(),
+            ticket.expires_at.isoformat(),
+            ticket.paid_at.isoformat() if ticket.paid_at else ""
+        ])
+    
+    return Response(
+        content="﻿" + output.getvalue(),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename=tickets_{now_haiti().strftime('%Y%m%d')}.csv"
+        }
+    )
+
+
 @router.get("/api/tickets/{ticket_id}")
 async def admin_ticket_detail(
     ticket_id: str,
@@ -4869,7 +5262,7 @@ async def admin_ticket_qr(
 # est pris pour un identifiant de ticket (404 « Ticket non trouvé »).
 @router.post("/api/tickets/bulk/payout")
 async def admin_tickets_bulk_payout(
-    ticket_ids: List[str] = Body(...),
+    ticket_ids: List[str] = Body(..., embed=True),
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
@@ -4906,7 +5299,7 @@ async def admin_tickets_bulk_payout(
 
 @router.post("/api/tickets/bulk/cancel")
 async def admin_tickets_bulk_cancel(
-    ticket_ids: List[str] = Body(...),
+    ticket_ids: List[str] = Body(..., embed=True),
     reason: str = Body(...),
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
@@ -5025,70 +5418,114 @@ async def admin_ticket_cancel(
     return {"success": True, "message": f"Ticket annulé{note}. Remboursement de {amount} HTG"}
 
 
-@router.get("/api/tickets/export")
-async def admin_tickets_export(
+# ==================== API SUPPLEMENTAIRES POUR TRANSACTIONS ====================
+
+@router.get("/api/transactions/export")
+async def admin_transactions_export(
     request: Request,
     admin: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Export des tickets au format CSV"""
+    """Export des transactions au format CSV"""
     import csv
     import io
     
+    # Récupérer les filtres
     params = dict(request.query_params)
-    query = select(Ticket).order_by(Ticket.created_at.desc())
+    
+    query = select(Transaction).order_by(Transaction.created_at.desc())
     
     if params.get('search'):
-        query = query.where(
-            or_(
-                Ticket.ticket_number.contains(params['search']),
-                Ticket.player_name.contains(params['search']),
-                Ticket.player_phone.contains(params['search'])
-            )
-        )
-    if params.get('status'):
-        query = query.where(Ticket.status == params['status'])
+        query = query.where(Transaction.reference.contains(params['search']))
+    if _parse_enum(TransactionType, params.get('type') or params.get('transaction_type')):
+        query = query.where(Transaction.transaction_type == _parse_enum(TransactionType, params.get('type') or params.get('transaction_type')))
+    if _parse_enum(TransactionStatus, params.get('status')):
+        query = query.where(Transaction.status == _parse_enum(TransactionStatus, params['status']))
+    if _parse_enum(PaymentMethod, params.get('method')):
+        query = query.where(Transaction.payment_method == _parse_enum(PaymentMethod, params['method']))
     if params.get('start_date'):
         start = local_date_start_utc(params['start_date'])
-        query = query.where(Ticket.created_at >= start)
+        query = query.where(Transaction.created_at >= start)
     if params.get('end_date'):
         end = local_date_end_utc(params['end_date'])
-        query = query.where(Ticket.created_at < end)
+        query = query.where(Transaction.created_at < end)
     
     result = await db.execute(query.limit(10000))
-    tickets = result.scalars().all()
+    transactions = result.scalars().all()
     
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([
-        "Numéro", "Joueur", "Téléphone", "Montant initial", "Solde",
-        "Statut", "Bureau", "Agent", "Créé le", "Expire le", "Payé le"
+        "Référence", "Type", "Méthode", "Montant", "Frais", 
+        "Solde avant", "Solde après", "Statut", "Utilisateur", "Date"
     ])
     
-    for ticket in tickets:
+    for tx in transactions:
         writer.writerow([
-            ticket.ticket_number,
-            ticket.player_name or "",
-            ticket.player_phone or "",
-            float(ticket.initial_amount),
-            float(ticket.balance),
-            ticket.status,
-            ticket.bureau.name if ticket.bureau else "",
-            ticket.agent.full_name if ticket.agent else "",
-            ticket.created_at.isoformat(),
-            ticket.expires_at.isoformat(),
-            ticket.paid_at.isoformat() if ticket.paid_at else ""
+            tx.reference,
+            getattr(tx.transaction_type, 'value', tx.transaction_type),
+            getattr(tx.payment_method, 'value', tx.payment_method) or "",
+            float(tx.amount),
+            float(tx.fee),
+            float(tx.balance_before),
+            float(tx.balance_after),
+            getattr(tx.status, 'value', tx.status),
+            tx.user_id,
+            tx.created_at.isoformat()
         ])
     
     return Response(
-        content=output.getvalue(),
+        content="﻿" + output.getvalue(),
         media_type="text/csv",
         headers={
-            "Content-Disposition": f"attachment; filename=tickets_{now_haiti().strftime('%Y%m%d')}.csv"
+            "Content-Disposition": f"attachment; filename=transactions_{now_haiti().strftime('%Y%m%d')}.csv"
         }
     )
 
-# ==================== API SUPPLEMENTAIRES POUR TRANSACTIONS ====================
+
+@router.get("/api/transactions/statistics")
+async def admin_transactions_statistics(
+    admin: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Statistiques des transactions"""
+    today = today_haiti()
+    today_start = local_date_start_utc(today)
+    
+    # Total par type
+    result = await db.execute(
+        select(
+            func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type == TransactionType.DEPOSIT), 0).label("deposits"),
+            func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type == TransactionType.WITHDRAWAL), 0).label("withdrawals"),
+            func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type == TransactionType.WIN), 0).label("wins")
+        )
+        .where(Transaction.status == TransactionStatus.COMPLETED)
+    )
+    stats = result.one()
+    
+    # En attente
+    pending_result = await db.execute(
+        select(func.count(Transaction.id))
+        .where(Transaction.status == TransactionStatus.PENDING)
+    )
+    pending = pending_result.scalar() or 0
+    
+    # Aujourd'hui
+    today_result = await db.execute(
+        select(func.count(Transaction.id))
+        .where(Transaction.created_at >= today_start)
+    )
+    today_count = today_result.scalar() or 0
+    
+    return {
+        "total_volume": float(stats.deposits + stats.withdrawals + stats.wins),
+        "total_deposits": float(stats.deposits),
+        "total_withdrawals": float(stats.withdrawals),
+        "total_wins": float(stats.wins),
+        "pending": pending,
+        "today": today_count
+    }
+
 
 @router.get("/api/transactions/{transaction_id}")
 async def admin_transaction_detail(
@@ -5211,108 +5648,6 @@ async def admin_transaction_cancel(
 
     return {"success": True, "message": "Transaction annulée avec succès"}
 
-
-@router.get("/api/transactions/statistics")
-async def admin_transactions_statistics(
-    admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db)
-):
-    """Statistiques des transactions"""
-    today = today_haiti()
-    today_start = local_date_start_utc(today)
-    
-    # Total par type
-    result = await db.execute(
-        select(
-            func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type == TransactionType.DEPOSIT), 0).label("deposits"),
-            func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type == TransactionType.WITHDRAWAL), 0).label("withdrawals"),
-            func.coalesce(func.sum(Transaction.amount).filter(Transaction.transaction_type == TransactionType.WIN), 0).label("wins")
-        )
-        .where(Transaction.status == TransactionStatus.COMPLETED)
-    )
-    stats = result.one()
-    
-    # En attente
-    pending_result = await db.execute(
-        select(func.count(Transaction.id))
-        .where(Transaction.status == TransactionStatus.PENDING)
-    )
-    pending = pending_result.scalar() or 0
-    
-    # Aujourd'hui
-    today_result = await db.execute(
-        select(func.count(Transaction.id))
-        .where(Transaction.created_at >= today_start)
-    )
-    today_count = today_result.scalar() or 0
-    
-    return {
-        "total_volume": float(stats.deposits + stats.withdrawals + stats.wins),
-        "total_deposits": float(stats.deposits),
-        "total_withdrawals": float(stats.withdrawals),
-        "total_wins": float(stats.wins),
-        "pending": pending,
-        "today": today_count
-    }
-
-
-@router.get("/api/transactions/export")
-async def admin_transactions_export(
-    request: Request,
-    admin: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db)
-):
-    """Export des transactions au format CSV"""
-    import csv
-    import io
-    
-    # Récupérer les filtres
-    params = dict(request.query_params)
-    
-    query = select(Transaction).order_by(Transaction.created_at.desc())
-    
-    if params.get('type'):
-        query = query.where(Transaction.transaction_type == params['type'])
-    if params.get('status'):
-        query = query.where(Transaction.status == params['status'])
-    if params.get('start_date'):
-        start = local_date_start_utc(params['start_date'])
-        query = query.where(Transaction.created_at >= start)
-    if params.get('end_date'):
-        end = local_date_end_utc(params['end_date'])
-        query = query.where(Transaction.created_at < end)
-    
-    result = await db.execute(query.limit(10000))
-    transactions = result.scalars().all()
-    
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow([
-        "Référence", "Type", "Méthode", "Montant", "Frais", 
-        "Solde avant", "Solde après", "Statut", "Utilisateur", "Date"
-    ])
-    
-    for tx in transactions:
-        writer.writerow([
-            tx.reference,
-            tx.transaction_type,
-            tx.payment_method or "",
-            float(tx.amount),
-            float(tx.fee),
-            float(tx.balance_before),
-            float(tx.balance_after),
-            tx.status,
-            tx.user_id,
-            tx.created_at.isoformat()
-        ])
-    
-    return Response(
-        content=output.getvalue(),
-        media_type="text/csv",
-        headers={
-            "Content-Disposition": f"attachment; filename=transactions_{now_haiti().strftime('%Y%m%d')}.csv"
-        }
-    )
 
 # ==================== FONCTIONS AUXILIAIRES ====================
 

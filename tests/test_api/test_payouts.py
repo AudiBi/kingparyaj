@@ -251,7 +251,7 @@ async def test_admin_bulk_payout_records_amounts_and_debits_bureau(admin_client,
     t2 = await _winning_ticket(db_session, fake_redis, make_ticket, agent, winnings="120")
     bureau = await db_session.get(Bureau, agent.bureau_id)
     before = Decimal(str(bureau.cash_balance or 0))
-    r = await admin_client.post("/admin/api/tickets/bulk/payout", headers=await _admin(admin_client), json=[t1.id, t2.id])
+    r = await admin_client.post("/admin/api/tickets/bulk/payout", headers=await _admin(admin_client), json={"ticket_ids": [t1.id, t2.id]})
     assert r.status_code == 200, r.text
     assert r.json()["paid"] == 2 and r.json()["total"] == 420.0
     for t, amount in ((t1, "300"), (t2, "120")):

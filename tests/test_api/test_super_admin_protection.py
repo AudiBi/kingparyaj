@@ -57,7 +57,7 @@ async def _call(client, method, url, body):
     if body is not None:
         kwargs["json"] = body
     elif url.endswith("/block"):
-        kwargs["data"] = {"reason": "test"}  # cette route lit un formulaire
+        kwargs["json"] = {"reason": "test"}
     return await client.request(method, url, **kwargs)
 
 

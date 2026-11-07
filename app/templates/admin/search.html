@@ -1,0 +1,98 @@
+<!-- app/templates/admin/search.html -->
+{% extends "admin/base.html" %}
+
+{% block title %}Recherche - Administration{% endblock %}
+
+{% block page_title %}Recherche{% endblock %}
+{% block page_subtitle %}{% if q %}Résultats pour « {{ q }} »{% else %}Utilisateurs, tickets, bureaux et transactions{% endif %}{% endblock %}
+
+{% block content %}
+<div class="table-container mb-3">
+    <div class="table-header">
+        <form method="get" action="/admin/search" class="flex" style="gap: 8px; width: 100%;">
+            <input type="text" name="q" class="form-control" value="{{ q }}" placeholder="Téléphone, nom, numéro de ticket, bureau, référence..." autofocus>
+            <button class="btn btn-primary" type="submit"><i class="fas fa-search"></i> Rechercher</button>
+        </form>
+    </div>
+</div>
+
+{% if too_short %}
+<p class="text-muted">Saisissez au moins 2 caractères.</p>
+{% elif q and total == 0 %}
+<p class="text-muted">Aucun résultat pour « {{ q }} ».</p>
+{% endif %}
+
+{% if users %}
+<div class="table-container mb-3">
+    <div class="table-header"><div class="title"><i class="fas fa-users"></i> Utilisateurs ({{ users|length }})</div></div>
+    <table class="table">
+        <thead><tr><th>Nom</th><th>Téléphone</th><th>Rôle</th><th>Statut</th></tr></thead>
+        <tbody>
+        {% for u in users %}
+            <tr>
+                <td><a href="/admin/{{ 'agents' if u.role.value in ('agent', 'manager') else 'users' }}/{{ u.id }}">{{ u.full_name or u.email or u.phone }}</a></td>
+                <td>{{ u.phone }}</td>
+                <td>{{ u.role.value }}</td>
+                <td>{{ 'Actif' if u.is_active else 'Inactif' }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if tickets %}
+<div class="table-container mb-3">
+    <div class="table-header"><div class="title"><i class="fas fa-ticket-alt"></i> Tickets ({{ tickets|length }})</div></div>
+    <table class="table">
+        <thead><tr><th>Numéro</th><th>Joueur</th><th>Solde</th><th>Statut</th></tr></thead>
+        <tbody>
+        {% for t in tickets %}
+            <tr>
+                <td><a href="/admin/tickets/{{ t.id }}">{{ t.ticket_number }}</a></td>
+                <td>{{ t.player_name or '-' }}</td>
+                <td>{{ t.balance }} HTG</td>
+                <td>{{ t.status.value }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if bureaus %}
+<div class="table-container mb-3">
+    <div class="table-header"><div class="title"><i class="fas fa-building"></i> Bureaux ({{ bureaus|length }})</div></div>
+    <table class="table">
+        <thead><tr><th>Code</th><th>Nom</th><th>Ville</th></tr></thead>
+        <tbody>
+        {% for b in bureaus %}
+            <tr>
+                <td>{{ b.code }}</td>
+                <td><a href="/admin/bureaus/{{ b.id }}">{{ b.name }}</a></td>
+                <td>{{ b.city or '-' }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if transactions %}
+<div class="table-container mb-3">
+    <div class="table-header"><div class="title"><i class="fas fa-exchange-alt"></i> Transactions ({{ transactions|length }})</div></div>
+    <table class="table">
+        <thead><tr><th>Référence</th><th>Montant</th><th>Statut</th></tr></thead>
+        <tbody>
+        {% for tx in transactions %}
+            <tr>
+                <td><a href="/admin/transactions?search={{ tx.reference }}">{{ tx.reference }}</a></td>
+                <td>{{ tx.amount }} HTG</td>
+                <td>{{ tx.status.value if tx.status.value is defined else tx.status }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+{% endblock %}

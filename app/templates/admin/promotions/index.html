@@ -140,7 +140,7 @@
                     <td>
                         <div>
                             <div style="font-weight: 500;">{{ promo.name }}</div>
-                            <div style="font-size: 12px; color: #94a3b8;">{{ promo.description[:50] }}{% if promo.description|length > 50 %}...{% endif %}</div>
+                            {% if promo.description %}<div style="font-size: 12px; color: #94a3b8;">{{ promo.description[:50] }}{% if promo.description|length > 50 %}...{% endif %}</div>{% endif %}
                         </div>
                     </td>
                     <td>

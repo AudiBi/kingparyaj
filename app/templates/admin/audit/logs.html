@@ -413,9 +413,35 @@
     
     // ==================== EXPORT LEH ====================
     function exportToLEH() {
-        const form = document.getElementById('filterForm');
-        const params = new URLSearchParams(new FormData(form));
-        window.location.href = '/admin/api/audit/leh/export?' + params.toString();
+        // Export LEH : les logs de la période non encore transmis sont exportés puis marqués « exportés ».
+        const start = (document.querySelector('#filterForm [name="start_date"]') || {}).value;
+        const end = (document.querySelector('#filterForm [name="end_date"]') || {}).value;
+        if (!start || !end) {
+            showToast("Choisissez une date de début et une date de fin pour l'export LEH", 'error');
+            return;
+        }
+        if (!confirm("Exporter vers la LEH les logs du " + start + " au " + end + " ? Ils seront marqués comme exportés.")) return;
+        fetch('/admin/api/audit/export?start_date=' + encodeURIComponent(start) + '&end_date=' + encodeURIComponent(end), {
+            method: 'POST',
+            headers: {'X-CSRFToken': '{{ csrf_token() }}'}
+        })
+        .then(async response => {
+            if (!response.ok) {
+                const data = await response.json().catch(() => ({}));
+                throw new Error(data.error || 'Export impossible');
+            }
+            return response.blob();
+        })
+        .then(blob => {
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'leh_' + start + '_' + end + '.csv';
+            link.click();
+            URL.revokeObjectURL(link.href);
+            showToast('Export LEH téléchargé', 'success');
+            setTimeout(() => location.reload(), 1200);
+        })
+        .catch(err => showToast(err.message, 'error'));
     }
     
     // ==================== RECHARGE ====================

@@ -30,6 +30,7 @@ from app.models.cash_movement import TicketCashMovement
 from app.models.enums import KYCStatus, UserRole
 from app.models.game import GameBet, GameRound
 from app.models.lucky import LuckyPlay, LuckyWheelConfig
+from app.models.notification import Notification  # noqa: F401 - table créée pour les tests
 from app.models.keno import KenoBet, KenoDraw
 from app.models.promotion import Promotion, UserPromotion
 from app.models.responsible import PlayerLimit, SelfExclusion
@@ -62,6 +63,7 @@ TEST_TABLES = [
     LuckyWheelConfig.__table__,
     LuckyPlay.__table__,
     Promotion.__table__,
+    Notification.__table__,
     UserPromotion.__table__,
     # Jeu responsable : consultées par WalletService avant chaque mise
     SelfExclusion.__table__,

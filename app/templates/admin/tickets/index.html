@@ -710,6 +710,10 @@
         bulkTicketIds = Array.from(document.querySelectorAll('.ticket-checkbox:checked')).map(cb => cb.value);
         if (bulkTicketIds.length === 0) return;
         
+        if (action === 'export') {  // téléchargement direct des tickets cochés
+            window.location.href = '/admin/api/tickets/export?ids=' + encodeURIComponent(bulkTicketIds.join(','));
+            return;
+        }
         bulkActionType = action;
         const labels = {
             'payout': 'Paiement',
