@@ -33,7 +33,15 @@ services:
     healthCheckPath: /health/live
     preDeployCommand: alembic upgrade head   # migrations avant chaque mise en ligne
     autoDeploy: false          # déployer à la main (bouton « Deploy ») tant que la recette n'est pas faite
+    # Disque persistant : documents KYC des joueurs (le disque du conteneur est effacé à chaque déploiement).
+    # Un disque limite le service à UNE instance et coupe l'application quelques secondes à chaque déploiement.
+    disk:
+      name: kingparyaj-storage
+      mountPath: /app/storage
+      sizeGB: 1
     envVars:
+      - key: KYC_UPLOAD_DIR       # documents d'identité : sur le disque persistant
+        value: /app/storage/kyc
       - key: ENVIRONMENT
         value: production
       - key: DEBUG

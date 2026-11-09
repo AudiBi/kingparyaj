@@ -40,8 +40,11 @@ Fichiers : `render.yaml` (Blueprint), `Docker/Dockerfile`, `.dockerignore`.
 - `PORT` est fourni par Render ; ne pas le définir.
 - Plans : web et base payants. Un service web gratuit s'endort et arrêterait les jeux ; la base gratuite expire.
 - Activer les sauvegardes de PostgreSQL (argent).
-- Fichiers téléversés (`uploads/`) : le disque est effacé à chaque déploiement ; ajouter un **Disk** monté sur
-  `/app/uploads` si l'application en enregistre.
+- Documents KYC : stockés sur le **Disk** `kingparyaj-storage` (monté sur `/app/storage`, variable `KYC_UPLOAD_DIR=/app/storage/kyc`),
+  qui survit aux déploiements. Conséquences : une seule instance du service web, et quelques secondes de coupure à chaque
+  déploiement. Si l'envoi d'un document répond « Stockage des documents indisponible », le conteneur (utilisateur `appuser`)
+  n'a pas le droit d'écrire sur le disque : voir les logs du service. Sauvegardez le disque (snapshots Render) : ce sont des pièces d'identité.
+- Autres fichiers téléversés (`uploads/`) : effacés à chaque déploiement.
 - `autoDeploy: false` : aucun déploiement automatique ; passer à `true` une fois la recette terminée.
 
 ## 3. Corrections faites pour Render

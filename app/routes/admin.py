@@ -52,6 +52,7 @@ from app.schemas.admin import (
     AdminPromotionCreate, AdminPromotionUpdate,
     AdminSettings, AdminReportRequest,
 )
+from app.core.logger import get_logger
 from app.services.user_service import UserService
 from app.services.wallet_service import WalletService
 from app.services.keno_service import KenoService
@@ -66,6 +67,7 @@ import redis.asyncio as redis
 
 # Router et templates
 router = APIRouter(prefix="/admin", tags=["Admin"])
+logger = get_logger("AdminPanel")
 # Racine = app/templates (pas app/templates/admin) : tous les templates admin
 # utilisent {% extends "admin/base.html" %} (préfixe "admin/" inclus), donc le
 # loader Jinja doit chercher depuis le parent commun pour que ce chemin
@@ -3613,8 +3615,12 @@ async def admin_user_kyc_upload(
 
     doc_id = uuid.uuid4().hex
     folder = _kyc_dir(user.id)
-    folder.mkdir(parents=True, exist_ok=True)
-    (folder / f"{doc_id}.{ext}").write_bytes(content)
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / f"{doc_id}.{ext}").write_bytes(content)
+    except OSError:
+        logger.exception("Stockage KYC inaccessible en écriture : %s", folder)
+        raise HTTPException(503, "Stockage des documents indisponible : contactez l'administrateur technique")
     docs.append({
         "id": doc_id, "doc_type": doc_type, "name": (file.filename or f"document.{ext}")[:120],
         "ext": ext, "mime": mime, "icon": icon, "size": len(content),

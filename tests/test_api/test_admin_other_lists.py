@@ -200,6 +200,22 @@ async def test_kyc_documents_upload_view_delete(panel, db_session, make_user, tm
 
 
 @pytest.mark.asyncio
+async def test_kyc_upload_reports_unwritable_storage(panel, db_session, make_user, tmp_path, monkeypatch):
+    """Disque non inscriptible : message clair (503) et aucun document enregistré."""
+    blocker = tmp_path / "fichier"
+    blocker.write_text("x")
+    monkeypatch.setenv("KYC_UPLOAD_DIR", str(blocker / "kyc"))  # un fichier à la place du dossier
+    player = await make_user()
+    await db_session.commit()
+    uid = player.id
+    r = await panel.post(f"/admin/api/users/{uid}/kyc/upload", data={"doc_type": "id"},
+                         files={"file": ("a.png", PNG, "image/png")})
+    assert r.status_code == 503 and "Stockage des documents indisponible" in r.json()["error"]
+    await db_session.refresh(player)
+    assert not player.kyc_documents
+
+
+@pytest.mark.asyncio
 async def test_kyc_verify_reject_reset_remind(panel, db_session, make_user):
     player = await make_user()
     await db_session.commit()
